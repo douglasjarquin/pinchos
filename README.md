@@ -91,6 +91,7 @@ run = "quota-axi --provider codex --json | jq -r '[.providers[0].windows[].perce
 interval = "5m"
 format = "{output}%"
 icon = "/path/to/pinchos/example/icons/codex.svg"
+click = "open https://chatgpt.com/codex/settings/usage"
 ```
 
 This composes [`quota-axi`](https://github.com/douglasjarquin) (a CLI that reports local provider quota windows) with `jq` to pull the most-constrained window's remaining percentage out of its JSON, one item per provider, each with its own brand icon.
