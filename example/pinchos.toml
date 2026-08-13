@@ -13,6 +13,7 @@ run = "quota-axi --provider codex --json | jq -r '[.providers[0].windows[].perce
 interval = "5m"
 format = "{output}%"
 icon = "/path/to/pinchos/example/icons/codex.svg"
+click = "open https://chatgpt.com/codex/settings/usage"
 error_text = "–"
 
 [item.clock]
