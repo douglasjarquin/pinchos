@@ -64,29 +64,41 @@ interval = "60s"        # optional, default "60s", minimum "1s". Formats: "30s",
 format = "{output}%"    # optional. {output} is the trimmed last stdout line of `run`. Absent = raw output.
 click = "<shell command>" # optional, run (fire-and-forget) on left-click
 error_text = "–"   # optional, default "–". Shown when `run` fails, instead of the item disappearing.
+icon = "/path/to/icon.svg" # optional, a local image file (SVG/PNG/PDF) rendered as a template icon left of the text
 ```
 
 - `{output}` is the **only** placeholder. There's no JSON-path or nested-field extraction — pipe your command through `jq` (or anything else) to shape the value before it reaches pinchos.
+- `icon` is a plain filesystem path, not a built-in icon library — pinchos ships with no bundled icon catalog. Point it at any image file you like; it's drawn as a template image (tinted automatically for light/dark menu bars) at 16x16, to the left of the item's text. A missing or unreadable file just falls back to text-only — it never crashes the app.
 - A failing command never crashes pinchos and never blanks the item — it renders `error_text`.
 - Command runs for a given item never overlap: if the previous run for that item hasn't finished when the next tick fires, the tick is skipped.
 - A malformed config keeps the last good config running untouched, and pinchos additionally shows a single `pinchos ⚠︎` item; click it to see the parse error (with line number when available), reload, or quit. Fix the file and it clears automatically on the next successful reload.
 - Right-click any item (or the warning item) for **Reload Config** and **Quit** — the app is fully usable without ever touching the config file.
 
-### Example: the flagship "limits" preset
+### Example: the flagship "quota" preset
 
 ```toml
-[item.limits]
+[item.claude]
 type = "command"
-run = "quota-axi --provider claude,codex --json | jq -r '.overall.percentRemaining'"
+run = "quota-axi --provider claude --json | jq -r '[.providers[0].windows[].percentRemaining | select(. != null)] | min'"
 interval = "5m"
-format = "\u{1F440} {output}%"
+format = "{output}%"
+icon = "/path/to/pinchos/example/icons/claude.svg"
 click = "open https://claude.ai/settings/usage"
+
+[item.codex]
+type = "command"
+run = "quota-axi --provider codex --json | jq -r '[.providers[0].windows[].percentRemaining | select(. != null)] | min'"
+interval = "5m"
+format = "{output}%"
+icon = "/path/to/pinchos/example/icons/codex.svg"
 ```
 
-This composes [`quota-axi`](https://github.com/douglasjarquin) (a CLI that reports local provider quota windows) with `jq` to pull one field out of its JSON, then renders it with an emoji and a `%` suffix.
+This composes [`quota-axi`](https://github.com/douglasjarquin) (a CLI that reports local provider quota windows) with `jq` to pull the most-constrained window's remaining percentage out of its JSON, one item per provider, each with its own brand icon.
 `quota-axi` is one option here, not a dependency — `run` is any shell command, so this same pattern works for a stock price, a CI status, a battery reading (`pmset -g batt`), or a clock (`date '+%H:%M'`).
 
-See [`example/pinchos.toml`](example/pinchos.toml) for a full working config with three items (limits, clock, battery).
+The two icon files under [`example/icons/`](example/icons/) are MIT-licensed brand marks vendored from [steipete/CodexBar](https://github.com/steipete/CodexBar) - see [`example/icons/NOTICE.md`](example/icons/NOTICE.md) for attribution. Swap in whatever icon you like for your own items; pinchos has no opinion on where it comes from.
+
+See [`example/pinchos.toml`](example/pinchos.toml) for a full working config with four items (claude, codex, clock, battery).
 
 ## Architecture
 

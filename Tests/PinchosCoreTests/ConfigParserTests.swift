@@ -28,6 +28,7 @@ final class ConfigParserTests: XCTestCase {
         format = "\u{1F440} {output}%"
         click = "open https://example.com"
         error_text = "n/a"
+        icon = "/path/to/icon.svg"
         """
         let config = try ConfigParser.parse(toml)
         let item = config.items[0]
@@ -35,6 +36,17 @@ final class ConfigParserTests: XCTestCase {
         XCTAssertEqual(item.format, "\u{1F440} {output}%")
         XCTAssertEqual(item.click, "open https://example.com")
         XCTAssertEqual(item.errorText, "n/a")
+        XCTAssertEqual(item.icon, "/path/to/icon.svg")
+    }
+
+    func testIconIsOptionalAndNilByDefault() throws {
+        let toml = """
+        [item.limits]
+        type = "command"
+        run = "echo 42"
+        """
+        let config = try ConfigParser.parse(toml)
+        XCTAssertNil(config.items[0].icon)
     }
 
     // TOMLKit's underlying store is alphabetically ordered, not insertion-ordered,

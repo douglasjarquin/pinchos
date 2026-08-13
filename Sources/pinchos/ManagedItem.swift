@@ -18,12 +18,19 @@ final class ManagedItem {
         statusItem.button?.target = self
         statusItem.button?.action = #selector(handleClick)
         statusItem.button?.sendAction(on: [.leftMouseUp, .rightMouseUp])
+        applyIcon()
         startTimer()
     }
 
-    func updateConfig(_ newConfig: ItemConfig) {
-        config = newConfig
-        startTimer()
+    private func applyIcon() {
+        guard let path = config.icon, let image = NSImage(contentsOfFile: path) else {
+            statusItem.button?.image = nil
+            return
+        }
+        image.size = NSSize(width: 16, height: 16)
+        image.isTemplate = true
+        statusItem.button?.image = image
+        statusItem.button?.imagePosition = .imageLeft
     }
 
     func tearDown() {
