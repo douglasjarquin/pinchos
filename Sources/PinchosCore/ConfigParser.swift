@@ -63,7 +63,8 @@ public enum ConfigParser {
             interval: interval,
             format: table["format"]?.string,
             click: table["click"]?.string,
-            errorText: table["error_text"]?.string ?? "\u{2013}"
+            errorText: table["error_text"]?.string ?? "\u{2013}",
+            icon: table["icon"]?.string
         )
     }
 }

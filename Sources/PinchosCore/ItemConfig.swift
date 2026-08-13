@@ -7,6 +7,7 @@ public struct ItemConfig: Equatable {
     public let format: String?
     public let click: String?
     public let errorText: String
+    public let icon: String?
 
     public init(
         name: String,
@@ -14,7 +15,8 @@ public struct ItemConfig: Equatable {
         interval: TimeInterval,
         format: String? = nil,
         click: String? = nil,
-        errorText: String = "\u{2013}"
+        errorText: String = "\u{2013}",
+        icon: String? = nil
     ) {
         self.name = name
         self.run = run
@@ -22,6 +24,7 @@ public struct ItemConfig: Equatable {
         self.format = format
         self.click = click
         self.errorText = errorText
+        self.icon = icon
     }
 }
 
