@@ -79,7 +79,7 @@ icon = "/path/to/icon.svg" # optional, a local image file (SVG/PNG/PDF) rendered
 ```toml
 [item.claude]
 type = "command"
-run = "quota-axi --provider claude --json | jq -r '[.providers[0].windows[].percentRemaining | select(. != null)] | min'"
+run = "quota-axi --provider claude --json | jq -r '.providers[0].windows[] | select(.label==\"week\") | .percentRemaining'"
 interval = "5m"
 format = "{output}%"
 icon = "/path/to/pinchos/example/icons/claude.svg"
@@ -87,14 +87,14 @@ click = "open https://claude.ai/settings/usage"
 
 [item.codex]
 type = "command"
-run = "quota-axi --provider codex --json | jq -r '[.providers[0].windows[].percentRemaining | select(. != null)] | min'"
+run = "quota-axi --provider codex --json | jq -r '.providers[0].windows[] | select(.label==\"week\") | .percentRemaining'"
 interval = "5m"
 format = "{output}%"
 icon = "/path/to/pinchos/example/icons/codex.svg"
 click = "open https://chatgpt.com/codex/settings/usage"
 ```
 
-This composes [`quota-axi`](https://github.com/douglasjarquin) (a CLI that reports local provider quota windows) with `jq` to pull the most-constrained window's remaining percentage out of its JSON, one item per provider, each with its own brand icon.
+This composes [`quota-axi`](https://github.com/douglasjarquin) (a CLI that reports local provider quota windows) with `jq` to pull the weekly window's remaining percentage out of its JSON (each provider labels its 7-day window `"week"`, though the `id` differs by provider), one item per provider, each with its own brand icon.
 `quota-axi` is one option here, not a dependency — `run` is any shell command, so this same pattern works for a stock price, a CI status, a battery reading (`pmset -g batt`), or a clock (`date '+%H:%M'`).
 
 The two icon files under [`example/icons/`](example/icons/) are MIT-licensed brand marks vendored from [steipete/CodexBar](https://github.com/steipete/CodexBar) - see [`example/icons/NOTICE.md`](example/icons/NOTICE.md) for attribution. Swap in whatever icon you like for your own items; pinchos has no opinion on where it comes from.
