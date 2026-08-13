@@ -1,0 +1,18 @@
+[item.limits]
+type = "command"
+run = "quota-axi --provider claude,codex --json | jq -r '.overall.percentRemaining'"
+interval = "5m"
+format = "👀 {output}%"
+click = "open https://claude.ai/settings/usage"
+error_text = "–"
+
+[item.clock]
+type = "command"
+run = "date '+%H:%M'"
+interval = "30s"
+
+[item.battery]
+type = "command"
+run = "pmset -g batt | grep -Eo '[0-9]+%' | head -1"
+interval = "1m"
+format = "🔋 {output}"
