@@ -142,4 +142,20 @@ final class ConfigParserTests: XCTestCase {
             XCTAssertNotNil(parseError.line)
         }
     }
+
+    func testFlagshipExampleConfigParsesWithMatchingProviderClickLines() throws {
+        let thisFile = URL(fileURLWithPath: #filePath)
+        let repoRoot = thisFile.deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+        let exampleURL = repoRoot.appendingPathComponent("example/pinchos.toml")
+        let text = try String(contentsOf: exampleURL, encoding: .utf8)
+        let config = try ConfigParser.parse(text)
+
+        let claude = try XCTUnwrap(config.items.first(where: { $0.name == "claude" }))
+        let codex = try XCTUnwrap(config.items.first(where: { $0.name == "codex" }))
+
+        for item in [claude, codex] {
+            let click = try XCTUnwrap(item.click, "\(item.name) is missing a click line")
+            XCTAssertTrue(click.hasPrefix("open https://"), "\(item.name) click line should open a usage page URL, got: \(click)")
+        }
+    }
 }
