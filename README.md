@@ -1,5 +1,7 @@
 # pinchos
 
+<img width="2172" height="724" alt="pinchos-github-header" src="https://github.com/user-attachments/assets/072cb6ab-6570-4dd4-9a41-b83602d1da21" />
+
 Pinchos are the little snacks pinned to a Basque bar top with a skewer.
 This app pins your own snacks to the macOS menu bar: one declarative TOML file, native `NSStatusItem`s, no runtime bloat.
 
