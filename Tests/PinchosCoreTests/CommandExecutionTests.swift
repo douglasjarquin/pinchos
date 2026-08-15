@@ -114,6 +114,38 @@ final class CommandExecutionTests: XCTestCase {
         XCTAssertLessThan(Date().timeIntervalSince(startedAt), 3)
     }
 
+    func testNormalExitRetainsBackgroundProcessGroupUntilCancellation() async throws {
+        let childPIDURL = temporaryURL("natural-exit-child")
+        defer { try? FileManager.default.removeItem(at: childPIDURL) }
+        var childPID: Int32?
+        defer {
+            if let childPID {
+                _ = kill(childPID, SIGKILL)
+                _ = waitUntilGone(childPID)
+            }
+        }
+
+        let command = "(trap '' TERM; while :; do sleep 1; done) & child=$!; printf '%s' \"$child\" > '\(childPIDURL.path)'; exit 0"
+        let runner = CommandRunner(command: command, timeout: 5, maxOutputBytes: 64)
+        let outcome = await runner.runIfIdle()
+
+        guard case .completed(let execution) = outcome else {
+            return XCTFail("expected a completed execution, got \(outcome)")
+        }
+        let child = try await waitForPID(at: childPIDURL)
+        childPID = child
+        XCTAssertEqual(execution.terminalReason, .exited(code: 0))
+        let activeSnapshot = await runner.snapshot()
+        XCTAssertTrue(activeSnapshot.isRunning)
+        XCTAssertNotEqual(kill(child, 0), -1)
+
+        await runner.cancelActive()
+
+        XCTAssertTrue(waitUntilGone(child), "cancellation left natural-exit child process \(child) alive")
+        let finalSnapshot = await runner.snapshot()
+        XCTAssertFalse(finalSnapshot.isRunning)
+    }
+
     private func temporaryURL(_ prefix: String) -> URL {
         FileManager.default.temporaryDirectory.appendingPathComponent("pinchos-\(prefix)-\(UUID().uuidString)")
     }

@@ -146,14 +146,16 @@ private final class ProcessGroupController: @unchecked Sendable {
 
     fileprivate func beginTermination(_ reason: Claim) -> Bool {
         lock.lock()
-        guard claim == nil || claim == reason else {
-            lock.unlock()
-            return false
+        let canClaim = claim == nil || claim == reason || claim == .natural
+        if claim == nil {
+            claim = reason
         }
-        claim = reason
+        let shouldRequest = processGroupID != nil && !cleanupRequested
         lock.unlock()
-        requestGroupTermination()
-        return true
+        if shouldRequest {
+            requestGroupTermination()
+        }
+        return canClaim
     }
 
     func requestGroupTermination() {
@@ -166,9 +168,7 @@ private final class ProcessGroupController: @unchecked Sendable {
         lock.unlock()
 
         _ = kill(-processGroupID, SIGTERM)
-        DispatchQueue.global().asyncAfter(deadline: .now() + 0.25) { [weak self] in
-            self?.forceKillGroupIfNeeded()
-        }
+        _ = kill(-processGroupID, SIGKILL)
     }
 
     func claimDescription() -> CommandTerminalReason? {
@@ -184,16 +184,26 @@ private final class ProcessGroupController: @unchecked Sendable {
         }
     }
 
-    private func forceKillGroupIfNeeded() {
+    func hasMembers() -> Bool {
         lock.lock()
         let processGroupID = self.processGroupID
         lock.unlock()
-        guard let processGroupID else { return }
-        if kill(-processGroupID, 0) == -1, errno == ESRCH {
-            return
-        }
-        _ = kill(-processGroupID, SIGKILL)
+        guard let processGroupID else { return false }
+        let result = kill(-processGroupID, 0)
+        return result == 0 || errno == EPERM
     }
+
+    func waitForExit() async {
+        for _ in 0..<100 {
+            guard hasMembers() else { return }
+            try? await Task.sleep(nanoseconds: 10_000_000)
+        }
+    }
+}
+
+private struct CommandExecutionResult: Sendable {
+    let execution: CommandExecution
+    let lingeringController: ProcessGroupController?
 }
 
 private enum CommandExecutionEngine {
@@ -261,7 +271,7 @@ private enum CommandExecutionEngine {
         timeout: TimeInterval,
         maxOutputBytes: Int,
         controller: ProcessGroupController
-    ) async -> CommandExecution {
+    ) async -> CommandExecutionResult {
         let race = EventRace()
         return await withTaskCancellationHandler(operation: {
             await runProcess(
@@ -283,7 +293,7 @@ private enum CommandExecutionEngine {
         maxOutputBytes: Int,
         controller: ProcessGroupController,
         race: EventRace
-    ) async -> CommandExecution {
+    ) async -> CommandExecutionResult {
         let startedAt = DispatchTime.now().uptimeNanoseconds
         var stdoutFileDescriptors = [Int32](repeating: -1, count: 2)
         var stderrFileDescriptors = [Int32](repeating: -1, count: 2)
@@ -293,11 +303,14 @@ private enum CommandExecutionEngine {
             let errorCode = errno
             closeIfOpen(stdoutFileDescriptors)
             closeIfOpen(stderrFileDescriptors)
-            return makeExecution(
-                reason: .launchFailed(String(cString: strerror(errorCode))),
-                stdout: OutputCollector(limit: maxOutputBytes),
-                stderr: OutputCollector(limit: maxOutputBytes),
-                startedAt: startedAt
+            return CommandExecutionResult(
+                execution: makeExecution(
+                    reason: .launchFailed(String(cString: strerror(errorCode))),
+                    stdout: OutputCollector(limit: maxOutputBytes),
+                    stderr: OutputCollector(limit: maxOutputBytes),
+                    startedAt: startedAt
+                ),
+                lingeringController: nil
             )
         }
 
@@ -313,11 +326,14 @@ private enum CommandExecutionEngine {
         } catch {
             closeIfOpen(stdoutFileDescriptors)
             closeIfOpen(stderrFileDescriptors)
-            return makeExecution(
-                reason: .launchFailed(String(describing: error)),
-                stdout: OutputCollector(limit: maxOutputBytes),
-                stderr: OutputCollector(limit: maxOutputBytes),
-                startedAt: startedAt
+            return CommandExecutionResult(
+                execution: makeExecution(
+                    reason: .launchFailed(String(describing: error)),
+                    stdout: OutputCollector(limit: maxOutputBytes),
+                    stderr: OutputCollector(limit: maxOutputBytes),
+                    startedAt: startedAt
+                ),
+                lingeringController: nil
             )
         }
 
@@ -393,12 +409,16 @@ private enum CommandExecutionEngine {
             stderrTask: stderrTask,
             controller: drainController
         )
-        return makeExecution(
+        let execution = makeExecution(
             reason: reason,
             stdout: stdout,
             stderr: stderr,
             startedAt: startedAt,
             finishedAt: terminalAt
+        )
+        return CommandExecutionResult(
+            execution: execution,
+            lingeringController: controller.hasMembers() ? controller : nil
         )
     }
 
@@ -615,9 +635,11 @@ public actor CommandRunner {
     private let command: String
     private let timeout: TimeInterval
     private let maxOutputBytes: Int
-    private var activeTask: Task<CommandExecution, Never>?
+    private var activeTask: Task<CommandExecutionResult, Never>?
+    private var lingeringControllers: [ProcessGroupController] = []
     private var lastExecution: CommandExecution?
     private var skippedRefreshes = 0
+    private var cancellationInProgress = false
 
     public init(command: String, timeout: TimeInterval, maxOutputBytes: Int) {
         precondition(timeout > 0, "command timeout must be positive")
@@ -628,7 +650,8 @@ public actor CommandRunner {
     }
 
     public func runIfIdle() async -> CommandRunOutcome {
-        guard activeTask == nil else {
+        pruneLingeringControllers()
+        guard activeTask == nil, lingeringControllers.isEmpty, !cancellationInProgress else {
             skippedRefreshes += 1
             return .skipped
         }
@@ -650,26 +673,56 @@ public actor CommandRunner {
             }
         }
         activeTask = task
-        let execution = await task.value
+        let result = await task.value
         activeTask = nil
-        lastExecution = execution
-        return .completed(execution)
+        lastExecution = result.execution
+        if let controller = result.lingeringController, controller.hasMembers() {
+            lingeringControllers.append(controller)
+        }
+        return .completed(result.execution)
     }
 
     public func cancelActive() async {
-        guard let activeTask else { return }
-        activeTask.cancel()
-        let execution = await activeTask.value
-        self.activeTask = nil
-        lastExecution = execution
+        guard !cancellationInProgress else { return }
+        cancellationInProgress = true
+        defer {
+            pruneLingeringControllers()
+            cancellationInProgress = false
+        }
+
+        let activeTask = self.activeTask
+        activeTask?.cancel()
+        if let activeTask {
+            let result = await activeTask.value
+            self.activeTask = nil
+            lastExecution = result.execution
+            if let controller = result.lingeringController {
+                await terminate(controller)
+            }
+        }
+
+        for controller in lingeringControllers {
+            await terminate(controller)
+        }
+        pruneLingeringControllers()
     }
 
     public func snapshot() -> CommandRunnerSnapshot {
-        CommandRunnerSnapshot(
-            isRunning: activeTask != nil,
+        pruneLingeringControllers()
+        return CommandRunnerSnapshot(
+            isRunning: activeTask != nil || !lingeringControllers.isEmpty || cancellationInProgress,
             lastExecution: lastExecution,
             skippedRefreshes: skippedRefreshes
         )
+    }
+
+    private func terminate(_ controller: ProcessGroupController) async {
+        _ = controller.beginTermination(.cancelled)
+        await controller.waitForExit()
+    }
+
+    private func pruneLingeringControllers() {
+        lingeringControllers.removeAll { !$0.hasMembers() }
     }
 }
 

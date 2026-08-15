@@ -73,7 +73,8 @@ icon = "/path/to/icon.svg" # optional, a local image file (SVG/PNG/PDF) rendered
 
 - `{output}` is the **only** placeholder. There's no JSON-path or nested-field extraction — pipe your command through `jq` (or anything else) to shape the value before it reaches pinchos.
 - `timeout` accepts whole seconds, minutes, or hours and terminates the command's process group after the configured duration.
-- Timeout and cancellation send `SIGTERM`, allow a short grace period, then send `SIGKILL` so descendants cannot outlive an item or the app.
+- Timeout and cancellation terminate the process group with `SIGTERM` followed immediately by `SIGKILL`, so managed descendants cannot outlive an item or the app.
+- A command that exits while leaving same-group background work running remains owned by its item until that work exits or the item is removed.
 - `max_output` is an independent retained-tail limit for stdout and stderr, so `64KiB` can retain up to 64KiB from each stream while both streams continue draining.
 - Retaining the tail keeps the final output line and the most recent stderr diagnostic available even when a command emits more than the configured limit.
 - `icon` is a plain filesystem path, not a built-in icon library — pinchos ships with no bundled icon catalog. Point it at any image file you like; it's drawn as a template image (tinted automatically for light/dark menu bars) at 16x16, to the left of the item's text. A missing or unreadable file just falls back to text-only — it never crashes the app.
