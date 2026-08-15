@@ -502,6 +502,17 @@ struct PinchosCLI {
         while commandIndex < tokens.count, isEnvironmentAssignment(tokens[commandIndex]) {
             commandIndex += 1
         }
+        if commandIndex < tokens.count, tokens[commandIndex] == "env" {
+            commandIndex += 1
+            while commandIndex < tokens.count, isEnvironmentAssignment(tokens[commandIndex]) {
+                commandIndex += 1
+            }
+            if commandIndex < tokens.count, tokens[commandIndex] == "--" {
+                commandIndex += 1
+            } else if commandIndex < tokens.count, tokens[commandIndex].hasPrefix("-") {
+                return nil
+            }
+        }
         guard commandIndex < tokens.count else { return nil }
 
         let command = tokens[commandIndex]

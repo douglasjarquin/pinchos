@@ -74,7 +74,7 @@ public enum ConfigParser {
                 continue
             }
 
-            guard let currentItem, let equals = line.firstIndex(of: "=") else { continue }
+            guard let currentItem, let equals = assignmentSeparator(in: line) else { continue }
             let rawKey = line[..<equals].trimmingCharacters(in: .whitespaces)
             let key = rawKey.trimmingCharacters(in: CharacterSet(charactersIn: "\"'"))
             guard !key.isEmpty else { continue }
@@ -130,6 +130,34 @@ public enum ConfigParser {
         guard quote == nil, !escaped else { return nil }
         appendComponent()
         return components
+    }
+
+    private static func assignmentSeparator(in line: String) -> String.Index? {
+        var quote: Character?
+        var escaped = false
+
+        for index in line.indices {
+            let character = line[index]
+            if let activeQuote = quote {
+                if activeQuote == "\"", escaped {
+                    escaped = false
+                } else if activeQuote == "\"", character == "\\" {
+                    escaped = true
+                } else if character == activeQuote {
+                    quote = nil
+                }
+                continue
+            }
+
+            if character == "\"" || character == "'" {
+                quote = character
+            } else if character == "=" {
+                return index
+            } else if character == "#" {
+                return nil
+            }
+        }
+        return nil
     }
 
     private static func openMultilineDelimiter(in value: String) -> String? {

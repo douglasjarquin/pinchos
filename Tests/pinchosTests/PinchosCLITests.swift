@@ -235,6 +235,26 @@ final class PinchosCLITests: XCTestCase {
         XCTAssertTrue(capture.stdout.contains("tool with spaces"))
     }
 
+    func testDoctorChecksCommandAfterEnvironmentAssignments() async throws {
+        let root = try makeRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let configURL = root.appendingPathComponent("pinchos/pinchos.toml")
+        try FileManager.default.createDirectory(at: configURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try """
+        [item.env_prefix]
+        type = "command"
+        run = "env PINCHOS_PROBE=1 definitely_missing_pinchos_command"
+        """.write(to: configURL, atomically: true, encoding: .utf8)
+        let capture = CLIOutputCapture()
+        let cli = PinchosCLI(configPath: configURL.path, output: capture.output)
+
+        let doctorCode = await cli.run(arguments: ["doctor"])
+
+        XCTAssertEqual(doctorCode, 4)
+        XCTAssertTrue(capture.stdout.contains("[FAIL] item.env_prefix.run"))
+        XCTAssertTrue(capture.stdout.contains("definitely_missing_pinchos_command"))
+    }
+
     func testRunUsesConfiguredShellWorkingDirectoryAndMergedEnvironment() async throws {
         let root = try makeRoot()
         defer { try? FileManager.default.removeItem(at: root) }

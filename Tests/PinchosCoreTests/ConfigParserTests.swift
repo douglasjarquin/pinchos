@@ -384,4 +384,21 @@ final class ConfigParserTests: XCTestCase {
             XCTAssertEqual(parseError?.line, 1)
         }
     }
+
+    func testQuotedEnvironmentKeyContainingEqualsUsesItsSourceLine() {
+        let toml = """
+        [item.bad]
+        type = "command"
+        run = "echo ok"
+
+        [item.bad.env]
+        "BAD=NAME" = "value"
+        """
+
+        XCTAssertThrowsError(try ConfigParser.parse(toml)) { error in
+            let parseError = error as? ConfigParseError
+            XCTAssertTrue(parseError?.message.contains("item.bad.env.BAD=NAME") == true)
+            XCTAssertEqual(parseError?.line, 6)
+        }
+    }
 }
