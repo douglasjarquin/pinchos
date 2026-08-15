@@ -316,4 +316,20 @@ final class ConfigParserTests: XCTestCase {
         ])
         XCTAssertEqual(item.icon, configDirectory.appendingPathComponent("icons/status.svg").path)
     }
+
+    func testSemanticErrorIncludesItemKeyAndSourceLine() {
+        let toml = """
+        [item.limits]
+        type = "command"
+        run = "echo 42"
+        interval = "soon"
+        """
+
+        XCTAssertThrowsError(try ConfigParser.parse(toml)) { error in
+            let parseError = error as? ConfigParseError
+            XCTAssertTrue(parseError?.message.contains("item.limits") == true)
+            XCTAssertTrue(parseError?.message.contains("interval") == true)
+            XCTAssertEqual(parseError?.line, 4)
+        }
+    }
 }
