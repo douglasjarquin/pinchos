@@ -119,7 +119,8 @@ final class StatusItemController: StatusItemMenuDelegate {
     private func buildLifecycleMenu(for statusItem: NSStatusItem?) async -> NSMenu {
         let menu = NSMenu()
         if let statusItem,
-           let item = items.values.first(where: { $0.statusItem === statusItem }) {
+            let item = items.values.first(where: { $0.statusItem === statusItem })
+        {
             addDiagnostics(from: await item.runnerSnapshot(), to: menu)
             menu.addItem(NSMenuItem.separator())
         }
@@ -148,12 +149,16 @@ final class StatusItemController: StatusItemMenuDelegate {
                 menu.addItem(disabledItem(title: "Last result: launch failed"))
             }
             menu.addItem(disabledItem(title: String(format: "Duration: %.3fs", execution.duration)))
-            menu.addItem(disabledItem(title: execution.stdoutTruncated
-                ? "stdout: truncated (\(execution.stdoutBytesRead) bytes)"
-                : "stdout: \(execution.stdoutBytesRead) bytes"))
-            menu.addItem(disabledItem(title: execution.stderrTruncated
-                ? "stderr: truncated (\(execution.stderrBytesRead) bytes)"
-                : "stderr: \(execution.stderrBytesRead) bytes"))
+            menu.addItem(
+                disabledItem(
+                    title: execution.stdoutTruncated
+                        ? "stdout: truncated (\(execution.stdoutBytesRead) bytes)"
+                        : "stdout: \(execution.stdoutBytesRead) bytes"))
+            menu.addItem(
+                disabledItem(
+                    title: execution.stderrTruncated
+                        ? "stderr: truncated (\(execution.stderrBytesRead) bytes)"
+                        : "stderr: \(execution.stderrBytesRead) bytes"))
             let stderrLine = lastTrimmedLine(of: execution.stderr)
             if !stderrLine.isEmpty {
                 menu.addItem(disabledItem(title: "stderr: \(String(stderrLine.prefix(200)))"))

@@ -334,18 +334,20 @@ private enum CommandExecutionEngine {
         controller: ProcessGroupController
     ) async -> CommandExecutionResult {
         let race = EventRace()
-        return await withTaskCancellationHandler(operation: {
-            await runProcess(
-                command: command,
-                timeout: timeout,
-                maxOutputBytes: maxOutputBytes,
-                controller: controller,
-                race: race
-            )
-        }, onCancel: {
-            _ = controller.beginTermination(.cancelled)
-            race.resume(.cancellation)
-        })
+        return await withTaskCancellationHandler(
+            operation: {
+                await runProcess(
+                    command: command,
+                    timeout: timeout,
+                    maxOutputBytes: maxOutputBytes,
+                    controller: controller,
+                    race: race
+                )
+            },
+            onCancel: {
+                _ = controller.beginTermination(.cancelled)
+                race.resume(.cancellation)
+            })
     }
 
     private static func runProcess(
@@ -360,7 +362,8 @@ private enum CommandExecutionEngine {
         var stderrFileDescriptors = [Int32](repeating: -1, count: 2)
 
         guard Darwin.pipe(&stdoutFileDescriptors) == 0,
-              Darwin.pipe(&stderrFileDescriptors) == 0 else {
+            Darwin.pipe(&stderrFileDescriptors) == 0
+        else {
             let errorCode = errno
             closeIfOpen(stdoutFileDescriptors)
             closeIfOpen(stderrFileDescriptors)
@@ -375,9 +378,10 @@ private enum CommandExecutionEngine {
             )
         }
         guard setCloseOnExec(stdoutFileDescriptors[0]),
-              setCloseOnExec(stdoutFileDescriptors[1]),
-              setCloseOnExec(stderrFileDescriptors[0]),
-              setCloseOnExec(stderrFileDescriptors[1]) else {
+            setCloseOnExec(stdoutFileDescriptors[1]),
+            setCloseOnExec(stderrFileDescriptors[0]),
+            setCloseOnExec(stderrFileDescriptors[1])
+        else {
             let errorCode = errno
             closeIfOpen(stdoutFileDescriptors)
             closeIfOpen(stderrFileDescriptors)
@@ -544,8 +548,9 @@ private enum CommandExecutionEngine {
         try check(posix_spawn_file_actions_addclose(&fileActions, stderrWrite))
 
         guard let shell = strdup("/bin/sh"),
-              let option = strdup("-c"),
-              let commandCopy = strdup(command) else {
+            let option = strdup("-c"),
+            let commandCopy = strdup(command)
+        else {
             throw SpawnError.posix(ENOMEM)
         }
         var arguments: [UnsafeMutablePointer<CChar>?] = [shell, option, commandCopy, nil]
@@ -772,9 +777,10 @@ public actor CommandRunner {
         let generation = runGeneration
         await settleLingeringProcesses()
         guard generation == runGeneration,
-              activeTask == nil,
-              lingeringProcesses.isEmpty,
-              !cancellationInProgress else {
+            activeTask == nil,
+            lingeringProcesses.isEmpty,
+            !cancellationInProgress
+        else {
             skippedRefreshes += 1
             return .skipped
         }
