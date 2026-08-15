@@ -648,7 +648,6 @@ private enum CommandExecutionEngine {
         keepRunning: Bool
     ) async -> LingeringOutput? {
         if keepRunning {
-            try? await Task.sleep(nanoseconds: drainGraceNanoseconds)
             return LingeringOutput(
                 stdoutTask: stdoutTask,
                 stderrTask: stderrTask,
@@ -736,9 +735,10 @@ private enum CommandExecutionEngine {
     }
 
     private static func nanoseconds(for timeout: TimeInterval) -> UInt64 {
+        let maximum = UInt64(Int64.max)
         let value = timeout * 1_000_000_000
-        guard value.isFinite, value < Double(UInt64.max) else {
-            return UInt64.max
+        guard value.isFinite, value < Double(maximum) else {
+            return maximum
         }
         return UInt64(max(1, value))
     }
