@@ -4,18 +4,23 @@ import PinchosCore
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private lazy var controller = StatusItemController { [weak self] in
-        self?.loadAndApply()
+        Task { @MainActor in
+            await self?.loadAndApply()
+        }
     }
     private var watcher: ConfigWatcher?
     private let configPath = ConfigLocation.resolve()
+    private var isTerminating = false
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
-        loadAndApply()
+        Task { @MainActor [weak self] in
+            await self?.loadAndApply()
+        }
 
         let watcher = ConfigWatcher(path: configPath) { [weak self] in
             Task { @MainActor in
-                self?.loadAndApply()
+                await self?.loadAndApply()
             }
         }
         watcher.start()
@@ -23,13 +28,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @MainActor
-    private func loadAndApply() {
+    private func loadAndApply() async {
+        guard !isTerminating else { return }
         do {
             let text = try String(contentsOfFile: configPath, encoding: .utf8)
             let config = try ConfigParser.parse(text)
-            controller.apply(config: config)
+            await controller.apply(config: config)
         } catch {
             controller.showParseError(error)
         }
+    }
+
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        guard !isTerminating else { return .terminateLater }
+        isTerminating = true
+        watcher?.stop()
+        watcher = nil
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            await controller.shutdown()
+            NSApp.reply(toApplicationShouldTerminate: true)
+        }
+        return .terminateLater
     }
 }

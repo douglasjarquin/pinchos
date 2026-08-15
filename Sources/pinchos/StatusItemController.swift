@@ -13,12 +13,12 @@ final class StatusItemController: StatusItemMenuDelegate {
         self.onReload = onReload
     }
 
-    func apply(config: PinchosConfig) {
+    func apply(config: PinchosConfig) async {
         clearWarningItem()
         let old = currentConfig()
         let diff = ConfigDiffEngine.diff(old: old, new: config)
         guard !diff.isEmpty else { return }
-        rebuild(with: config)
+        await rebuild(with: config)
     }
 
     func showParseError(_ error: Error) {
@@ -33,20 +33,31 @@ final class StatusItemController: StatusItemMenuDelegate {
     }
 
     func showLifecycleMenu(for statusItem: NSStatusItem) {
-        present(menu: buildLifecycleMenu(), on: statusItem)
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            let menu = await self.buildLifecycleMenu(for: statusItem)
+            self.present(menu: menu, on: statusItem)
+        }
     }
 
     private func currentConfig() -> PinchosConfig {
         PinchosConfig(items: order.compactMap { items[$0]?.config })
     }
 
-    private func rebuild(with config: PinchosConfig) {
-        for name in order { items[name]?.tearDown() }
+    private func rebuild(with config: PinchosConfig) async {
+        for name in order { await items[name]?.tearDown() }
         items.removeAll()
         order = config.items.map(\.name)
         for item in config.items {
             items[item.name] = ManagedItem(config: item, menuDelegate: self)
         }
+    }
+
+    func shutdown() async {
+        for name in order { await items[name]?.tearDown() }
+        items.removeAll()
+        order.removeAll()
+        clearWarningItem()
     }
 
     private func clearWarningItem() {
@@ -57,17 +68,25 @@ final class StatusItemController: StatusItemMenuDelegate {
     }
 
     @objc private func handleWarningClick() {
-        guard let warningItem else { return }
-        let menu = buildLifecycleMenu()
-        let errorItem = NSMenuItem(title: lastErrorDescription, action: nil, keyEquivalent: "")
-        errorItem.isEnabled = false
-        menu.insertItem(errorItem, at: 0)
-        menu.insertItem(NSMenuItem.separator(), at: 1)
-        present(menu: menu, on: warningItem)
+        guard warningItem != nil else { return }
+        Task { @MainActor [weak self] in
+            guard let self, let warningItem = self.warningItem else { return }
+            let menu = await self.buildLifecycleMenu(for: nil)
+            let errorItem = NSMenuItem(title: self.lastErrorDescription, action: nil, keyEquivalent: "")
+            errorItem.isEnabled = false
+            menu.insertItem(errorItem, at: 0)
+            menu.insertItem(NSMenuItem.separator(), at: 1)
+            self.present(menu: menu, on: warningItem)
+        }
     }
 
-    private func buildLifecycleMenu() -> NSMenu {
+    private func buildLifecycleMenu(for statusItem: NSStatusItem?) async -> NSMenu {
         let menu = NSMenu()
+        if let statusItem,
+           let item = items.values.first(where: { $0.statusItem === statusItem }) {
+            addDiagnostics(from: await item.runnerSnapshot(), to: menu)
+            menu.addItem(NSMenuItem.separator())
+        }
         let reload = NSMenuItem(title: "Reload Config", action: #selector(reloadConfigAction), keyEquivalent: "r")
         reload.target = self
         menu.addItem(reload)
@@ -75,6 +94,42 @@ final class StatusItemController: StatusItemMenuDelegate {
         quit.target = self
         menu.addItem(quit)
         return menu
+    }
+
+    private func addDiagnostics(from snapshot: CommandRunnerSnapshot, to menu: NSMenu) {
+        menu.addItem(disabledItem(title: snapshot.isRunning ? "Status: running" : "Status: waiting"))
+        if let execution = snapshot.lastExecution {
+            switch execution.terminalReason {
+            case .exited(let code):
+                menu.addItem(disabledItem(title: "Last exit code: \(code)"))
+            case .signaled(let signal):
+                menu.addItem(disabledItem(title: "Last signal: \(signal)"))
+            case .timedOut:
+                menu.addItem(disabledItem(title: "Last result: timed out"))
+            case .cancelled:
+                menu.addItem(disabledItem(title: "Last result: cancelled"))
+            case .launchFailed:
+                menu.addItem(disabledItem(title: "Last result: launch failed"))
+            }
+            menu.addItem(disabledItem(title: String(format: "Duration: %.3fs", execution.duration)))
+            menu.addItem(disabledItem(title: execution.stdoutTruncated
+                ? "stdout: truncated (\(execution.stdoutBytesRead) bytes)"
+                : "stdout: \(execution.stdoutBytesRead) bytes"))
+            menu.addItem(disabledItem(title: execution.stderrTruncated
+                ? "stderr: truncated (\(execution.stderrBytesRead) bytes)"
+                : "stderr: \(execution.stderrBytesRead) bytes"))
+            let stderrLine = lastTrimmedLine(of: execution.stderr)
+            if !stderrLine.isEmpty {
+                menu.addItem(disabledItem(title: "stderr: \(String(stderrLine.prefix(200)))"))
+            }
+        }
+        menu.addItem(disabledItem(title: "Skipped ticks: \(snapshot.skippedRefreshes)"))
+    }
+
+    private func disabledItem(title: String) -> NSMenuItem {
+        let item = NSMenuItem(title: title, action: nil, keyEquivalent: "")
+        item.isEnabled = false
+        return item
     }
 
     private func present(menu: NSMenu, on statusItem: NSStatusItem) {
