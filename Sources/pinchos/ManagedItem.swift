@@ -2,19 +2,31 @@ import AppKit
 import PinchosCore
 
 @MainActor
-final class ManagedItem {
+final class ManagedItem: ManagedItemLifecycle {
     let statusItem: NSStatusItem
     private(set) var config: ItemConfig
-    private let runner: CommandRunner
-    private let clickRunner: CommandRunner?
+    private var runner: CommandRunner
+    private var clickRunner: CommandRunner?
     private var timer: DispatchSourceTimer?
     private let timerQueue = DispatchQueue(label: "com.pinchos.item-timer")
     private weak var menuDelegate: StatusItemMenuDelegate?
     private var isActive = true
+    private var configurationGeneration = 0
+    private var isPreparingUpdate = false
+    private var pendingUpdate: PendingUpdate?
+    private var isPreparingRemoval = false
     private var pendingClickInvocations = 0
     private var clickInvocationsDrained: CheckedContinuation<Void, Never>?
 
-    init(config: ItemConfig, menuDelegate: StatusItemMenuDelegate) {
+    private struct PendingUpdate {
+        let config: ItemConfig
+        let runner: CommandRunner?
+        let clickRunner: CommandRunner?
+        let clickRunnerConfigurationChanged: Bool
+        let timerNeedsRestart: Bool
+    }
+
+    init(config: ItemConfig, menuDelegate: StatusItemMenuDelegate, initiallyVisible: Bool = true) {
         self.config = config
         self.menuDelegate = menuDelegate
         self.runner = CommandRunner(
@@ -37,7 +49,20 @@ final class ManagedItem {
         statusItem.button?.action = #selector(handleClick)
         statusItem.button?.sendAction(on: [.leftMouseUp, .rightMouseUp])
         applyIcon()
+        statusItem.isVisible = initiallyVisible
+        if initiallyVisible {
+            startTimer()
+        }
+    }
+
+    func activate() {
+        guard isActive else { return }
+        statusItem.isVisible = true
         startTimer()
+    }
+
+    func owns(statusItem: NSStatusItem) -> Bool {
+        self.statusItem === statusItem
     }
 
     private func applyIcon() {
@@ -51,9 +76,76 @@ final class ManagedItem {
         statusItem.button?.imagePosition = .imageLeft
     }
 
-    func tearDown() async {
-        guard isActive else { return }
-        isActive = false
+    func prepareUpdate(config: ItemConfig) async {
+        guard isActive, !isPreparingRemoval, pendingUpdate == nil else { return }
+
+        let previousConfig = self.config
+        isPreparingUpdate = true
+
+        let runnerConfigurationChanged = previousConfig.run != config.run
+            || previousConfig.timeout != config.timeout
+            || previousConfig.maxOutputBytes != config.maxOutputBytes
+        let timerNeedsRestart = runnerConfigurationChanged || previousConfig.interval != config.interval
+        if timerNeedsRestart {
+            timer?.cancel()
+            timer = nil
+        }
+
+        var replacementRunner: CommandRunner?
+        if runnerConfigurationChanged {
+            configurationGeneration &+= 1
+            await runner.cancelActive()
+            replacementRunner = CommandRunner(
+                command: config.run,
+                timeout: config.timeout,
+                maxOutputBytes: config.maxOutputBytes
+            )
+        }
+
+        let clickRunnerConfigurationChanged = previousConfig.click != config.click
+            || previousConfig.timeout != config.timeout
+            || previousConfig.maxOutputBytes != config.maxOutputBytes
+        if clickRunnerConfigurationChanged {
+            await clickRunner?.cancelActive()
+        }
+        let replacementClickRunner = clickRunnerConfigurationChanged ? config.click.map {
+            CommandRunner(
+                command: $0,
+                timeout: config.timeout,
+                maxOutputBytes: config.maxOutputBytes
+            )
+        } : nil
+
+        pendingUpdate = PendingUpdate(
+            config: config,
+            runner: replacementRunner,
+            clickRunner: replacementClickRunner,
+            clickRunnerConfigurationChanged: clickRunnerConfigurationChanged,
+            timerNeedsRestart: timerNeedsRestart
+        )
+    }
+
+    func commitPreparedUpdate() {
+        guard isActive, let pendingUpdate else { return }
+        self.pendingUpdate = nil
+        config = pendingUpdate.config
+        if let runner = pendingUpdate.runner {
+            self.runner = runner
+        }
+        if pendingUpdate.clickRunnerConfigurationChanged {
+            clickRunner = pendingUpdate.clickRunner
+        }
+        applyIcon()
+        if pendingUpdate.timerNeedsRestart {
+            startTimer()
+        }
+        isPreparingUpdate = false
+    }
+
+    func prepareRemoval() async {
+        guard isActive, !isPreparingRemoval else { return }
+        isPreparingRemoval = true
+        configurationGeneration &+= 1
         timer?.cancel()
         timer = nil
         await runner.cancelActive()
@@ -63,7 +155,18 @@ final class ManagedItem {
                 clickInvocationsDrained = continuation
             }
         }
+    }
+
+    func commitRemoval() {
+        guard isActive else { return }
+        isActive = false
+        isPreparingRemoval = false
         NSStatusBar.system.removeStatusItem(statusItem)
+    }
+
+    func tearDown() async {
+        await prepareRemoval()
+        commitRemoval()
     }
 
     private func startTimer() {
@@ -81,10 +184,11 @@ final class ManagedItem {
     }
 
     private func tick() async {
-        guard isActive else { return }
-        let currentConfig = config
+        guard isActive, !isPreparingUpdate, !isPreparingRemoval else { return }
+        let generation = configurationGeneration
         let outcome = await runner.runIfIdle()
-        guard isActive else { return }
+        guard isActive, generation == configurationGeneration else { return }
+        let currentConfig = config
         switch outcome {
         case .skipped:
             return
@@ -103,7 +207,7 @@ final class ManagedItem {
     }
 
     @objc private func handleClick() {
-        guard isActive else { return }
+        guard isActive, !isPreparingUpdate, !isPreparingRemoval else { return }
         guard let event = NSApp.currentEvent else { return }
         if event.type == .rightMouseUp {
             menuDelegate?.showLifecycleMenu(for: statusItem)
@@ -124,9 +228,4 @@ final class ManagedItem {
         clickInvocationsDrained = nil
         continuation.resume()
     }
-}
-
-@MainActor
-protocol StatusItemMenuDelegate: AnyObject {
-    func showLifecycleMenu(for statusItem: NSStatusItem)
 }

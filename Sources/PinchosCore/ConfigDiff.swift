@@ -4,6 +4,7 @@ public struct ConfigDiff: Equatable {
     public let changed: [ItemConfig]
     public let unchanged: [String]
     public let orderChanged: Bool
+    public let requiresNativeRebuild: Bool
     public let newOrder: [String]
 
     public var isEmpty: Bool {
@@ -33,6 +34,9 @@ public enum ConfigDiffEngine {
         let oldSharedOrder = old.items.map(\.name).filter { newByName[$0] != nil }
         let newSharedOrder = new.items.map(\.name).filter { oldByName[$0] != nil }
         let orderChanged = oldSharedOrder != newSharedOrder
+        let addedOrder = new.items.map(\.name).filter { oldByName[$0] == nil }
+        let incrementalOrder = oldSharedOrder + addedOrder
+        let requiresNativeRebuild = incrementalOrder != new.items.map(\.name)
 
         return ConfigDiff(
             added: added,
@@ -40,6 +44,7 @@ public enum ConfigDiffEngine {
             changed: changed,
             unchanged: unchanged,
             orderChanged: orderChanged,
+            requiresNativeRebuild: requiresNativeRebuild,
             newOrder: new.items.map(\.name)
         )
     }
