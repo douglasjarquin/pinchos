@@ -227,6 +227,24 @@ private struct LingeringProcess: Sendable {
     let controller: ProcessGroupController
     let output: LingeringOutput
     let timeoutTask: Task<Void, Never>
+    let execution: CommandExecution
+    let stdout: OutputCollector
+    let stderr: OutputCollector
+
+    func currentExecution() -> CommandExecution {
+        let stdoutSnapshot = stdout.snapshot()
+        let stderrSnapshot = stderr.snapshot()
+        return CommandExecution(
+            terminalReason: execution.terminalReason,
+            stdout: String(decoding: stdoutSnapshot.data, as: UTF8.self),
+            stderr: String(decoding: stderrSnapshot.data, as: UTF8.self),
+            stdoutBytesRead: stdoutSnapshot.bytesRead,
+            stderrBytesRead: stderrSnapshot.bytesRead,
+            stdoutTruncated: stdoutSnapshot.truncated,
+            stderrTruncated: stderrSnapshot.truncated,
+            duration: execution.duration
+        )
+    }
 }
 
 private struct CommandExecutionResult: Sendable {
@@ -458,7 +476,14 @@ private enum CommandExecutionEngine {
         return CommandExecutionResult(
             execution: execution,
             lingeringProcess: lingeringOutput.map {
-                LingeringProcess(controller: controller, output: $0, timeoutTask: timerTask)
+                LingeringProcess(
+                    controller: controller,
+                    output: $0,
+                    timeoutTask: timerTask,
+                    execution: execution,
+                    stdout: stdout,
+                    stderr: stderr
+                )
             }
         )
     }
@@ -702,7 +727,7 @@ public actor CommandRunner {
     }
 
     public func runIfIdle() async -> CommandRunOutcome {
-        pruneLingeringProcesses()
+        await settleLingeringProcesses()
         guard activeTask == nil, lingeringProcesses.isEmpty, !cancellationInProgress else {
             skippedRefreshes += 1
             return .skipped
@@ -727,25 +752,24 @@ public actor CommandRunner {
         activeTask = task
         let result = await task.value
         activeTask = nil
-        lastExecution = result.execution
+        var completedExecution = result.execution
+        lastExecution = completedExecution
         if let process = result.lingeringProcess {
             if process.controller.hasMembers() {
                 lingeringProcesses.append(process)
             } else {
                 process.timeoutTask.cancel()
                 await process.output.stopAndWait()
+                completedExecution = process.currentExecution()
+                lastExecution = completedExecution
             }
         }
-        return .completed(result.execution)
+        return .completed(completedExecution)
     }
 
     public func cancelActive() async {
         guard !cancellationInProgress else { return }
         cancellationInProgress = true
-        defer {
-            pruneLingeringProcesses()
-            cancellationInProgress = false
-        }
 
         let activeTask = self.activeTask
         activeTask?.cancel()
@@ -756,17 +780,19 @@ public actor CommandRunner {
             if let process = result.lingeringProcess {
                 await terminate(process)
                 lingeringProcesses.removeAll { $0.controller === process.controller }
+                lastExecution = process.currentExecution()
             }
         }
 
         for process in lingeringProcesses {
             await terminate(process)
         }
-        pruneLingeringProcesses()
+        await settleLingeringProcesses()
+        cancellationInProgress = false
     }
 
-    public func snapshot() -> CommandRunnerSnapshot {
-        pruneLingeringProcesses()
+    public func snapshot() async -> CommandRunnerSnapshot {
+        await settleLingeringProcesses()
         return CommandRunnerSnapshot(
             isRunning: activeTask != nil || !lingeringProcesses.isEmpty || cancellationInProgress,
             lastExecution: lastExecution,
@@ -782,13 +808,18 @@ public actor CommandRunner {
         await process.output.stopAndWait()
     }
 
-    private func pruneLingeringProcesses() {
-        lingeringProcesses.removeAll {
-            guard !$0.controller.hasMembers() else { return false }
-            $0.timeoutTask.cancel()
-            $0.output.stop()
-            return true
+    private func settleLingeringProcesses() async {
+        var activeProcesses = [LingeringProcess]()
+        for process in lingeringProcesses {
+            guard !process.controller.hasMembers() else {
+                activeProcesses.append(process)
+                continue
+            }
+            process.timeoutTask.cancel()
+            await process.output.stopAndWait()
+            lastExecution = process.currentExecution()
         }
+        lingeringProcesses = activeProcesses
     }
 }
 

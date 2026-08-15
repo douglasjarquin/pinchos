@@ -197,6 +197,27 @@ final class CommandExecutionTests: XCTestCase {
         XCTAssertEqual(rerun.terminalReason, .exited(code: 0))
     }
 
+    func testNaturalExitRetainsLateStderrForLastExecution() async throws {
+        let runner = CommandRunner(
+            command: "(sleep 0.5; printf 'late-diagnostic\\n' >&2) & exit 0",
+            timeout: 2,
+            maxOutputBytes: 64
+        )
+
+        let outcome = await runner.runIfIdle()
+        guard case .completed(let execution) = outcome else {
+            return XCTFail("expected a completed execution, got \(outcome)")
+        }
+        XCTAssertEqual(execution.terminalReason, .exited(code: 0))
+        XCTAssertTrue((await runner.snapshot()).isRunning)
+
+        try await Task.sleep(nanoseconds: 800_000_000)
+
+        let snapshot = await runner.snapshot()
+        XCTAssertFalse(snapshot.isRunning)
+        XCTAssertEqual(snapshot.lastExecution?.stderr, "late-diagnostic\n")
+    }
+
     private func temporaryURL(_ prefix: String) -> URL {
         FileManager.default.temporaryDirectory.appendingPathComponent("pinchos-\(prefix)-\(UUID().uuidString)")
     }
