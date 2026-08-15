@@ -48,11 +48,19 @@ public enum ConfigParser {
         var lines: [String: Int] = [:]
         var currentItem: String?
         var currentSection: String?
+        var multilineDelimiter: String?
 
         for (offset, rawLine) in text.split(separator: "\n", omittingEmptySubsequences: false).enumerated() {
             let lineNumber = offset + 1
             let line = rawLine.trimmingCharacters(in: .whitespaces)
             guard !line.isEmpty, !line.hasPrefix("#") else { continue }
+
+            if let delimiter = multilineDelimiter {
+                if line.contains(delimiter) {
+                    multilineDelimiter = nil
+                }
+                continue
+            }
 
             if let components = headerComponents(in: line), components.count >= 2,
                components[0] == "item" {
@@ -74,6 +82,7 @@ public enum ConfigParser {
                 .compactMap { $0 }
                 .joined(separator: ".")
             lines[path] = lineNumber
+            multilineDelimiter = openMultilineDelimiter(in: String(line[line.index(after: equals)...]))
         }
 
         return lines
@@ -121,6 +130,21 @@ public enum ConfigParser {
         guard quote == nil, !escaped else { return nil }
         appendComponent()
         return components
+    }
+
+    private static func openMultilineDelimiter(in value: String) -> String? {
+        for delimiter in ["\"\"\"", "'''"] {
+            var count = 0
+            var searchStart = value.startIndex
+            while let range = value.range(of: delimiter, range: searchStart..<value.endIndex) {
+                count += 1
+                searchStart = range.upperBound
+            }
+            if count % 2 == 1 {
+                return delimiter
+            }
+        }
+        return nil
     }
 
     private static func sourceLine(

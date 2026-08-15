@@ -348,4 +348,24 @@ final class ConfigParserTests: XCTestCase {
             XCTAssertEqual(parseError?.line, 4)
         }
     }
+
+    func testMissingFieldUsesItemHeaderLineWhenMultilineValueContainsEquals() {
+        let toml = "[item.bad]\nrun = \"\"\"\ntype = \"command\"\n\"\"\"\n"
+
+        XCTAssertThrowsError(try ConfigParser.parse(toml)) { error in
+            let parseError = error as? ConfigParseError
+            XCTAssertTrue(parseError?.message.contains("missing required field 'type'") == true)
+            XCTAssertEqual(parseError?.line, 1)
+        }
+    }
+
+    func testMissingFieldUsesItemHeaderLineWhenMultilineLiteralContainsEquals() {
+        let toml = "[item.bad]\nrun = '''\ntype = \"command\"\n'''\n"
+
+        XCTAssertThrowsError(try ConfigParser.parse(toml)) { error in
+            let parseError = error as? ConfigParseError
+            XCTAssertTrue(parseError?.message.contains("missing required field 'type'") == true)
+            XCTAssertEqual(parseError?.line, 1)
+        }
+    }
 }
