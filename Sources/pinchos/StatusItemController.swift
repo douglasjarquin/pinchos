@@ -1,6 +1,48 @@
 import AppKit
 import PinchosCore
 
+@MainActor
+protocol StatusItemMenuDelegate: AnyObject {
+    func showLifecycleMenu(for statusItem: NSStatusItem)
+}
+
+@MainActor
+protocol ManagedItemLifecycle: AnyObject {
+    var config: ItemConfig { get }
+    func owns(statusItem: NSStatusItem) -> Bool
+    func activate()
+    func prepareUpdate(config: ItemConfig) async
+    func commitPreparedUpdate()
+    func prepareRemoval() async
+    func commitRemoval()
+    func tearDown() async
+    func runnerSnapshot() async -> CommandRunnerSnapshot
+}
+
+@MainActor
+protocol ManagedItemFactory: AnyObject {
+    func make(
+        config: ItemConfig,
+        menuDelegate: StatusItemMenuDelegate,
+        initiallyVisible: Bool
+    ) -> any ManagedItemLifecycle
+}
+
+@MainActor
+private final class DefaultManagedItemFactory: ManagedItemFactory {
+    func make(
+        config: ItemConfig,
+        menuDelegate: StatusItemMenuDelegate,
+        initiallyVisible: Bool
+    ) -> any ManagedItemLifecycle {
+        ManagedItem(
+            config: config,
+            menuDelegate: menuDelegate,
+            initiallyVisible: initiallyVisible
+        )
+    }
+}
+
 private enum RecoveryActionError: LocalizedError {
     case unableToCreateConfig
     case unableToOpenConfig
@@ -20,7 +62,8 @@ private enum RecoveryActionError: LocalizedError {
 
 @MainActor
 final class StatusItemController: StatusItemMenuDelegate {
-    private var items: [String: ManagedItem] = [:]
+    private let itemFactory: any ManagedItemFactory
+    private var items: [String: any ManagedItemLifecycle] = [:]
     private var order: [String] = []
     private var warningItem: NSStatusItem?
     private var recoveryState = RecoveryState()
@@ -29,7 +72,12 @@ final class StatusItemController: StatusItemMenuDelegate {
     private var lifecycleTail: Task<Void, Never>?
     private var lifecycleGeneration = 0
 
-    init(configPath: String, onReload: @escaping () -> Void) {
+    init(
+        configPath: String,
+        onReload: @escaping () -> Void,
+        itemFactory: (any ManagedItemFactory)? = nil
+    ) {
+        self.itemFactory = itemFactory ?? DefaultManagedItemFactory()
         self.configPath = configPath
         self.onReload = onReload
     }
@@ -98,11 +146,21 @@ final class StatusItemController: StatusItemMenuDelegate {
     }
 
     private func rebuild(with config: PinchosConfig) async {
-        for name in order { await items[name]?.tearDown() }
-        items.removeAll()
+        let oldItems = order.compactMap { items[$0] }
+        for item in oldItems {
+            await item.prepareRemoval()
+        }
+        let newItems = config.items.map {
+            itemFactory.make(config: $0, menuDelegate: self, initiallyVisible: false)
+        }
+
+        for item in oldItems {
+            item.commitRemoval()
+        }
+        items = Dictionary(uniqueKeysWithValues: newItems.map { ($0.config.name, $0) })
         order = config.items.map(\.name)
-        for item in config.items {
-            items[item.name] = ManagedItem(config: item, menuDelegate: self)
+        for item in newItems {
+            item.activate()
         }
     }
 
@@ -112,16 +170,28 @@ final class StatusItemController: StatusItemMenuDelegate {
             return
         }
 
-        for name in diff.removed {
-            if let item = items.removeValue(forKey: name) {
-                await item.tearDown()
-            }
+        let addedItems = diff.added.map {
+            itemFactory.make(config: $0, menuDelegate: self, initiallyVisible: false)
         }
         for item in diff.changed {
-            await items[item.name]?.update(config: item)
+            await items[item.name]?.prepareUpdate(config: item)
         }
-        for item in diff.added {
-            items[item.name] = ManagedItem(config: item, menuDelegate: self)
+        for name in diff.removed {
+            if let item = items[name] {
+                await item.prepareRemoval()
+            }
+        }
+
+        let removedItems = diff.removed.compactMap { items.removeValue(forKey: $0) }
+        for item in removedItems {
+            item.commitRemoval()
+        }
+        for item in diff.changed {
+            items[item.name]?.commitPreparedUpdate()
+        }
+        for item in addedItems {
+            items[item.config.name] = item
+            item.activate()
         }
         order = diff.newOrder
     }
@@ -203,7 +273,7 @@ final class StatusItemController: StatusItemMenuDelegate {
     private func buildLifecycleMenu(for statusItem: NSStatusItem?) async -> NSMenu {
         let menu = NSMenu()
         if let statusItem,
-            let item = items.values.first(where: { $0.statusItem === statusItem })
+            let item = items.values.first(where: { $0.owns(statusItem: statusItem) })
         {
             addDiagnostics(from: await item.runnerSnapshot(), to: menu)
             menu.addItem(NSMenuItem.separator())
