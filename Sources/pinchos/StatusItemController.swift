@@ -1,17 +1,36 @@
 import AppKit
 import PinchosCore
 
+private enum RecoveryActionError: LocalizedError {
+    case unableToCreateConfig
+    case unableToOpenConfig
+    case unableToOpenConfigDirectory
+
+    var errorDescription: String? {
+        switch self {
+        case .unableToCreateConfig:
+            return "Unable to create the Pinchos config."
+        case .unableToOpenConfig:
+            return "Unable to open the Pinchos config."
+        case .unableToOpenConfigDirectory:
+            return "Unable to open the Pinchos config directory."
+        }
+    }
+}
+
 @MainActor
 final class StatusItemController: StatusItemMenuDelegate {
     private var items: [String: ManagedItem] = [:]
     private var order: [String] = []
     private var warningItem: NSStatusItem?
-    private var lastErrorDescription = ""
+    private var recoveryState = RecoveryState()
+    private let configPath: String
     private let onReload: () -> Void
     private var lifecycleTail: Task<Void, Never>?
     private var lifecycleGeneration = 0
 
-    init(onReload: @escaping () -> Void) {
+    init(configPath: String, onReload: @escaping () -> Void) {
+        self.configPath = configPath
         self.onReload = onReload
     }
 
@@ -22,9 +41,14 @@ final class StatusItemController: StatusItemMenuDelegate {
     }
 
     private func applyNow(config: PinchosConfig) async {
-        clearWarningItem()
         let old = currentConfig()
         let diff = ConfigDiffEngine.diff(old: old, new: config)
+        recoveryState.apply(config: config)
+        if recoveryState.isVisible {
+            updateRecoveryItem()
+        } else {
+            clearWarningItem()
+        }
         guard !diff.isEmpty else { return }
         await rebuild(with: config)
     }
@@ -32,19 +56,33 @@ final class StatusItemController: StatusItemMenuDelegate {
     func showParseError(_ error: Error) async {
         let description = String(describing: error)
         await enqueueLifecycleOperation { [weak self] in
-            self?.showParseErrorNow(description: description)
+            self?.showRecoveryNow(configExists: true, errorDescription: description)
         }
     }
 
-    private func showParseErrorNow(description: String) {
-        lastErrorDescription = description
-        guard warningItem == nil else { return }
-        let statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
-        statusItem.button?.title = "pinchos \u{26A0}\u{FE0E}"
-        statusItem.button?.target = self
-        statusItem.button?.action = #selector(handleWarningClick)
-        statusItem.button?.sendAction(on: [.leftMouseUp, .rightMouseUp])
-        warningItem = statusItem
+    func showRecovery(configExists: Bool) async {
+        await enqueueLifecycleOperation { [weak self] in
+            self?.showRecoveryNow(configExists: configExists, errorDescription: nil)
+        }
+    }
+
+    private func showRecoveryNow(configExists: Bool, errorDescription: String?) {
+        recoveryState.show(configExists: configExists, errorDescription: errorDescription)
+        updateRecoveryItem()
+    }
+
+    private func updateRecoveryItem() {
+        guard recoveryState.isVisible else { return }
+        if warningItem == nil {
+            let statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
+            statusItem.button?.target = self
+            statusItem.button?.action = #selector(handleWarningClick)
+            statusItem.button?.sendAction(on: [.leftMouseUp, .rightMouseUp])
+            warningItem = statusItem
+        }
+        warningItem?.button?.title = recoveryState.errorDescription == nil
+            ? "pinchos"
+            : "pinchos \u{26A0}\u{FE0E}"
     }
 
     func showLifecycleMenu(for statusItem: NSStatusItem) {
@@ -101,19 +139,45 @@ final class StatusItemController: StatusItemMenuDelegate {
             NSStatusBar.system.removeStatusItem(warningItem)
         }
         warningItem = nil
+        recoveryState.dismiss()
     }
 
     @objc private func handleWarningClick() {
         guard warningItem != nil else { return }
         Task { @MainActor [weak self] in
             guard let self, let warningItem = self.warningItem else { return }
-            let menu = await self.buildLifecycleMenu(for: nil)
-            let errorItem = NSMenuItem(title: self.lastErrorDescription, action: nil, keyEquivalent: "")
-            errorItem.isEnabled = false
-            menu.insertItem(errorItem, at: 0)
-            menu.insertItem(NSMenuItem.separator(), at: 1)
+            let menu = self.buildRecoveryMenu()
             self.present(menu: menu, on: warningItem)
         }
+    }
+
+    private func buildRecoveryMenu() -> NSMenu {
+        let menu = NSMenu()
+        if let errorDescription = recoveryState.errorDescription {
+            let errorItem = NSMenuItem(title: errorDescription, action: nil, keyEquivalent: "")
+            errorItem.isEnabled = false
+            menu.addItem(errorItem)
+            menu.addItem(NSMenuItem.separator())
+        }
+        for action in recoveryState.menu.actions {
+            let selector: Selector
+            switch action {
+            case .createExampleConfig:
+                selector = #selector(createExampleConfigAction)
+            case .openConfig:
+                selector = #selector(openConfigAction)
+            case .openConfigDirectory:
+                selector = #selector(openConfigDirectoryAction)
+            case .reload:
+                selector = #selector(reloadConfigAction)
+            case .quit:
+                selector = #selector(quitAction)
+            }
+            let item = NSMenuItem(title: action.rawValue, action: selector, keyEquivalent: "")
+            item.target = self
+            menu.addItem(item)
+        }
+        return menu
     }
 
     private func buildLifecycleMenu(for statusItem: NSStatusItem?) async -> NSMenu {
@@ -181,6 +245,73 @@ final class StatusItemController: StatusItemMenuDelegate {
 
     @objc private func reloadConfigAction() {
         onReload()
+    }
+
+    @objc private func createExampleConfigAction() {
+        guard recoveryState.menu.canCreateExampleConfig else { return }
+        do {
+            try writeExampleConfig()
+        } catch {
+            showRecoveryError(error)
+        }
+    }
+
+    func writeExampleConfig() throws {
+        try ensureConfigDirectory()
+        guard !FileManager.default.fileExists(atPath: configPath) else { return }
+        guard let data = PinchosCore.ExampleConfig.text.data(using: .utf8) else {
+            throw RecoveryActionError.unableToCreateConfig
+        }
+        try data.write(to: URL(fileURLWithPath: configPath), options: [.withoutOverwriting])
+    }
+
+    @objc private func openConfigAction() {
+        do {
+            try openConfig()
+        } catch {
+            showRecoveryError(error)
+        }
+    }
+
+    func openConfig() throws {
+        try ensureConfigDirectory()
+        if !FileManager.default.fileExists(atPath: configPath) {
+            try Data().write(
+                to: URL(fileURLWithPath: configPath),
+                options: [.withoutOverwriting]
+            )
+        }
+        guard NSWorkspace.shared.open(URL(fileURLWithPath: configPath)) else {
+            throw RecoveryActionError.unableToOpenConfig
+        }
+    }
+
+    @objc private func openConfigDirectoryAction() {
+        do {
+            try openConfigDirectory()
+        } catch {
+            showRecoveryError(error)
+        }
+    }
+
+    func openConfigDirectory() throws {
+        try ensureConfigDirectory()
+        let directory = URL(fileURLWithPath: configPath).deletingLastPathComponent()
+        guard NSWorkspace.shared.open(directory) else {
+            throw RecoveryActionError.unableToOpenConfigDirectory
+        }
+    }
+
+    private func ensureConfigDirectory() throws {
+        let directory = URL(fileURLWithPath: configPath).deletingLastPathComponent()
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    }
+
+    private func showRecoveryError(_ error: Error) {
+        showRecoveryNow(
+            configExists: FileManager.default.fileExists(atPath: configPath),
+            errorDescription: String(describing: error)
+        )
     }
 
     @objc private func quitAction() {

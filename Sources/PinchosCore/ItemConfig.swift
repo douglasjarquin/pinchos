@@ -44,3 +44,38 @@ public struct PinchosConfig: Equatable {
         self.items = items
     }
 }
+
+public enum RecoveryMenuAction: String, CaseIterable, Equatable, Sendable {
+    case createExampleConfig = "Create Example Config"
+    case openConfig = "Open Config"
+    case openConfigDirectory = "Open Config Directory"
+    case reload = "Reload"
+    case quit = "Quit"
+}
+
+public struct RecoveryMenu: Equatable, Sendable {
+    public let canCreateExampleConfig: Bool
+
+    public init(configExists: Bool) {
+        self.canCreateExampleConfig = !configExists
+    }
+
+    public var actions: [RecoveryMenuAction] {
+        var actions: [RecoveryMenuAction] = []
+        if canCreateExampleConfig {
+            actions.append(.createExampleConfig)
+        }
+        actions.append(contentsOf: [.openConfig, .openConfigDirectory, .reload, .quit])
+        return actions
+    }
+}
+
+public enum ExampleConfig {
+    public static let text = """
+    [item.clock]
+    type = "command"
+    run = "date '+%H:%M:%S'"
+    interval = "60s"
+    format = "{output}"
+    """
+}

@@ -3,7 +3,7 @@ import PinchosCore
 
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
-    private lazy var controller = StatusItemController { [weak self] in
+    private lazy var controller = StatusItemController(configPath: configPath) { [weak self] in
         Task { @MainActor in
             await self?.loadAndApply()
         }
@@ -35,7 +35,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             let config = try ConfigParser.parse(text)
             await controller.apply(config: config)
         } catch {
-            await controller.showParseError(error)
+            if FileManager.default.fileExists(atPath: configPath) {
+                await controller.showParseError(error)
+            } else {
+                await controller.showRecovery(configExists: false)
+            }
         }
     }
 

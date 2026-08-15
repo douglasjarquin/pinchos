@@ -54,6 +54,7 @@ final class ConfigWatcher {
         }
         source = newSource
         newSource.resume()
+        onChange()
     }
 
     private func reopen() {
