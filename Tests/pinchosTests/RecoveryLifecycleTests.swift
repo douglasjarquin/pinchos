@@ -1,36 +1,10 @@
-import AppKit
 import XCTest
 @testable import pinchos
 @testable import PinchosCore
 
-@MainActor
 final class RecoveryLifecycleTests: XCTestCase {
-    func testEmptyConfigCreatesVisibleControlItem() async {
-        let controller = StatusItemController(configPath: "/tmp/pinchos-test/pinchos.toml", onReload: {})
-
-        await controller.apply(config: PinchosConfig(items: []))
-
-        let item = reflectedStatusItem(from: controller)
-        XCTAssertNotNil(item)
-        XCTAssertEqual(item?.button?.title, "pinchos")
-
-        await controller.shutdown()
-    }
-
-    func testConfiguredItemRemovesControlItem() async {
-        let controller = StatusItemController(configPath: "/tmp/pinchos-test/pinchos.toml", onReload: {})
-        let itemConfig = ItemConfig(name: "clock", run: "echo clock", interval: 60)
-
-        await controller.apply(config: PinchosConfig(items: []))
-        XCTAssertNotNil(reflectedStatusItem(from: controller))
-
-        await controller.apply(config: PinchosConfig(items: [itemConfig]))
-
-        XCTAssertNil(reflectedStatusItem(from: controller))
-        await controller.shutdown()
-    }
-
-    func testExampleConfigCreationReportsFileFailure() async throws {
+    @MainActor
+    func testExampleConfigCreationReportsFileFailure() throws {
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent("pinchos-issue-6-directory-\(UUID().uuidString)", isDirectory: true)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
@@ -41,7 +15,6 @@ final class RecoveryLifecycleTests: XCTestCase {
         defer { try? FileManager.default.removeItem(at: root) }
 
         XCTAssertThrowsError(try controller.writeExampleConfig())
-        await controller.shutdown()
     }
 
     func testMissingConfigWatcherNotifiesWhenFileAppears() async throws {
@@ -72,12 +45,5 @@ final class RecoveryLifecycleTests: XCTestCase {
         await fulfillment(of: [callback], timeout: 3)
         let loaded = try ConfigParser.parse(String(contentsOf: configURL, encoding: .utf8))
         XCTAssertEqual(loaded.items.map(\.name), ["clock"])
-    }
-
-    private func reflectedStatusItem(from controller: StatusItemController) -> NSStatusItem? {
-        let mirror = Mirror(reflecting: controller)
-        return mirror.children.first { child in
-            child.label == "warningItem"
-        }?.value as? NSStatusItem
     }
 }

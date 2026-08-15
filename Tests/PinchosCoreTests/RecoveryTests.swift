@@ -29,4 +29,23 @@ final class RecoveryTests: XCTestCase {
 
         XCTAssertEqual(config.items.map(\.name), ["clock"])
     }
+
+    func testRecoveryStateMovesFromMissingAndEmptyToNormal() {
+        var state = RecoveryState()
+
+        XCTAssertFalse(state.isVisible)
+
+        state.show(configExists: false, errorDescription: nil)
+        XCTAssertTrue(state.isVisible)
+        XCTAssertTrue(state.menu.canCreateExampleConfig)
+
+        state.apply(config: PinchosConfig(items: []))
+        XCTAssertTrue(state.isVisible)
+        XCTAssertFalse(state.menu.canCreateExampleConfig)
+
+        state.apply(config: PinchosConfig(items: [
+            ItemConfig(name: "clock", run: "echo clock", interval: 60)
+        ]))
+        XCTAssertFalse(state.isVisible)
+    }
 }

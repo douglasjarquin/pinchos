@@ -23,8 +23,7 @@ final class StatusItemController: StatusItemMenuDelegate {
     private var items: [String: ManagedItem] = [:]
     private var order: [String] = []
     private var warningItem: NSStatusItem?
-    private var lastErrorDescription = ""
-    private var recoveryMenu = PinchosCore.RecoveryMenu(configExists: true)
+    private var recoveryState = RecoveryState()
     private let configPath: String
     private let onReload: () -> Void
     private var lifecycleTail: Task<Void, Never>?
@@ -44,8 +43,9 @@ final class StatusItemController: StatusItemMenuDelegate {
     private func applyNow(config: PinchosConfig) async {
         let old = currentConfig()
         let diff = ConfigDiffEngine.diff(old: old, new: config)
-        if config.items.isEmpty {
-            showRecoveryNow(configExists: true, errorDescription: nil)
+        recoveryState.apply(config: config)
+        if recoveryState.isVisible {
+            updateRecoveryItem()
         } else {
             clearWarningItem()
         }
@@ -67,8 +67,12 @@ final class StatusItemController: StatusItemMenuDelegate {
     }
 
     private func showRecoveryNow(configExists: Bool, errorDescription: String?) {
-        recoveryMenu = PinchosCore.RecoveryMenu(configExists: configExists)
-        lastErrorDescription = errorDescription ?? ""
+        recoveryState.show(configExists: configExists, errorDescription: errorDescription)
+        updateRecoveryItem()
+    }
+
+    private func updateRecoveryItem() {
+        guard recoveryState.isVisible else { return }
         if warningItem == nil {
             let statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
             statusItem.button?.target = self
@@ -76,7 +80,9 @@ final class StatusItemController: StatusItemMenuDelegate {
             statusItem.button?.sendAction(on: [.leftMouseUp, .rightMouseUp])
             warningItem = statusItem
         }
-        warningItem?.button?.title = errorDescription == nil ? "pinchos" : "pinchos \u{26A0}\u{FE0E}"
+        warningItem?.button?.title = recoveryState.errorDescription == nil
+            ? "pinchos"
+            : "pinchos \u{26A0}\u{FE0E}"
     }
 
     func showLifecycleMenu(for statusItem: NSStatusItem) {
@@ -133,8 +139,7 @@ final class StatusItemController: StatusItemMenuDelegate {
             NSStatusBar.system.removeStatusItem(warningItem)
         }
         warningItem = nil
-        lastErrorDescription = ""
-        recoveryMenu = PinchosCore.RecoveryMenu(configExists: true)
+        recoveryState.dismiss()
     }
 
     @objc private func handleWarningClick() {
@@ -148,13 +153,13 @@ final class StatusItemController: StatusItemMenuDelegate {
 
     private func buildRecoveryMenu() -> NSMenu {
         let menu = NSMenu()
-        if !lastErrorDescription.isEmpty {
-            let errorItem = NSMenuItem(title: lastErrorDescription, action: nil, keyEquivalent: "")
+        if let errorDescription = recoveryState.errorDescription {
+            let errorItem = NSMenuItem(title: errorDescription, action: nil, keyEquivalent: "")
             errorItem.isEnabled = false
             menu.addItem(errorItem)
             menu.addItem(NSMenuItem.separator())
         }
-        for action in recoveryMenu.actions {
+        for action in recoveryState.menu.actions {
             let selector: Selector
             switch action {
             case .createExampleConfig:
@@ -243,7 +248,7 @@ final class StatusItemController: StatusItemMenuDelegate {
     }
 
     @objc private func createExampleConfigAction() {
-        guard recoveryMenu.canCreateExampleConfig else { return }
+        guard recoveryState.menu.canCreateExampleConfig else { return }
         do {
             try writeExampleConfig()
         } catch {
