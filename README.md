@@ -63,6 +63,8 @@ Every item is a `[item.<name>]` table. Items render left-to-right in the order t
 type = "command"        # required, the only v1 module type
 run = "<shell command>" # required, executed via `/bin/sh -c` on its interval
 interval = "60s"        # optional, default "60s", minimum "1s". Formats: "30s", "5m", "1h"
+timeout = "15s"         # optional, default "15s", minimum "1s". Terminates the command process group when it expires
+max_output = "64KiB"    # optional, default "64KiB" per stdout/stderr stream. Formats: "B", "KiB", "MiB"
 format = "{output}%"    # optional. {output} is the trimmed last stdout line of `run`. Absent = raw output.
 click = "<shell command>" # optional, run (fire-and-forget) on left-click
 error_text = "–"   # optional, default "–". Shown when `run` fails, instead of the item disappearing.
@@ -70,9 +72,17 @@ icon = "/path/to/icon.svg" # optional, a local image file (SVG/PNG/PDF) rendered
 ```
 
 - `{output}` is the **only** placeholder. There's no JSON-path or nested-field extraction — pipe your command through `jq` (or anything else) to shape the value before it reaches pinchos.
+- `timeout` accepts whole seconds, minutes, or hours and terminates the command's process group after the configured duration.
+- Timeout and cancellation terminate the process group with `SIGTERM` followed immediately by `SIGKILL`, so managed descendants cannot outlive an item or the app.
+- A command that exits while leaving same-group background work running remains owned by its item until that work exits or the item is removed.
+- `max_output` is an independent retained-tail limit for stdout and stderr, so `64KiB` can retain up to 64KiB from each stream while both streams continue draining.
+- Retaining the tail keeps the final output line and the most recent stderr diagnostic available even when a command emits more than the configured limit.
 - `icon` is a plain filesystem path, not a built-in icon library — pinchos ships with no bundled icon catalog. Point it at any image file you like; it's drawn as a template image (tinted automatically for light/dark menu bars) at 16x16, to the left of the item's text. A missing or unreadable file just falls back to text-only — it never crashes the app.
 - A failing command never crashes pinchos and never blanks the item — it renders `error_text`.
 - Command runs for a given item never overlap: if the previous run for that item hasn't finished when the next tick fires, the tick is skipped.
+- Skipped ticks are counted in the item's right-click diagnostics menu without replacing the last completed result.
+- The same timeout and output bounds apply to an optional click command, which is cancelled when its item is removed or Pinchos quits.
+- The diagnostics menu reports the last exit code or signal, duration, skipped ticks, per-stream truncation, and the latest bounded stderr line.
 - A malformed config keeps the last good config running untouched, and pinchos additionally shows a single `pinchos ⚠︎` item; click it to see the parse error (with line number when available), reload, or quit. Fix the file and it clears automatically on the next successful reload.
 - Right-click any item (or the warning item) for **Reload Config** and **Quit** — the app is fully usable without ever touching the config file.
 
@@ -83,6 +93,8 @@ icon = "/path/to/icon.svg" # optional, a local image file (SVG/PNG/PDF) rendered
 type = "command"
 run = "quota-axi --provider claude --json | jq -r '.providers[0].windows[] | select(.label==\"week\") | .percentRemaining'"
 interval = "5m"
+timeout = "15s"
+max_output = "64KiB"
 format = "{output}%"
 icon = "/path/to/pinchos/example/icons/claude.svg"
 click = "open https://claude.ai/settings/usage"
@@ -105,8 +117,8 @@ See [`example/pinchos.toml`](example/pinchos.toml) for a full working config wit
 
 ## Architecture
 
-- `Sources/PinchosCore` — UI-free library: TOML parsing (via TOMLKit), duration parsing, `{output}` templating, and the config-diff engine that decides what changed between two loaded configs (added / removed / changed / reordered). Covered by `swift test`.
-- `Sources/pinchos` — the AppKit executable: one `NSStatusItem` + one per-item `DispatchSourceTimer` per configured item, a `CommandRunner` actor per item (guarantees no-overlap, runs `/bin/sh -c` off the main thread), and a `ConfigWatcher` (`DispatchSourceFileSystemObject`) for live reload.
+- `Sources/PinchosCore` — UI-free library: TOML parsing (via TOMLKit), duration and byte-size parsing, `{output}` templating, the config-diff engine, and bounded process-group command execution with concurrent stdout/stderr draining.
+- `Sources/pinchos` — the AppKit executable: one `NSStatusItem` and one per-item `DispatchSourceTimer` per configured item, plus menu and lifecycle projection of `PinchosCore` runner snapshots and a `ConfigWatcher` (`DispatchSourceFileSystemObject`) for live reload.
 
 ### Why TOMLKit
 

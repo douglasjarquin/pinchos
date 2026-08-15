@@ -1,0 +1,260 @@
+import Darwin
+import Foundation
+import XCTest
+@testable import PinchosCore
+
+final class CommandExecutionTests: XCTestCase {
+    func testSuccessfulExecutionCapturesStdoutAndDuration() async throws {
+        let runner = CommandRunner(command: "printf 'ok\\n'", timeout: 1, maxOutputBytes: 64)
+        let outcome = await runner.runIfIdle()
+
+        guard case .completed(let execution) = outcome else {
+            return XCTFail("expected a completed execution, got \(outcome)")
+        }
+        XCTAssertEqual(execution.terminalReason, .exited(code: 0))
+        XCTAssertEqual(execution.stdout, "ok\n")
+        XCTAssertEqual(execution.stderr, "")
+        XCTAssertGreaterThan(execution.duration, 0)
+        XCTAssertFalse(execution.stdoutTruncated)
+    }
+
+    func testPreservesNonZeroExitCodeAndStderr() async {
+        let runner = CommandRunner(command: "printf 'boom\\n' >&2; exit 7", timeout: 1, maxOutputBytes: 64)
+        let outcome = await runner.runIfIdle()
+
+        guard case .completed(let execution) = outcome else {
+            return XCTFail("expected a completed execution, got \(outcome)")
+        }
+        XCTAssertEqual(execution.terminalReason, .exited(code: 7))
+        XCTAssertEqual(execution.stderr, "boom\n")
+        XCTAssertGreaterThan(execution.duration, 0)
+    }
+
+    func testExtremelyLargeTimeoutDoesNotTrapDuringTimerSetup() async {
+        let runner = CommandRunner(command: "sleep 0.1", timeout: .greatestFiniteMagnitude, maxOutputBytes: 64)
+        let outcome = await runner.runIfIdle()
+
+        guard case .completed(let execution) = outcome else {
+            return XCTFail("expected a completed execution, got \(outcome)")
+        }
+        XCTAssertEqual(execution.terminalReason, .exited(code: 0))
+    }
+
+    func testSimultaneousLargeStdoutAndStderrAreDrainedAndBounded() async {
+        let runner = CommandRunner(
+            command: "(yes O | head -c 1048576) & (yes E | head -c 1048576 >&2) & wait",
+            timeout: 5,
+            maxOutputBytes: 1024
+        )
+        let outcome = await runner.runIfIdle()
+
+        guard case .completed(let execution) = outcome else {
+            return XCTFail("expected a completed execution, got \(outcome)")
+        }
+        XCTAssertEqual(execution.terminalReason, .exited(code: 0))
+        XCTAssertGreaterThanOrEqual(execution.stdoutBytesRead, 1024 * 1024)
+        XCTAssertGreaterThanOrEqual(execution.stderrBytesRead, 1024 * 1024)
+        XCTAssertLessThanOrEqual(execution.stdout.utf8.count, 1024)
+        XCTAssertLessThanOrEqual(execution.stderr.utf8.count, 1024)
+        XCTAssertTrue(execution.stdoutTruncated)
+        XCTAssertTrue(execution.stderrTruncated)
+        XCTAssertFalse(execution.stderr.isEmpty)
+    }
+
+    func testTimeoutKillsProcessGroup() async throws {
+        let childPIDURL = temporaryURL("timeout-child")
+        defer { try? FileManager.default.removeItem(at: childPIDURL) }
+        let command = "trap '' TERM; (trap '' TERM; while :; do sleep 1; done) & child=$!; printf '%s' \"$child\" > '\(childPIDURL.path)'; wait \"$child\""
+        let runner = CommandRunner(command: command, timeout: 0.8, maxOutputBytes: 64)
+
+        let task = Task { await runner.runIfIdle() }
+        let childPID = try await waitForPID(at: childPIDURL)
+        let outcome = await task.value
+
+        guard case .completed(let execution) = outcome else {
+            return XCTFail("expected a completed execution, got \(outcome)")
+        }
+        XCTAssertEqual(execution.terminalReason, .timedOut)
+        XCTAssertTrue(waitUntilGone(childPID), "timeout left child process \(childPID) alive")
+    }
+
+    func testCancellationKillsProcessGroup() async throws {
+        let childPIDURL = temporaryURL("cancel-child")
+        defer { try? FileManager.default.removeItem(at: childPIDURL) }
+        let command = "trap '' TERM; (trap '' TERM; while :; do sleep 1; done) & child=$!; printf '%s' \"$child\" > '\(childPIDURL.path)'; wait \"$child\""
+        let runner = CommandRunner(command: command, timeout: 30, maxOutputBytes: 64)
+
+        let task = Task { await runner.runIfIdle() }
+        let childPID = try await waitForPID(at: childPIDURL)
+        await runner.cancelActive()
+        let outcome = await task.value
+
+        guard case .completed(let execution) = outcome else {
+            return XCTFail("expected a completed execution, got \(outcome)")
+        }
+        XCTAssertEqual(execution.terminalReason, .cancelled)
+        XCTAssertTrue(waitUntilGone(childPID), "cancellation left child process \(childPID) alive")
+        let snapshot = await runner.snapshot()
+        XCTAssertFalse(snapshot.isRunning)
+    }
+
+    func testTimeoutDoesNotWaitForDetachedPipeHolder() async throws {
+        try XCTSkipUnless(FileManager.default.isExecutableFile(atPath: "/usr/bin/perl"))
+        let childPIDURL = temporaryURL("detached-child")
+        defer { try? FileManager.default.removeItem(at: childPIDURL) }
+        var childPID: Int32?
+        defer {
+            if let childPID {
+                _ = kill(childPID, SIGKILL)
+                _ = waitUntilGone(childPID)
+            }
+        }
+
+        let command = "/usr/bin/perl -MPOSIX -e 'POSIX::setsid(); print qq(escaped\\n); sleep 30' & child=$!; printf '%s' \"$child\" > '\(childPIDURL.path)'; wait \"$child\""
+        let runner = CommandRunner(command: command, timeout: 0.2, maxOutputBytes: 64)
+        let startedAt = Date()
+        let task = Task { await runner.runIfIdle() }
+        childPID = try await waitForPID(at: childPIDURL)
+        let outcome = await task.value
+
+        guard case .completed(let execution) = outcome else {
+            return XCTFail("expected a completed execution, got \(outcome)")
+        }
+        XCTAssertEqual(execution.terminalReason, .timedOut)
+        XCTAssertLessThan(Date().timeIntervalSince(startedAt), 3)
+    }
+
+    func testNormalExitRetainsBackgroundProcessGroupUntilCancellation() async throws {
+        let childPIDURL = temporaryURL("natural-exit-child")
+        defer { try? FileManager.default.removeItem(at: childPIDURL) }
+        var childPID: Int32?
+        defer {
+            if let childPID {
+                _ = kill(childPID, SIGKILL)
+                _ = waitUntilGone(childPID)
+            }
+        }
+
+        let command = "(trap '' TERM; while :; do printf x; done) & child=$!; printf '%s' \"$child\" > '\(childPIDURL.path)'; exit 0"
+        let runner = CommandRunner(command: command, timeout: 5, maxOutputBytes: 64)
+        let outcome = await runner.runIfIdle()
+
+        guard case .completed(let execution) = outcome else {
+            return XCTFail("expected a completed execution, got \(outcome)")
+        }
+        let child = try await waitForPID(at: childPIDURL)
+        childPID = child
+        XCTAssertEqual(execution.terminalReason, .exited(code: 0))
+        let activeSnapshot = await runner.snapshot()
+        XCTAssertTrue(activeSnapshot.isRunning)
+        XCTAssertNotEqual(kill(child, 0), -1)
+
+        await runner.cancelActive()
+
+        XCTAssertTrue(waitUntilGone(child), "cancellation left natural-exit child process \(child) alive")
+        let finalSnapshot = await runner.snapshot()
+        XCTAssertFalse(finalSnapshot.isRunning)
+    }
+
+    func testNaturalExitBackgroundProcessHonorsTimeout() async throws {
+        let childPIDURL = temporaryURL("natural-timeout-child")
+        defer { try? FileManager.default.removeItem(at: childPIDURL) }
+        var childPID: Int32?
+        defer {
+            if let childPID {
+                _ = kill(childPID, SIGKILL)
+                _ = waitUntilGone(childPID)
+            }
+        }
+
+        let command = "(trap '' TERM; while :; do printf x; done) & child=$!; printf '%s' \"$child\" > '\(childPIDURL.path)'; exit 0"
+        let runner = CommandRunner(command: command, timeout: 0.2, maxOutputBytes: 64)
+        let outcome = await runner.runIfIdle()
+        let child = try await waitForPID(at: childPIDURL)
+        childPID = child
+
+        guard case .completed(let execution) = outcome else {
+            return XCTFail("expected a completed execution, got \(outcome)")
+        }
+        XCTAssertEqual(execution.terminalReason, .exited(code: 0))
+        let activeSnapshot = await runner.snapshot()
+        XCTAssertTrue(activeSnapshot.isRunning)
+
+        try await Task.sleep(nanoseconds: 1_400_000_000)
+
+        XCTAssertTrue(waitUntilGone(child), "timeout left natural-exit child process \(child) alive")
+        let finalSnapshot = await runner.snapshot()
+        XCTAssertFalse(finalSnapshot.isRunning)
+    }
+
+    func testNaturalExitDescendantFinishingDuringDrainGraceDoesNotStayActive() async throws {
+        let childPIDURL = temporaryURL("natural-grace-child")
+        defer { try? FileManager.default.removeItem(at: childPIDURL) }
+        let command = "(sleep 0.05) & child=$!; printf '%s' \"$child\" > '\(childPIDURL.path)'; exit 0"
+        let runner = CommandRunner(command: command, timeout: 1, maxOutputBytes: 64)
+
+        let outcome = await runner.runIfIdle()
+        let child = try await waitForPID(at: childPIDURL)
+        guard case .completed(let execution) = outcome else {
+            return XCTFail("expected a completed execution, got \(outcome)")
+        }
+        XCTAssertEqual(execution.terminalReason, .exited(code: 0))
+        XCTAssertTrue(waitUntilGone(child))
+        let finalSnapshot = await runner.snapshot()
+        XCTAssertFalse(finalSnapshot.isRunning)
+
+        try await Task.sleep(nanoseconds: 1_200_000_000)
+        guard case .completed(let rerun) = await runner.runIfIdle() else {
+            return XCTFail("expected a subsequent run after a grace-period descendant exit")
+        }
+        XCTAssertEqual(rerun.terminalReason, .exited(code: 0))
+    }
+
+    func testNaturalExitRetainsLateStderrForLastExecution() async throws {
+        let runner = CommandRunner(
+            command: "(sleep 0.5; printf 'late-diagnostic\\n' >&2) & exit 0",
+            timeout: 2,
+            maxOutputBytes: 64
+        )
+
+        let outcome = await runner.runIfIdle()
+        guard case .completed(let execution) = outcome else {
+            return XCTFail("expected a completed execution, got \(outcome)")
+        }
+        XCTAssertEqual(execution.terminalReason, .exited(code: 0))
+        let activeSnapshot = await runner.snapshot()
+        XCTAssertTrue(activeSnapshot.isRunning)
+
+        try await Task.sleep(nanoseconds: 800_000_000)
+
+        let snapshot = await runner.snapshot()
+        XCTAssertFalse(snapshot.isRunning)
+        XCTAssertEqual(snapshot.lastExecution?.stderr, "late-diagnostic\n")
+    }
+
+    private func temporaryURL(_ prefix: String) -> URL {
+        FileManager.default.temporaryDirectory.appendingPathComponent("pinchos-\(prefix)-\(UUID().uuidString)")
+    }
+
+    private func waitForPID(at url: URL) async throws -> Int32 {
+        let deadline = Date().addingTimeInterval(2)
+        while Date() < deadline {
+            if let value = try? String(contentsOf: url), let pid = Int32(value.trimmingCharacters(in: .whitespacesAndNewlines)) {
+                return pid
+            }
+            try await Task.sleep(nanoseconds: 10_000_000)
+        }
+        throw NSError(domain: "CommandExecutionTests", code: 1, userInfo: [NSLocalizedDescriptionKey: "timed out waiting for \(url.path)"])
+    }
+
+    private func waitUntilGone(_ pid: Int32) -> Bool {
+        let deadline = Date().addingTimeInterval(2)
+        repeat {
+            if kill(pid, 0) == -1, errno == ESRCH {
+                return true
+            }
+            usleep(10_000)
+        } while Date() < deadline
+        return false
+    }
+}

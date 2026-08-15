@@ -2,8 +2,20 @@ import XCTest
 @testable import PinchosCore
 
 final class ConfigDiffTests: XCTestCase {
-    private func item(_ name: String, run: String = "echo x", interval: TimeInterval = 60) -> ItemConfig {
-        ItemConfig(name: name, run: run, interval: interval)
+    private func item(
+        _ name: String,
+        run: String = "echo x",
+        interval: TimeInterval = 60,
+        timeout: TimeInterval = 15,
+        maxOutputBytes: Int = 64 * 1024
+    ) -> ItemConfig {
+        ItemConfig(
+            name: name,
+            run: run,
+            interval: interval,
+            timeout: timeout,
+            maxOutputBytes: maxOutputBytes
+        )
     }
 
     func testNoChangeIsEmptyDiff() {
@@ -42,6 +54,15 @@ final class ConfigDiffTests: XCTestCase {
         XCTAssertEqual(diff.changed.map(\.name), ["a"])
         XCTAssertEqual(diff.added, [])
         XCTAssertEqual(diff.removed, [])
+    }
+
+    func testDetectsChangedCommandBounds() {
+        let old = PinchosConfig(items: [item("a")])
+        let new = PinchosConfig(items: [item("a", timeout: 30, maxOutputBytes: 128 * 1024)])
+        let diff = ConfigDiffEngine.diff(old: old, new: new)
+        XCTAssertEqual(diff.changed.map(\.name), ["a"])
+        XCTAssertTrue(diff.added.isEmpty)
+        XCTAssertTrue(diff.removed.isEmpty)
     }
 
     func testDetectsOrderChangeWithSameItems() {

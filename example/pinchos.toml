@@ -2,6 +2,8 @@
 type = "command"
 run = "quota-axi --provider claude --json | jq -r '.providers[0].windows[] | select(.label==\"week\") | .percentRemaining'"
 interval = "5m"
+timeout = "15s"
+max_output = "64KiB"
 format = "{output}%"
 icon = "/path/to/pinchos/example/icons/claude.svg"
 click = "open https://claude.ai/settings/usage"

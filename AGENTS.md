@@ -4,7 +4,7 @@ This file is the project's committed home for project-intrinsic agent knowledge:
 
 - Add durable project-specific notes here as they are discovered through real work.
 - Build: `swift build` / `swift build -c release`. Test: `swift test`. No Xcode project - pure SwiftPM.
-- `Sources/PinchosCore` is UI-free (TOML parsing, duration parsing, `{output}` templating, config-diff engine) and is the only target covered by `swift test`. `Sources/pinchos` is the AppKit executable and has no tests - it's a thin wiring layer over PinchosCore.
+- `Sources/PinchosCore` is UI-free and is the only target covered by `swift test`; `Sources/pinchos` is the AppKit wiring layer and has no tests. See [README.md#architecture](README.md#architecture) for the current module responsibilities.
 - TOMLKit's `TOMLTable` iterates keys alphabetically (backed by `std::map` in the vendored `toml++`), not in file declaration order - see `ConfigParser.declaredItemOrder`, which line-scans for `[item.*]` headers separately from TOMLKit's actual parse/validation. If item ordering ever seems wrong after a TOMLKit upgrade, this is the first place to check.
 - Measure idle memory with `footprint <pid>` (`phys_footprint` line), not `ps`'s RSS column - `ps` counts dyld shared-cache pages mapped read-only across every process on the system, inflating a small Swift/AppKit binary's reported RSS by ~3x over its actual physical footprint.
 - Config resolution: `$XDG_CONFIG_HOME/pinchos/pinchos.toml` if that env var is set and non-empty, else `~/.config/pinchos/pinchos.toml`. See `Sources/pinchos/ConfigLocation.swift`.
