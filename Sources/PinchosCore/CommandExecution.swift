@@ -226,6 +226,7 @@ private final class ProcessGroupController: @unchecked Sendable {
 private struct LingeringProcess: Sendable {
     let controller: ProcessGroupController
     let output: LingeringOutput
+    let timeoutTask: Task<Void, Never>
 }
 
 private struct CommandExecutionResult: Sendable {
@@ -391,9 +392,11 @@ private enum CommandExecutionEngine {
         let timerTask = Task {
             do {
                 try await Task.sleep(nanoseconds: nanoseconds(for: timeout))
+                drainController.stop()
+                _ = controller.beginTermination(.timedOut)
                 race.resume(.timeout)
             } catch {
-                race.resume(.cancellation)
+                return
             }
         }
         let processEventTask = Task {
@@ -402,30 +405,38 @@ private enum CommandExecutionEngine {
         let firstEvent = await withCheckedContinuation { (continuation: CheckedContinuation<Event, Never>) in
             race.install(continuation)
         }
-        timerTask.cancel()
         let terminalAt = DispatchTime.now().uptimeNanoseconds
 
         let reason: CommandTerminalReason
+        let keepProcessGroup: Bool
         switch firstEvent {
         case .timeout:
+            timerTask.cancel()
             if !controller.beginTermination(.timedOut), let claimed = controller.claimDescription() {
                 reason = claimed
             } else {
                 reason = .timedOut
             }
             _ = await waitTask.value
+            keepProcessGroup = controller.hasMembers()
         case .cancellation:
+            timerTask.cancel()
             if !controller.beginTermination(.cancelled), let claimed = controller.claimDescription() {
                 reason = claimed
             } else {
                 reason = .cancelled
             }
             _ = await waitTask.value
+            keepProcessGroup = controller.hasMembers()
         case .process(let waitResult):
             if controller.claimNatural() {
                 reason = terminalReason(for: waitResult)
             } else {
                 reason = controller.claimDescription() ?? terminalReason(for: waitResult)
+            }
+            keepProcessGroup = controller.hasMembers()
+            if !keepProcessGroup {
+                timerTask.cancel()
             }
         }
 
@@ -435,7 +446,7 @@ private enum CommandExecutionEngine {
             stdoutTask: stdoutTask,
             stderrTask: stderrTask,
             controller: drainController,
-            keepRunning: controller.hasMembers()
+            keepRunning: keepProcessGroup
         )
         let execution = makeExecution(
             reason: reason,
@@ -447,7 +458,7 @@ private enum CommandExecutionEngine {
         return CommandExecutionResult(
             execution: execution,
             lingeringProcess: lingeringOutput.map {
-                LingeringProcess(controller: controller, output: $0)
+                LingeringProcess(controller: controller, output: $0, timeoutTask: timerTask)
             }
         )
     }
@@ -763,6 +774,7 @@ public actor CommandRunner {
     }
 
     private func terminate(_ process: LingeringProcess) async {
+        process.timeoutTask.cancel()
         process.output.stop()
         _ = process.controller.beginTermination(.cancelled)
         await process.controller.waitForExit()
@@ -772,6 +784,7 @@ public actor CommandRunner {
     private func pruneLingeringProcesses() {
         lingeringProcesses.removeAll {
             guard !$0.controller.hasMembers() else { return false }
+            $0.timeoutTask.cancel()
             $0.output.stop()
             return true
         }

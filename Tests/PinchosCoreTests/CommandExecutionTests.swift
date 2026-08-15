@@ -55,7 +55,7 @@ final class CommandExecutionTests: XCTestCase {
         let childPIDURL = temporaryURL("timeout-child")
         defer { try? FileManager.default.removeItem(at: childPIDURL) }
         let command = "trap '' TERM; (trap '' TERM; while :; do sleep 1; done) & child=$!; printf '%s' \"$child\" > '\(childPIDURL.path)'; wait \"$child\""
-        let runner = CommandRunner(command: command, timeout: 0.2, maxOutputBytes: 64)
+        let runner = CommandRunner(command: command, timeout: 0.8, maxOutputBytes: 64)
 
         let task = Task { await runner.runIfIdle() }
         let childPID = try await waitForPID(at: childPIDURL)
@@ -144,6 +144,35 @@ final class CommandExecutionTests: XCTestCase {
         XCTAssertTrue(waitUntilGone(child), "cancellation left natural-exit child process \(child) alive")
         let finalSnapshot = await runner.snapshot()
         XCTAssertFalse(finalSnapshot.isRunning)
+    }
+
+    func testNaturalExitBackgroundProcessHonorsTimeout() async throws {
+        let childPIDURL = temporaryURL("natural-timeout-child")
+        defer { try? FileManager.default.removeItem(at: childPIDURL) }
+        var childPID: Int32?
+        defer {
+            if let childPID {
+                _ = kill(childPID, SIGKILL)
+                _ = waitUntilGone(childPID)
+            }
+        }
+
+        let command = "(trap '' TERM; while :; do printf x; done) & child=$!; printf '%s' \"$child\" > '\(childPIDURL.path)'; exit 0"
+        let runner = CommandRunner(command: command, timeout: 0.2, maxOutputBytes: 64)
+        let outcome = await runner.runIfIdle()
+        let child = try await waitForPID(at: childPIDURL)
+        childPID = child
+
+        guard case .completed(let execution) = outcome else {
+            return XCTFail("expected a completed execution, got \(outcome)")
+        }
+        XCTAssertEqual(execution.terminalReason, .exited(code: 0))
+        XCTAssertTrue((await runner.snapshot()).isRunning)
+
+        try await Task.sleep(nanoseconds: 1_400_000_000)
+
+        XCTAssertTrue(waitUntilGone(child), "timeout left natural-exit child process \(child) alive")
+        XCTAssertFalse((await runner.snapshot()).isRunning)
     }
 
     private func temporaryURL(_ prefix: String) -> URL {
