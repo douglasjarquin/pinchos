@@ -26,6 +26,7 @@ final class ConfigDiffTests: XCTestCase {
         XCTAssertEqual(diff.removed, [])
         XCTAssertEqual(diff.changed, [])
         XCTAssertFalse(diff.orderChanged)
+        XCTAssertFalse(diff.requiresNativeRebuild)
     }
 
     func testDetectsAddedItem() {
@@ -36,6 +37,7 @@ final class ConfigDiffTests: XCTestCase {
         XCTAssertEqual(diff.added.map(\.name), ["b"])
         XCTAssertEqual(diff.removed, [])
         XCTAssertFalse(diff.orderChanged)
+        XCTAssertFalse(diff.requiresNativeRebuild)
     }
 
     func testDetectsRemovedItem() {
@@ -45,6 +47,7 @@ final class ConfigDiffTests: XCTestCase {
         XCTAssertEqual(diff.added, [])
         XCTAssertEqual(diff.removed, ["b"])
         XCTAssertFalse(diff.orderChanged)
+        XCTAssertFalse(diff.requiresNativeRebuild)
     }
 
     func testDetectsChangedItem() {
@@ -54,6 +57,7 @@ final class ConfigDiffTests: XCTestCase {
         XCTAssertEqual(diff.changed.map(\.name), ["a"])
         XCTAssertEqual(diff.added, [])
         XCTAssertEqual(diff.removed, [])
+        XCTAssertFalse(diff.requiresNativeRebuild)
     }
 
     func testDetectsChangedCommandBounds() {
@@ -75,6 +79,7 @@ final class ConfigDiffTests: XCTestCase {
         XCTAssertEqual(diff.removed, [])
         XCTAssertEqual(diff.changed, [])
         XCTAssertEqual(diff.newOrder, ["b", "a"])
+        XCTAssertTrue(diff.requiresNativeRebuild)
     }
 
     func testUnchangedItemsAreListed() {
@@ -83,6 +88,18 @@ final class ConfigDiffTests: XCTestCase {
         let diff = ConfigDiffEngine.diff(old: old, new: new)
         XCTAssertEqual(diff.unchanged, ["a"])
         XCTAssertEqual(diff.changed.map(\.name), ["b"])
+        XCTAssertFalse(diff.requiresNativeRebuild)
+    }
+
+    func testAddingItemBeforeExistingItemsRequiresNativeRebuild() {
+        let old = PinchosConfig(items: [item("a"), item("b")])
+        let new = PinchosConfig(items: [item("new"), item("a"), item("b")])
+
+        let diff = ConfigDiffEngine.diff(old: old, new: new)
+
+        XCTAssertEqual(diff.added.map(\.name), ["new"])
+        XCTAssertFalse(diff.orderChanged)
+        XCTAssertTrue(diff.requiresNativeRebuild)
     }
 
     func testAddedRemovedAndChangedTogether() {
