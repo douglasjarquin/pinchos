@@ -125,7 +125,7 @@ final class CommandExecutionTests: XCTestCase {
             }
         }
 
-        let command = "(trap '' TERM; while :; do sleep 1; done) & child=$!; printf '%s' \"$child\" > '\(childPIDURL.path)'; exit 0"
+        let command = "(trap '' TERM; while :; do printf x; done) & child=$!; printf '%s' \"$child\" > '\(childPIDURL.path)'; exit 0"
         let runner = CommandRunner(command: command, timeout: 5, maxOutputBytes: 64)
         let outcome = await runner.runIfIdle()
 

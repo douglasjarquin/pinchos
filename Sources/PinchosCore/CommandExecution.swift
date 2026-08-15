@@ -113,6 +113,28 @@ private final class DrainController: @unchecked Sendable {
     }
 }
 
+private final class LingeringOutput: @unchecked Sendable {
+    let stdoutTask: Task<Void, Never>
+    let stderrTask: Task<Void, Never>
+    private let controller: DrainController
+
+    init(stdoutTask: Task<Void, Never>, stderrTask: Task<Void, Never>, controller: DrainController) {
+        self.stdoutTask = stdoutTask
+        self.stderrTask = stderrTask
+        self.controller = controller
+    }
+
+    func stop() {
+        controller.stop()
+    }
+
+    func stopAndWait() async {
+        stop()
+        _ = await stdoutTask.value
+        _ = await stderrTask.value
+    }
+}
+
 private final class ProcessGroupController: @unchecked Sendable {
     fileprivate enum Claim: Equatable {
         case natural
@@ -201,9 +223,14 @@ private final class ProcessGroupController: @unchecked Sendable {
     }
 }
 
+private struct LingeringProcess: Sendable {
+    let controller: ProcessGroupController
+    let output: LingeringOutput
+}
+
 private struct CommandExecutionResult: Sendable {
     let execution: CommandExecution
-    let lingeringController: ProcessGroupController?
+    let lingeringProcess: LingeringProcess?
 }
 
 private enum CommandExecutionEngine {
@@ -310,7 +337,7 @@ private enum CommandExecutionEngine {
                     stderr: OutputCollector(limit: maxOutputBytes),
                     startedAt: startedAt
                 ),
-                lingeringController: nil
+                lingeringProcess: nil
             )
         }
 
@@ -333,7 +360,7 @@ private enum CommandExecutionEngine {
                     stderr: OutputCollector(limit: maxOutputBytes),
                     startedAt: startedAt
                 ),
-                lingeringController: nil
+                lingeringProcess: nil
             )
         }
 
@@ -404,10 +431,11 @@ private enum CommandExecutionEngine {
 
         _ = await processEventTask.value
 
-        await finishDraining(
+        let lingeringOutput = await finishDraining(
             stdoutTask: stdoutTask,
             stderrTask: stderrTask,
-            controller: drainController
+            controller: drainController,
+            keepRunning: controller.hasMembers()
         )
         let execution = makeExecution(
             reason: reason,
@@ -418,7 +446,9 @@ private enum CommandExecutionEngine {
         )
         return CommandExecutionResult(
             execution: execution,
-            lingeringController: controller.hasMembers() ? controller : nil
+            lingeringProcess: lingeringOutput.map {
+                LingeringProcess(controller: controller, output: $0)
+            }
         )
     }
 
@@ -539,8 +569,18 @@ private enum CommandExecutionEngine {
     private static func finishDraining(
         stdoutTask: Task<Void, Never>,
         stderrTask: Task<Void, Never>,
-        controller: DrainController
-    ) async {
+        controller: DrainController,
+        keepRunning: Bool
+    ) async -> LingeringOutput? {
+        if keepRunning {
+            try? await Task.sleep(nanoseconds: drainGraceNanoseconds)
+            return LingeringOutput(
+                stdoutTask: stdoutTask,
+                stderrTask: stderrTask,
+                controller: controller
+            )
+        }
+
         await withTaskGroup(of: Void.self) { group in
             group.addTask {
                 _ = await stdoutTask.value
@@ -555,6 +595,7 @@ private enum CommandExecutionEngine {
         }
         _ = await stdoutTask.value
         _ = await stderrTask.value
+        return nil
     }
 
     private static func waitForProcess(_ processID: pid_t) -> WaitResult {
@@ -636,7 +677,7 @@ public actor CommandRunner {
     private let timeout: TimeInterval
     private let maxOutputBytes: Int
     private var activeTask: Task<CommandExecutionResult, Never>?
-    private var lingeringControllers: [ProcessGroupController] = []
+    private var lingeringProcesses: [LingeringProcess] = []
     private var lastExecution: CommandExecution?
     private var skippedRefreshes = 0
     private var cancellationInProgress = false
@@ -650,8 +691,8 @@ public actor CommandRunner {
     }
 
     public func runIfIdle() async -> CommandRunOutcome {
-        pruneLingeringControllers()
-        guard activeTask == nil, lingeringControllers.isEmpty, !cancellationInProgress else {
+        pruneLingeringProcesses()
+        guard activeTask == nil, lingeringProcesses.isEmpty, !cancellationInProgress else {
             skippedRefreshes += 1
             return .skipped
         }
@@ -676,8 +717,12 @@ public actor CommandRunner {
         let result = await task.value
         activeTask = nil
         lastExecution = result.execution
-        if let controller = result.lingeringController, controller.hasMembers() {
-            lingeringControllers.append(controller)
+        if let process = result.lingeringProcess {
+            if process.controller.hasMembers() {
+                lingeringProcesses.append(process)
+            } else {
+                await process.output.stopAndWait()
+            }
         }
         return .completed(result.execution)
     }
@@ -686,7 +731,7 @@ public actor CommandRunner {
         guard !cancellationInProgress else { return }
         cancellationInProgress = true
         defer {
-            pruneLingeringControllers()
+            pruneLingeringProcesses()
             cancellationInProgress = false
         }
 
@@ -696,33 +741,40 @@ public actor CommandRunner {
             let result = await activeTask.value
             self.activeTask = nil
             lastExecution = result.execution
-            if let controller = result.lingeringController {
-                await terminate(controller)
+            if let process = result.lingeringProcess {
+                await terminate(process)
+                lingeringProcesses.removeAll { $0.controller === process.controller }
             }
         }
 
-        for controller in lingeringControllers {
-            await terminate(controller)
+        for process in lingeringProcesses {
+            await terminate(process)
         }
-        pruneLingeringControllers()
+        pruneLingeringProcesses()
     }
 
     public func snapshot() -> CommandRunnerSnapshot {
-        pruneLingeringControllers()
+        pruneLingeringProcesses()
         return CommandRunnerSnapshot(
-            isRunning: activeTask != nil || !lingeringControllers.isEmpty || cancellationInProgress,
+            isRunning: activeTask != nil || !lingeringProcesses.isEmpty || cancellationInProgress,
             lastExecution: lastExecution,
             skippedRefreshes: skippedRefreshes
         )
     }
 
-    private func terminate(_ controller: ProcessGroupController) async {
-        _ = controller.beginTermination(.cancelled)
-        await controller.waitForExit()
+    private func terminate(_ process: LingeringProcess) async {
+        process.output.stop()
+        _ = process.controller.beginTermination(.cancelled)
+        await process.controller.waitForExit()
+        await process.output.stopAndWait()
     }
 
-    private func pruneLingeringControllers() {
-        lingeringControllers.removeAll { !$0.hasMembers() }
+    private func pruneLingeringProcesses() {
+        lingeringProcesses.removeAll {
+            guard !$0.controller.hasMembers() else { return false }
+            $0.output.stop()
+            return true
+        }
     }
 }
 
