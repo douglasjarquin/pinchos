@@ -32,6 +32,7 @@ final class CommandRunnerTests: XCTestCase {
         )
         let firstTask = Task { await runner.runIfIdle() }
         try await waitUntilRunning(runner)
+        try await waitUntilMarkerCreated(marker)
 
         await runner.cancelActive()
         await runner.cancelActive()
@@ -56,5 +57,16 @@ final class CommandRunnerTests: XCTestCase {
             try await Task.sleep(nanoseconds: 10_000_000)
         }
         throw NSError(domain: "CommandRunnerTests", code: 1, userInfo: [NSLocalizedDescriptionKey: "runner did not become active"])
+    }
+
+    private func waitUntilMarkerCreated(_ marker: URL) async throws {
+        let deadline = Date().addingTimeInterval(2)
+        while Date() < deadline {
+            if FileManager.default.fileExists(atPath: marker.path) {
+                return
+            }
+            try await Task.sleep(nanoseconds: 10_000_000)
+        }
+        throw NSError(domain: "CommandRunnerTests", code: 2, userInfo: [NSLocalizedDescriptionKey: "command did not create its readiness marker"])
     }
 }
