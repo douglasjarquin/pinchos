@@ -381,7 +381,6 @@ private enum CommandExecutionEngine {
         case .process(let waitResult):
             if controller.claimNatural() {
                 reason = terminalReason(for: waitResult)
-                controller.requestGroupTermination()
             } else {
                 reason = controller.claimDescription() ?? terminalReason(for: waitResult)
             }
