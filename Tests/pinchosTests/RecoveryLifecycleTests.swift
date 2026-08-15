@@ -38,6 +38,10 @@ final class RecoveryLifecycleTests: XCTestCase {
         let watcher = ConfigWatcher(path: configURL.path) {
             callback.fulfill()
         }
+        defer {
+            watcher.stop()
+            try? FileManager.default.removeItem(at: root)
+        }
 
         watcher.start()
         try await Task.sleep(for: .milliseconds(150))
@@ -45,11 +49,15 @@ final class RecoveryLifecycleTests: XCTestCase {
             at: configURL.deletingLastPathComponent(),
             withIntermediateDirectories: true
         )
-        try "".write(to: configURL, atomically: true, encoding: .utf8)
+        try """
+        [item.clock]
+        type = "command"
+        run = "echo clock"
+        """.write(to: configURL, atomically: true, encoding: .utf8)
 
         await fulfillment(of: [callback], timeout: 3)
-        watcher.stop()
-        try? FileManager.default.removeItem(at: root)
+        let loaded = try ConfigParser.parse(String(contentsOf: configURL, encoding: .utf8))
+        XCTAssertEqual(loaded.items.map(\.name), ["clock"])
     }
 
     private func reflectedStatusItem(from controller: StatusItemController) -> NSStatusItem? {
