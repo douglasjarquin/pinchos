@@ -34,7 +34,10 @@ final class RecoveryLifecycleTests: XCTestCase {
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent("pinchos-issue-6-directory-\\(UUID().uuidString)", isDirectory: true)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
-        let controller = StatusItemController(configPath: root.path, onReload: {})
+        let blocker = root.appendingPathComponent("blocker")
+        try Data().write(to: blocker)
+        let configURL = blocker.appendingPathComponent("pinchos.toml")
+        let controller = StatusItemController(configPath: configURL.path, onReload: {})
         defer { try? FileManager.default.removeItem(at: root) }
 
         XCTAssertThrowsError(try controller.writeExampleConfig())
