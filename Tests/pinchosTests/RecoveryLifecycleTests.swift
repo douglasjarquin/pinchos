@@ -30,6 +30,17 @@ final class RecoveryLifecycleTests: XCTestCase {
         await controller.shutdown()
     }
 
+    func testExampleConfigCreationReportsFileFailure() async throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("pinchos-issue-6-directory-\\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let controller = StatusItemController(configPath: root.path, onReload: {})
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        XCTAssertThrowsError(try controller.writeExampleConfig())
+        await controller.shutdown()
+    }
+
     func testMissingConfigWatcherNotifiesWhenFileAppears() async throws {
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent("pinchos-issue-6-\(UUID().uuidString)", isDirectory: true)

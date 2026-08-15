@@ -1,6 +1,23 @@
 import AppKit
 import PinchosCore
 
+private enum RecoveryActionError: LocalizedError {
+    case unableToCreateConfig
+    case unableToOpenConfig
+    case unableToOpenConfigDirectory
+
+    var errorDescription: String? {
+        switch self {
+        case .unableToCreateConfig:
+            return "Unable to create the Pinchos config."
+        case .unableToOpenConfig:
+            return "Unable to open the Pinchos config."
+        case .unableToOpenConfigDirectory:
+            return "Unable to open the Pinchos config directory."
+        }
+    }
+}
+
 @MainActor
 final class StatusItemController: StatusItemMenuDelegate {
     private var items: [String: ManagedItem] = [:]
@@ -228,42 +245,68 @@ final class StatusItemController: StatusItemMenuDelegate {
     @objc private func createExampleConfigAction() {
         guard recoveryMenu.canCreateExampleConfig else { return }
         do {
-            try ensureConfigDirectory()
-            guard !FileManager.default.fileExists(atPath: configPath) else { return }
-            FileManager.default.createFile(
-                atPath: configPath,
-                contents: PinchosCore.ExampleConfig.text.data(using: .utf8)
-            )
+            try writeExampleConfig()
         } catch {
-            showRecoveryNow(configExists: false, errorDescription: String(describing: error))
+            showRecoveryError(error)
         }
+    }
+
+    func writeExampleConfig() throws {
+        try ensureConfigDirectory()
+        guard !FileManager.default.fileExists(atPath: configPath) else { return }
+        guard let data = PinchosCore.ExampleConfig.text.data(using: .utf8) else {
+            throw RecoveryActionError.unableToCreateConfig
+        }
+        try data.write(to: URL(fileURLWithPath: configPath), options: [.withoutOverwriting])
     }
 
     @objc private func openConfigAction() {
         do {
-            try ensureConfigDirectory()
-            if !FileManager.default.fileExists(atPath: configPath) {
-                FileManager.default.createFile(atPath: configPath, contents: Data())
-            }
-            NSWorkspace.shared.open(URL(fileURLWithPath: configPath))
+            try openConfig()
         } catch {
-            showRecoveryNow(configExists: false, errorDescription: String(describing: error))
+            showRecoveryError(error)
+        }
+    }
+
+    func openConfig() throws {
+        try ensureConfigDirectory()
+        if !FileManager.default.fileExists(atPath: configPath) {
+            try Data().write(
+                to: URL(fileURLWithPath: configPath),
+                options: [.withoutOverwriting]
+            )
+        }
+        guard NSWorkspace.shared.open(URL(fileURLWithPath: configPath)) else {
+            throw RecoveryActionError.unableToOpenConfig
         }
     }
 
     @objc private func openConfigDirectoryAction() {
         do {
-            try ensureConfigDirectory()
-            let directory = URL(fileURLWithPath: configPath).deletingLastPathComponent()
-            NSWorkspace.shared.open(directory)
+            try openConfigDirectory()
         } catch {
-            showRecoveryNow(configExists: false, errorDescription: String(describing: error))
+            showRecoveryError(error)
+        }
+    }
+
+    func openConfigDirectory() throws {
+        try ensureConfigDirectory()
+        let directory = URL(fileURLWithPath: configPath).deletingLastPathComponent()
+        guard NSWorkspace.shared.open(directory) else {
+            throw RecoveryActionError.unableToOpenConfigDirectory
         }
     }
 
     private func ensureConfigDirectory() throws {
         let directory = URL(fileURLWithPath: configPath).deletingLastPathComponent()
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    }
+
+    private func showRecoveryError(_ error: Error) {
+        showRecoveryNow(
+            configExists: FileManager.default.fileExists(atPath: configPath),
+            errorDescription: String(describing: error)
+        )
     }
 
     @objc private func quitAction() {
