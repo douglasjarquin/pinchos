@@ -732,6 +732,7 @@ public actor CommandRunner {
             if process.controller.hasMembers() {
                 lingeringProcesses.append(process)
             } else {
+                process.timeoutTask.cancel()
                 await process.output.stopAndWait()
             }
         }

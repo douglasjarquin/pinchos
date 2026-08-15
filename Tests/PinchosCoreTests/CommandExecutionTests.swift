@@ -175,6 +175,28 @@ final class CommandExecutionTests: XCTestCase {
         XCTAssertFalse((await runner.snapshot()).isRunning)
     }
 
+    func testNaturalExitDescendantFinishingDuringDrainGraceDoesNotStayActive() async throws {
+        let childPIDURL = temporaryURL("natural-grace-child")
+        defer { try? FileManager.default.removeItem(at: childPIDURL) }
+        let command = "(sleep 0.05) & child=$!; printf '%s' \"$child\" > '\(childPIDURL.path)'; exit 0"
+        let runner = CommandRunner(command: command, timeout: 1, maxOutputBytes: 64)
+
+        let outcome = await runner.runIfIdle()
+        let child = try await waitForPID(at: childPIDURL)
+        guard case .completed(let execution) = outcome else {
+            return XCTFail("expected a completed execution, got \(outcome)")
+        }
+        XCTAssertEqual(execution.terminalReason, .exited(code: 0))
+        XCTAssertTrue(waitUntilGone(child))
+        XCTAssertFalse((await runner.snapshot()).isRunning)
+
+        try await Task.sleep(nanoseconds: 1_200_000_000)
+        guard case .completed(let rerun) = await runner.runIfIdle() else {
+            return XCTFail("expected a subsequent run after a grace-period descendant exit")
+        }
+        XCTAssertEqual(rerun.terminalReason, .exited(code: 0))
+    }
+
     private func temporaryURL(_ prefix: String) -> URL {
         FileManager.default.temporaryDirectory.appendingPathComponent("pinchos-\(prefix)-\(UUID().uuidString)")
     }
