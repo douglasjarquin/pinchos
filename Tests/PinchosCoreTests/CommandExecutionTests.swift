@@ -177,12 +177,14 @@ final class CommandExecutionTests: XCTestCase {
             return XCTFail("expected a completed execution, got \(outcome)")
         }
         XCTAssertEqual(execution.terminalReason, .exited(code: 0))
-        XCTAssertTrue((await runner.snapshot()).isRunning)
+        let activeSnapshot = await runner.snapshot()
+        XCTAssertTrue(activeSnapshot.isRunning)
 
         try await Task.sleep(nanoseconds: 1_400_000_000)
 
         XCTAssertTrue(waitUntilGone(child), "timeout left natural-exit child process \(child) alive")
-        XCTAssertFalse((await runner.snapshot()).isRunning)
+        let finalSnapshot = await runner.snapshot()
+        XCTAssertFalse(finalSnapshot.isRunning)
     }
 
     func testNaturalExitDescendantFinishingDuringDrainGraceDoesNotStayActive() async throws {
@@ -198,7 +200,8 @@ final class CommandExecutionTests: XCTestCase {
         }
         XCTAssertEqual(execution.terminalReason, .exited(code: 0))
         XCTAssertTrue(waitUntilGone(child))
-        XCTAssertFalse((await runner.snapshot()).isRunning)
+        let finalSnapshot = await runner.snapshot()
+        XCTAssertFalse(finalSnapshot.isRunning)
 
         try await Task.sleep(nanoseconds: 1_200_000_000)
         guard case .completed(let rerun) = await runner.runIfIdle() else {
@@ -219,7 +222,8 @@ final class CommandExecutionTests: XCTestCase {
             return XCTFail("expected a completed execution, got \(outcome)")
         }
         XCTAssertEqual(execution.terminalReason, .exited(code: 0))
-        XCTAssertTrue((await runner.snapshot()).isRunning)
+        let activeSnapshot = await runner.snapshot()
+        XCTAssertTrue(activeSnapshot.isRunning)
 
         try await Task.sleep(nanoseconds: 800_000_000)
 
