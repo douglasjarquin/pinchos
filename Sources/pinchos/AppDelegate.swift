@@ -32,7 +32,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         guard !isTerminating else { return }
         do {
             let text = try String(contentsOfFile: configPath, encoding: .utf8)
-            let config = try ConfigParser.parse(text)
+            let config = try ConfigParser.parse(text, relativeTo: URL(fileURLWithPath: configPath))
             await controller.apply(config: config)
         } catch {
             if FileManager.default.fileExists(atPath: configPath) {

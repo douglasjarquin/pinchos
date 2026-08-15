@@ -1,11 +1,15 @@
 import Foundation
 
 public struct ItemConfig: Equatable {
+    public static let defaultShell = ["/bin/sh", "-c"]
     public static let defaultTimeout: TimeInterval = 15
     public static let defaultMaxOutputBytes = 64 * 1024
 
     public let name: String
     public let run: String
+    public let shell: [String]
+    public let workingDirectory: String?
+    public let environment: [String: String]
     public let interval: TimeInterval
     public let timeout: TimeInterval
     public let maxOutputBytes: Int
@@ -20,6 +24,9 @@ public struct ItemConfig: Equatable {
         interval: TimeInterval,
         timeout: TimeInterval = ItemConfig.defaultTimeout,
         maxOutputBytes: Int = ItemConfig.defaultMaxOutputBytes,
+        shell: [String] = ItemConfig.defaultShell,
+        workingDirectory: String? = nil,
+        environment: [String: String] = [:],
         format: String? = nil,
         click: String? = nil,
         errorText: String = "\u{2013}",
@@ -27,6 +34,9 @@ public struct ItemConfig: Equatable {
     ) {
         self.name = name
         self.run = run
+        self.shell = shell
+        self.workingDirectory = workingDirectory
+        self.environment = environment
         self.interval = interval
         self.timeout = timeout
         self.maxOutputBytes = maxOutputBytes

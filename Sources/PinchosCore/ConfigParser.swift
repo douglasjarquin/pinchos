@@ -2,7 +2,7 @@ import Foundation
 import TOMLKit
 
 public enum ConfigParser {
-    public static func parse(_ text: String) throws -> PinchosConfig {
+    public static func parse(_ text: String, relativeTo configURL: URL? = nil) throws -> PinchosConfig {
         let order = declaredItemOrder(in: text)
 
         let table: TOMLTable
@@ -18,7 +18,7 @@ public enum ConfigParser {
 
         let items = try order.compactMap { name -> ItemConfig? in
             guard let itemTable = itemSection[name]?.table else { return nil }
-            return try parseItem(name: name, table: itemTable)
+            return try parseItem(name: name, table: itemTable, relativeTo: configURL)
         }
         return PinchosConfig(items: items)
     }
@@ -38,7 +38,7 @@ public enum ConfigParser {
         return order
     }
 
-    private static func parseItem(name: String, table: TOMLTable) throws -> ItemConfig {
+    private static func parseItem(name: String, table: TOMLTable, relativeTo configURL: URL?) throws -> ItemConfig {
         guard let type = table["type"]?.string else {
             throw ConfigParseError(message: "item.\(name): missing required field 'type'")
         }
@@ -48,6 +48,10 @@ public enum ConfigParser {
         guard let run = table["run"]?.string else {
             throw ConfigParseError(message: "item.\(name): missing required field 'run'")
         }
+
+        let shell = try parseShell(name: name, value: table["shell"], relativeTo: configURL)
+        let workingDirectory = try parseWorkingDirectory(name: name, value: table["working_directory"], relativeTo: configURL)
+        let environment = try parseEnvironment(name: name, value: table["env"])
 
         let intervalString = table["interval"]?.string ?? "60s"
         let interval: TimeInterval
@@ -89,16 +93,98 @@ public enum ConfigParser {
             throw ConfigParseError(message: "item.\(name): invalid max_output '\(maxOutputString)'")
         }
 
+        let icon: String?
+        if let iconValue = table["icon"] {
+            guard let rawIcon = iconValue.string else {
+                throw ConfigParseError(message: "item.\(name): invalid icon value")
+            }
+            icon = resolvePath(rawIcon, relativeTo: configURL)
+        } else {
+            icon = nil
+        }
+
         return ItemConfig(
             name: name,
             run: run,
             interval: interval,
             timeout: timeout,
             maxOutputBytes: maxOutputBytes,
+            shell: shell,
+            workingDirectory: workingDirectory,
+            environment: environment,
             format: table["format"]?.string,
             click: table["click"]?.string,
             errorText: table["error_text"]?.string ?? "\u{2013}",
-            icon: table["icon"]?.string
+            icon: icon
         )
+    }
+
+    private static func parseShell(name: String, value: TOMLValueConvertible?, relativeTo configURL: URL?) throws -> [String] {
+        guard let value else { return ItemConfig.defaultShell }
+        guard let array = value.array else {
+            throw ConfigParseError(message: "item.\(name): shell must be an array of strings")
+        }
+
+        var shell = [String]()
+        for (index, element) in array.enumerated() {
+            guard let argument = element.string, !argument.isEmpty else {
+                throw ConfigParseError(message: "item.\(name): shell[\(index)] must be a non-empty string")
+            }
+            shell.append(argument)
+        }
+        guard let executable = shell.first else {
+            throw ConfigParseError(message: "item.\(name): shell must include an executable")
+        }
+
+        shell[0] = resolvePath(executable, relativeTo: configURL)
+        guard FileManager.default.isExecutableFile(atPath: shell[0]) else {
+            throw ConfigParseError(message: "item.\(name): shell executable cannot be resolved: \(shell[0])")
+        }
+        return shell
+    }
+
+    private static func parseWorkingDirectory(
+        name: String,
+        value: TOMLValueConvertible?,
+        relativeTo configURL: URL?
+    ) throws -> String? {
+        guard let value else { return nil }
+        guard let rawPath = value.string else {
+            throw ConfigParseError(message: "item.\(name): working_directory must be a string")
+        }
+
+        let path = resolvePath(rawPath, relativeTo: configURL)
+        var isDirectory = ObjCBool(false)
+        guard FileManager.default.fileExists(atPath: path, isDirectory: &isDirectory), isDirectory.boolValue else {
+            throw ConfigParseError(message: "item.\(name): working_directory cannot be resolved: \(path)")
+        }
+        return path
+    }
+
+    private static func parseEnvironment(name: String, value: TOMLValueConvertible?) throws -> [String: String] {
+        guard let value else { return [:] }
+        guard let table = value.table else {
+            throw ConfigParseError(message: "item.\(name).env must be a table of strings")
+        }
+
+        var environment = [String: String]()
+        for (key, value) in table {
+            guard !key.isEmpty, !key.contains("="), !key.unicodeScalars.contains(where: { $0.value == 0 }) else {
+                throw ConfigParseError(message: "item.\(name).env.\(key) is not a valid environment name")
+            }
+            guard let string = value.string, !string.unicodeScalars.contains(where: { $0.value == 0 }) else {
+                throw ConfigParseError(message: "item.\(name).env.\(key) must be a string without NUL bytes")
+            }
+            environment[key] = string
+        }
+        return environment
+    }
+
+    private static func resolvePath(_ rawPath: String, relativeTo configURL: URL?) -> String {
+        let expandedPath = (rawPath as NSString).expandingTildeInPath
+        guard let configURL else { return expandedPath }
+        return URL(fileURLWithPath: expandedPath, relativeTo: configURL.deletingLastPathComponent())
+            .standardizedFileURL
+            .path
     }
 }
