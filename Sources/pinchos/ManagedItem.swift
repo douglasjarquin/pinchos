@@ -11,6 +11,8 @@ final class ManagedItem {
     private let timerQueue = DispatchQueue(label: "com.pinchos.item-timer")
     private weak var menuDelegate: StatusItemMenuDelegate?
     private var isActive = true
+    private var pendingClickInvocations = 0
+    private var clickInvocationsDrained: CheckedContinuation<Void, Never>?
 
     init(config: ItemConfig, menuDelegate: StatusItemMenuDelegate) {
         self.config = config
@@ -56,6 +58,11 @@ final class ManagedItem {
         timer = nil
         await runner.cancelActive()
         await clickRunner?.cancelActive()
+        if pendingClickInvocations > 0 {
+            await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+                clickInvocationsDrained = continuation
+            }
+        }
         NSStatusBar.system.removeStatusItem(statusItem)
     }
 
@@ -96,12 +103,26 @@ final class ManagedItem {
     }
 
     @objc private func handleClick() {
+        guard isActive else { return }
         guard let event = NSApp.currentEvent else { return }
         if event.type == .rightMouseUp {
             menuDelegate?.showLifecycleMenu(for: statusItem)
         } else if clickRunner != nil {
-            Task { await clickRunner?.runIfIdle() }
+            guard let clickRunner else { return }
+            pendingClickInvocations += 1
+            Task { @MainActor [weak self, clickRunner] in
+                defer { self?.finishClickInvocation() }
+                guard let self, self.isActive else { return }
+                _ = await clickRunner.runIfIdle()
+            }
         }
+    }
+
+    private func finishClickInvocation() {
+        pendingClickInvocations -= 1
+        guard pendingClickInvocations == 0, let continuation = clickInvocationsDrained else { return }
+        clickInvocationsDrained = nil
+        continuation.resume()
     }
 }
 

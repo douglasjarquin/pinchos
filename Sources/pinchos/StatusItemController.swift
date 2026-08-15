@@ -29,8 +29,15 @@ final class StatusItemController: StatusItemMenuDelegate {
         await rebuild(with: config)
     }
 
-    func showParseError(_ error: Error) {
-        lastErrorDescription = String(describing: error)
+    func showParseError(_ error: Error) async {
+        let description = String(describing: error)
+        await enqueueLifecycleOperation { [weak self] in
+            self?.showParseErrorNow(description: description)
+        }
+    }
+
+    private func showParseErrorNow(description: String) {
+        lastErrorDescription = description
         guard warningItem == nil else { return }
         let statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         statusItem.button?.title = "pinchos \u{26A0}\u{FE0E}"

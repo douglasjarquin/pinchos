@@ -35,7 +35,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             let config = try ConfigParser.parse(text)
             await controller.apply(config: config)
         } catch {
-            controller.showParseError(error)
+            await controller.showParseError(error)
         }
     }
 

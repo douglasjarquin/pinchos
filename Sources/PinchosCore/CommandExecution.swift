@@ -186,6 +186,11 @@ private final class ProcessGroupController: @unchecked Sendable {
             lock.unlock()
             return
         }
+        guard groupHasMembers(processGroupID) else {
+            self.processGroupID = nil
+            lock.unlock()
+            return
+        }
         cleanupRequested = true
         lock.unlock()
 
@@ -208,9 +213,19 @@ private final class ProcessGroupController: @unchecked Sendable {
 
     func hasMembers() -> Bool {
         lock.lock()
-        let processGroupID = self.processGroupID
+        guard let processGroupID else {
+            lock.unlock()
+            return false
+        }
+        let hasMembers = groupHasMembers(processGroupID)
+        if !hasMembers {
+            self.processGroupID = nil
+        }
         lock.unlock()
-        guard let processGroupID else { return false }
+        return hasMembers
+    }
+
+    private func groupHasMembers(_ processGroupID: pid_t) -> Bool {
         let result = kill(-processGroupID, 0)
         return result == 0 || errno == EPERM
     }
@@ -346,6 +361,23 @@ private enum CommandExecutionEngine {
 
         guard Darwin.pipe(&stdoutFileDescriptors) == 0,
               Darwin.pipe(&stderrFileDescriptors) == 0 else {
+            let errorCode = errno
+            closeIfOpen(stdoutFileDescriptors)
+            closeIfOpen(stderrFileDescriptors)
+            return CommandExecutionResult(
+                execution: makeExecution(
+                    reason: .launchFailed(String(cString: strerror(errorCode))),
+                    stdout: OutputCollector(limit: maxOutputBytes),
+                    stderr: OutputCollector(limit: maxOutputBytes),
+                    startedAt: startedAt
+                ),
+                lingeringProcess: nil
+            )
+        }
+        guard setCloseOnExec(stdoutFileDescriptors[0]),
+              setCloseOnExec(stdoutFileDescriptors[1]),
+              setCloseOnExec(stderrFileDescriptors[0]),
+              setCloseOnExec(stderrFileDescriptors[1]) else {
             let errorCode = errno
             closeIfOpen(stdoutFileDescriptors)
             closeIfOpen(stderrFileDescriptors)
@@ -697,8 +729,17 @@ private enum CommandExecutionEngine {
     }
 
     private static func nanoseconds(for timeout: TimeInterval) -> UInt64 {
-        let value = max(1, timeout * 1_000_000_000)
-        return UInt64(min(value, Double(UInt64.max)))
+        let value = timeout * 1_000_000_000
+        guard value.isFinite, value < Double(UInt64.max) else {
+            return UInt64.max
+        }
+        return UInt64(max(1, value))
+    }
+
+    private static func setCloseOnExec(_ fileDescriptor: Int32) -> Bool {
+        let flags = fcntl(fileDescriptor, F_GETFD)
+        guard flags >= 0 else { return false }
+        return fcntl(fileDescriptor, F_SETFD, flags | FD_CLOEXEC) >= 0
     }
 
     private static func closeIfOpen(_ fileDescriptors: [Int32]) {
@@ -717,6 +758,7 @@ public actor CommandRunner {
     private var lastExecution: CommandExecution?
     private var skippedRefreshes = 0
     private var cancellationInProgress = false
+    private var runGeneration: UInt64 = 0
 
     public init(command: String, timeout: TimeInterval, maxOutputBytes: Int) {
         precondition(timeout > 0, "command timeout must be positive")
@@ -727,8 +769,12 @@ public actor CommandRunner {
     }
 
     public func runIfIdle() async -> CommandRunOutcome {
+        let generation = runGeneration
         await settleLingeringProcesses()
-        guard activeTask == nil, lingeringProcesses.isEmpty, !cancellationInProgress else {
+        guard generation == runGeneration,
+              activeTask == nil,
+              lingeringProcesses.isEmpty,
+              !cancellationInProgress else {
             skippedRefreshes += 1
             return .skipped
         }
@@ -751,7 +797,6 @@ public actor CommandRunner {
         }
         activeTask = task
         let result = await task.value
-        activeTask = nil
         var completedExecution = result.execution
         lastExecution = completedExecution
         if let process = result.lingeringProcess {
@@ -764,23 +809,21 @@ public actor CommandRunner {
                 lastExecution = completedExecution
             }
         }
+        activeTask = nil
         return .completed(completedExecution)
     }
 
     public func cancelActive() async {
         guard !cancellationInProgress else { return }
         cancellationInProgress = true
+        runGeneration &+= 1
 
         let activeTask = self.activeTask
         activeTask?.cancel()
         if let activeTask {
-            let result = await activeTask.value
-            self.activeTask = nil
-            lastExecution = result.execution
-            if let process = result.lingeringProcess {
-                await terminate(process)
-                lingeringProcesses.removeAll { $0.controller === process.controller }
-                lastExecution = process.currentExecution()
+            _ = await activeTask.value
+            while self.activeTask != nil {
+                await Task.yield()
             }
         }
 

@@ -30,6 +30,16 @@ final class CommandExecutionTests: XCTestCase {
         XCTAssertGreaterThan(execution.duration, 0)
     }
 
+    func testExtremelyLargeTimeoutDoesNotTrapDuringTimerSetup() async {
+        let runner = CommandRunner(command: "sleep 0.1", timeout: .greatestFiniteMagnitude, maxOutputBytes: 64)
+        let outcome = await runner.runIfIdle()
+
+        guard case .completed(let execution) = outcome else {
+            return XCTFail("expected a completed execution, got \(outcome)")
+        }
+        XCTAssertEqual(execution.terminalReason, .exited(code: 0))
+    }
+
     func testSimultaneousLargeStdoutAndStderrAreDrainedAndBounded() async {
         let runner = CommandRunner(
             command: "(yes O | head -c 1048576) & (yes E | head -c 1048576 >&2) & wait",
