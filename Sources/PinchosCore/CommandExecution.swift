@@ -424,20 +424,22 @@ private enum CommandExecutionEngine {
         close(stderrFileDescriptors[1])
         stderrFileDescriptors[1] = -1
         controller.install(processGroupID: processID)
+        let stdoutReadFileDescriptor = stdoutFileDescriptors[0]
+        let stderrReadFileDescriptor = stderrFileDescriptors[0]
 
         let stdout = OutputCollector(limit: maxOutputBytes)
         let stderr = OutputCollector(limit: maxOutputBytes)
         let drainController = DrainController()
         let stdoutTask = Task {
             await drainAsync(
-                fileDescriptor: stdoutFileDescriptors[0],
+                fileDescriptor: stdoutReadFileDescriptor,
                 into: stdout,
                 controller: drainController
             )
         }
         let stderrTask = Task {
             await drainAsync(
-                fileDescriptor: stderrFileDescriptors[0],
+                fileDescriptor: stderrReadFileDescriptor,
                 into: stderr,
                 controller: drainController
             )
