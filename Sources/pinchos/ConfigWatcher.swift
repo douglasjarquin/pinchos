@@ -7,6 +7,7 @@ final class ConfigWatcher {
     private var source: DispatchSourceFileSystemObject?
     private var fileDescriptor: Int32 = -1
     private var retryWorkItem: DispatchWorkItem?
+    private var changeWorkItem: DispatchWorkItem?
 
     init(path: String, onChange: @escaping () -> Void) {
         self.path = path
@@ -22,6 +23,7 @@ final class ConfigWatcher {
     func stop() {
         queue.async { [weak self] in
             self?.retryWorkItem?.cancel()
+            self?.changeWorkItem?.cancel()
             self?.source?.cancel()
             self?.source = nil
         }
@@ -43,7 +45,7 @@ final class ConfigWatcher {
         newSource.setEventHandler { [weak self] in
             guard let self else { return }
             let flags = newSource.data
-            self.onChange()
+            self.scheduleChange()
             if flags.contains(.delete) || flags.contains(.rename) {
                 self.reopen()
             }
@@ -54,7 +56,7 @@ final class ConfigWatcher {
         }
         source = newSource
         newSource.resume()
-        onChange()
+        scheduleChange()
     }
 
     private func reopen() {
@@ -69,5 +71,16 @@ final class ConfigWatcher {
         }
         retryWorkItem = workItem
         queue.asyncAfter(deadline: .now() + delay, execute: workItem)
+    }
+
+    private func scheduleChange() {
+        changeWorkItem?.cancel()
+        let workItem = DispatchWorkItem { [weak self] in
+            guard let self else { return }
+            self.changeWorkItem = nil
+            self.onChange()
+        }
+        changeWorkItem = workItem
+        queue.asyncAfter(deadline: .now() + 0.25, execute: workItem)
     }
 }

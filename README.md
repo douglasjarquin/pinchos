@@ -52,7 +52,11 @@ open /path/to/pinchos/.build/release/pinchos
 
 Pinchos reads `$XDG_CONFIG_HOME/pinchos/pinchos.toml` if `XDG_CONFIG_HOME` is set, otherwise `~/.config/pinchos/pinchos.toml`.
 
-The file is edited live: pinchos watches it with a `DispatchSource` file-system-object source and reapplies your changes — including adding, removing, or reordering items — without a relaunch.
+The file is edited live: pinchos watches it with a `DispatchSource` file-system-object source and applies configuration diffs without relaunching.
+Unchanged items keep their existing status item, timer, runner, and displayed output.
+Added items are appended when native status-item placement can preserve declaration order, removed items are torn down, and changed items update in place.
+If a declaration-order change cannot be represented by native insertion, pinchos rebuilds the configured status items to restore the requested order.
+Reload notifications are coalesced so in-place writes are applied after the file settles, and a malformed file leaves the last good configuration running.
 
 ### Schema (v1)
 

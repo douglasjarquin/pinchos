@@ -50,7 +50,7 @@ final class StatusItemController: StatusItemMenuDelegate {
             clearWarningItem()
         }
         guard !diff.isEmpty else { return }
-        await rebuild(with: config)
+        await apply(diff: diff, config: config)
     }
 
     func showParseError(_ error: Error) async {
@@ -104,6 +104,26 @@ final class StatusItemController: StatusItemMenuDelegate {
         for item in config.items {
             items[item.name] = ManagedItem(config: item, menuDelegate: self)
         }
+    }
+
+    private func apply(diff: ConfigDiff, config: PinchosConfig) async {
+        if diff.requiresNativeRebuild {
+            await rebuild(with: config)
+            return
+        }
+
+        for name in diff.removed {
+            if let item = items.removeValue(forKey: name) {
+                await item.tearDown()
+            }
+        }
+        for item in diff.changed {
+            await items[item.name]?.update(config: item)
+        }
+        for item in diff.added {
+            items[item.name] = ManagedItem(config: item, menuDelegate: self)
+        }
+        order = diff.newOrder
     }
 
     func shutdown() async {

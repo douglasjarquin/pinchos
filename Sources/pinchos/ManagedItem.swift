@@ -5,12 +5,13 @@ import PinchosCore
 final class ManagedItem {
     let statusItem: NSStatusItem
     private(set) var config: ItemConfig
-    private let runner: CommandRunner
-    private let clickRunner: CommandRunner?
+    private var runner: CommandRunner
+    private var clickRunner: CommandRunner?
     private var timer: DispatchSourceTimer?
     private let timerQueue = DispatchQueue(label: "com.pinchos.item-timer")
     private weak var menuDelegate: StatusItemMenuDelegate?
     private var isActive = true
+    private var configurationGeneration = 0
     private var pendingClickInvocations = 0
     private var clickInvocationsDrained: CheckedContinuation<Void, Never>?
 
@@ -51,9 +52,47 @@ final class ManagedItem {
         statusItem.button?.imagePosition = .imageLeft
     }
 
+    func update(config: ItemConfig) async {
+        guard isActive else { return }
+
+        let previousConfig = self.config
+        configurationGeneration &+= 1
+
+        let runnerConfigurationChanged = previousConfig.run != config.run
+            || previousConfig.timeout != config.timeout
+            || previousConfig.maxOutputBytes != config.maxOutputBytes
+        await runner.cancelActive()
+        if runnerConfigurationChanged {
+            runner = CommandRunner(
+                command: config.run,
+                timeout: config.timeout,
+                maxOutputBytes: config.maxOutputBytes
+            )
+        }
+
+        let clickRunnerConfigurationChanged = previousConfig.click != config.click
+            || previousConfig.timeout != config.timeout
+            || previousConfig.maxOutputBytes != config.maxOutputBytes
+        if clickRunnerConfigurationChanged {
+            await clickRunner?.cancelActive()
+            clickRunner = config.click.map {
+                CommandRunner(
+                    command: $0,
+                    timeout: config.timeout,
+                    maxOutputBytes: config.maxOutputBytes
+                )
+            }
+        }
+
+        self.config = config
+        applyIcon()
+        startTimer()
+    }
+
     func tearDown() async {
         guard isActive else { return }
         isActive = false
+        configurationGeneration &+= 1
         timer?.cancel()
         timer = nil
         await runner.cancelActive()
@@ -82,9 +121,10 @@ final class ManagedItem {
 
     private func tick() async {
         guard isActive else { return }
+        let generation = configurationGeneration
         let currentConfig = config
         let outcome = await runner.runIfIdle()
-        guard isActive else { return }
+        guard isActive, generation == configurationGeneration else { return }
         switch outcome {
         case .skipped:
             return

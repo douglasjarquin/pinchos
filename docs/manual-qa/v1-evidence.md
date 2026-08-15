@@ -89,7 +89,8 @@ beta count=9 (should have STOPPED growing)
 gamma count=4 (new item, should now be growing)
 ```
 
-Confirms the `DispatchSourceFileSystemObject` watcher detected the edit, `ConfigDiffEngine` computed added=[gamma], removed=[beta], and `StatusItemController` tore down/rebuilt only what changed - all without a process relaunch.
+Confirms the `DispatchSourceFileSystemObject` watcher detected the edit and the process applied the new configuration without a relaunch.
+The v1.1 incremental lifecycle evidence below verifies that unchanged items are not recreated during this flow.
 
 ## 4. Deliberately broken config: crash-safety + last-good retention + recovery
 
@@ -123,3 +124,20 @@ Confirms recovery: the very next successful parse after a broken edit applies cl
 | Broken config never crashes, keeps last good | process survived, alpha/gamma kept ticking through a malformed config |
 | Recovery after fix | delta item started immediately once the file was corrected |
 | `swift build -c release` produces a runnable binary | binary launched directly in all of the above |
+
+## 5. v1.1 incremental reload evidence
+
+This pass used the release binary with a scratch `XDG_CONFIG_HOME` and marker files written by each command.
+All scenarios ran in one process with PID 45763.
+
+| Scenario | Observable result |
+|---|---|
+| No-op reload | alpha stayed at 1 tick and beta stayed at 1 tick. |
+| Modify beta | alpha stayed at 1 tick and beta advanced from 1 to 2. |
+| Remove a running beta command | beta wrote one start marker, wrote no done marker, had zero remaining matching child processes, and alpha stayed at 1 tick. |
+| Add gamma at the end | alpha stayed at 1 tick and gamma produced one initial tick. |
+| Reorder gamma before alpha | both existing items advanced from 1 to 2, proving the native-placement rebuild path was used. |
+| Malformed reload and recovery | alpha and gamma stayed at 2 ticks while the process remained alive, then the valid configuration recovered with both still at 2. |
+
+The raw lifecycle transcript was retained outside the delivery commit for this QA session.
+This marker evidence proves process, timer, runner, cancellation, and reload behavior, but it does not claim a screenshot or accessibility inspection of the menu bar.
