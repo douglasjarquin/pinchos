@@ -96,6 +96,23 @@ private final class OutputCollector: @unchecked Sendable {
     }
 }
 
+private final class DrainController: @unchecked Sendable {
+    private let lock = NSLock()
+    private var stopped = false
+
+    func stop() {
+        lock.lock()
+        stopped = true
+        lock.unlock()
+    }
+
+    var shouldStop: Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return stopped
+    }
+}
+
 private final class ProcessGroupController: @unchecked Sendable {
     fileprivate enum Claim: Equatable {
         case natural
@@ -172,11 +189,16 @@ private final class ProcessGroupController: @unchecked Sendable {
         let processGroupID = self.processGroupID
         lock.unlock()
         guard let processGroupID else { return }
+        if kill(-processGroupID, 0) == -1, errno == ESRCH {
+            return
+        }
         _ = kill(-processGroupID, SIGKILL)
     }
 }
 
 private enum CommandExecutionEngine {
+    private static let drainGraceNanoseconds: UInt64 = 300_000_000
+
     private enum SpawnError: Error, CustomStringConvertible {
         case posix(Int32)
 
@@ -307,11 +329,20 @@ private enum CommandExecutionEngine {
 
         let stdout = OutputCollector(limit: maxOutputBytes)
         let stderr = OutputCollector(limit: maxOutputBytes)
+        let drainController = DrainController()
         let stdoutTask = Task {
-            await drainAsync(fileDescriptor: stdoutFileDescriptors[0], into: stdout)
+            await drainAsync(
+                fileDescriptor: stdoutFileDescriptors[0],
+                into: stdout,
+                controller: drainController
+            )
         }
         let stderrTask = Task {
-            await drainAsync(fileDescriptor: stderrFileDescriptors[0], into: stderr)
+            await drainAsync(
+                fileDescriptor: stderrFileDescriptors[0],
+                into: stderr,
+                controller: drainController
+            )
         }
         let waitTask = Task { await waitForProcessAsync(processID) }
         let timerTask = Task {
@@ -329,6 +360,7 @@ private enum CommandExecutionEngine {
             race.install(continuation)
         }
         timerTask.cancel()
+        let terminalAt = DispatchTime.now().uptimeNanoseconds
 
         let reason: CommandTerminalReason
         switch firstEvent {
@@ -357,9 +389,18 @@ private enum CommandExecutionEngine {
 
         _ = await processEventTask.value
 
-        _ = await stdoutTask.value
-        _ = await stderrTask.value
-        return makeExecution(reason: reason, stdout: stdout, stderr: stderr, startedAt: startedAt)
+        await finishDraining(
+            stdoutTask: stdoutTask,
+            stderrTask: stderrTask,
+            controller: drainController
+        )
+        return makeExecution(
+            reason: reason,
+            stdout: stdout,
+            stderr: stderr,
+            startedAt: startedAt,
+            finishedAt: terminalAt
+        )
     }
 
     private static func spawn(
@@ -430,10 +471,25 @@ private enum CommandExecutionEngine {
         guard status == 0 else { throw SpawnError.posix(status) }
     }
 
-    private static func drain(fileDescriptor: Int32, into collector: OutputCollector) {
+    private static func drain(
+        fileDescriptor: Int32,
+        into collector: OutputCollector,
+        controller: DrainController
+    ) {
         defer { close(fileDescriptor) }
+        var descriptor = pollfd(fd: fileDescriptor, events: Int16(POLLIN), revents: 0)
         var buffer = [UInt8](repeating: 0, count: 16 * 1024)
-        while true {
+        while !controller.shouldStop {
+            let pollResult = Darwin.poll(&descriptor, 1, 50)
+            if pollResult == 0 {
+                continue
+            }
+            if pollResult < 0 {
+                if errno == EINTR {
+                    continue
+                }
+                return
+            }
             let count = buffer.withUnsafeMutableBytes { rawBuffer -> Int in
                 guard let baseAddress = rawBuffer.baseAddress else { return 0 }
                 return Darwin.read(fileDescriptor, baseAddress, rawBuffer.count)
@@ -448,13 +504,38 @@ private enum CommandExecutionEngine {
         }
     }
 
-    private static func drainAsync(fileDescriptor: Int32, into collector: OutputCollector) async {
+    private static func drainAsync(
+        fileDescriptor: Int32,
+        into collector: OutputCollector,
+        controller: DrainController
+    ) async {
         await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
             DispatchQueue.global().async {
-                drain(fileDescriptor: fileDescriptor, into: collector)
+                drain(fileDescriptor: fileDescriptor, into: collector, controller: controller)
                 continuation.resume()
             }
         }
+    }
+
+    private static func finishDraining(
+        stdoutTask: Task<Void, Never>,
+        stderrTask: Task<Void, Never>,
+        controller: DrainController
+    ) async {
+        await withTaskGroup(of: Void.self) { group in
+            group.addTask {
+                _ = await stdoutTask.value
+                _ = await stderrTask.value
+            }
+            group.addTask {
+                try? await Task.sleep(nanoseconds: drainGraceNanoseconds)
+                controller.stop()
+            }
+            _ = await group.next()
+            group.cancelAll()
+        }
+        _ = await stdoutTask.value
+        _ = await stderrTask.value
     }
 
     private static func waitForProcess(_ processID: pid_t) -> WaitResult {
@@ -501,11 +582,12 @@ private enum CommandExecutionEngine {
         reason: CommandTerminalReason,
         stdout: OutputCollector,
         stderr: OutputCollector,
-        startedAt: UInt64
+        startedAt: UInt64,
+        finishedAt: UInt64 = DispatchTime.now().uptimeNanoseconds
     ) -> CommandExecution {
         let stdoutSnapshot = stdout.snapshot()
         let stderrSnapshot = stderr.snapshot()
-        let elapsed = DispatchTime.now().uptimeNanoseconds &- startedAt
+        let elapsed = finishedAt &- startedAt
         return CommandExecution(
             terminalReason: reason,
             stdout: String(decoding: stdoutSnapshot.data, as: UTF8.self),

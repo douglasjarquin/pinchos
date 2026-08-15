@@ -88,6 +88,32 @@ final class CommandExecutionTests: XCTestCase {
         XCTAssertFalse(snapshot.isRunning)
     }
 
+    func testTimeoutDoesNotWaitForDetachedPipeHolder() async throws {
+        try XCTSkipUnless(FileManager.default.isExecutableFile(atPath: "/usr/bin/perl"))
+        let childPIDURL = temporaryURL("detached-child")
+        defer { try? FileManager.default.removeItem(at: childPIDURL) }
+        var childPID: Int32?
+        defer {
+            if let childPID {
+                _ = kill(childPID, SIGKILL)
+                _ = waitUntilGone(childPID)
+            }
+        }
+
+        let command = "/usr/bin/perl -MPOSIX -e 'POSIX::setsid(); print qq(escaped\\n); sleep 30' & child=$!; printf '%s' \"$child\" > '\(childPIDURL.path)'; wait \"$child\""
+        let runner = CommandRunner(command: command, timeout: 0.2, maxOutputBytes: 64)
+        let startedAt = Date()
+        let task = Task { await runner.runIfIdle() }
+        childPID = try await waitForPID(at: childPIDURL)
+        let outcome = await task.value
+
+        guard case .completed(let execution) = outcome else {
+            return XCTFail("expected a completed execution, got \(outcome)")
+        }
+        XCTAssertEqual(execution.terminalReason, .timedOut)
+        XCTAssertLessThan(Date().timeIntervalSince(startedAt), 3)
+    }
+
     private func temporaryURL(_ prefix: String) -> URL {
         FileManager.default.temporaryDirectory.appendingPathComponent("pinchos-\(prefix)-\(UUID().uuidString)")
     }

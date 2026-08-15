@@ -8,12 +8,20 @@ final class StatusItemController: StatusItemMenuDelegate {
     private var warningItem: NSStatusItem?
     private var lastErrorDescription = ""
     private let onReload: () -> Void
+    private var lifecycleTail: Task<Void, Never>?
+    private var lifecycleGeneration = 0
 
     init(onReload: @escaping () -> Void) {
         self.onReload = onReload
     }
 
     func apply(config: PinchosConfig) async {
+        await enqueueLifecycleOperation { [weak self] in
+            await self?.applyNow(config: config)
+        }
+    }
+
+    private func applyNow(config: PinchosConfig) async {
         clearWarningItem()
         let old = currentConfig()
         let diff = ConfigDiffEngine.diff(old: old, new: config)
@@ -54,10 +62,31 @@ final class StatusItemController: StatusItemMenuDelegate {
     }
 
     func shutdown() async {
+        await enqueueLifecycleOperation { [weak self] in
+            await self?.shutdownNow()
+        }
+    }
+
+    private func shutdownNow() async {
         for name in order { await items[name]?.tearDown() }
         items.removeAll()
         order.removeAll()
         clearWarningItem()
+    }
+
+    private func enqueueLifecycleOperation(_ operation: @escaping @MainActor () async -> Void) async {
+        lifecycleGeneration += 1
+        let generation = lifecycleGeneration
+        let previous = lifecycleTail
+        let task = Task { @MainActor in
+            _ = await previous?.value
+            await operation()
+        }
+        lifecycleTail = task
+        _ = await task.value
+        if lifecycleGeneration == generation {
+            lifecycleTail = nil
+        }
     }
 
     private func clearWarningItem() {
