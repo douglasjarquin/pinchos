@@ -32,7 +32,7 @@ final class RecoveryLifecycleTests: XCTestCase {
 
     func testExampleConfigCreationReportsFileFailure() async throws {
         let root = FileManager.default.temporaryDirectory
-            .appendingPathComponent("pinchos-issue-6-directory-\\(UUID().uuidString)", isDirectory: true)
+            .appendingPathComponent("pinchos-issue-6-directory-\(UUID().uuidString)", isDirectory: true)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         let blocker = root.appendingPathComponent("blocker")
         try Data().write(to: blocker)
