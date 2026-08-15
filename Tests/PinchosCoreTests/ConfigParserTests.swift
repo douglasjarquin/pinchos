@@ -368,4 +368,20 @@ final class ConfigParserTests: XCTestCase {
             XCTAssertEqual(parseError?.line, 1)
         }
     }
+
+    func testEscapedMultilineDelimiterDoesNotCreateSourceLineForStringContent() {
+        let toml = #"""
+        [item.bad]
+        run = """
+        literal escaped delimiter: \"""
+        type = "command"
+        """
+        """#
+
+        XCTAssertThrowsError(try ConfigParser.parse(toml)) { error in
+            let parseError = error as? ConfigParseError
+            XCTAssertTrue(parseError?.message.contains("missing required field 'type'") == true)
+            XCTAssertEqual(parseError?.line, 1)
+        }
+    }
 }

@@ -56,7 +56,7 @@ public enum ConfigParser {
             guard !line.isEmpty, !line.hasPrefix("#") else { continue }
 
             if let delimiter = multilineDelimiter {
-                if line.contains(delimiter) {
+                if unescapedDelimiterCount(delimiter, in: line) > 0 {
                     multilineDelimiter = nil
                 }
                 continue
@@ -134,17 +134,35 @@ public enum ConfigParser {
 
     private static func openMultilineDelimiter(in value: String) -> String? {
         for delimiter in ["\"\"\"", "'''"] {
-            var count = 0
-            var searchStart = value.startIndex
-            while let range = value.range(of: delimiter, range: searchStart..<value.endIndex) {
-                count += 1
-                searchStart = range.upperBound
-            }
+            let count = unescapedDelimiterCount(delimiter, in: value)
             if count % 2 == 1 {
                 return delimiter
             }
         }
         return nil
+    }
+
+    private static func unescapedDelimiterCount(_ delimiter: String, in value: String) -> Int {
+        var count = 0
+        var searchStart = value.startIndex
+        while let range = value.range(of: delimiter, range: searchStart..<value.endIndex) {
+            if !isEscaped(at: range.lowerBound, in: value) {
+                count += 1
+            }
+            searchStart = range.upperBound
+        }
+        return count
+    }
+
+    private static func isEscaped(at index: String.Index, in value: String) -> Bool {
+        var backslashCount = 0
+        var cursor = index
+        while cursor > value.startIndex {
+            cursor = value.index(before: cursor)
+            guard value[cursor] == "\\" else { break }
+            backslashCount += 1
+        }
+        return backslashCount % 2 == 1
     }
 
     private static func sourceLine(
