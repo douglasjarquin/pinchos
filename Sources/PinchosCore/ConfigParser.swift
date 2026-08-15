@@ -34,9 +34,9 @@ public enum ConfigParser {
         var order: [String] = []
         for rawLine in text.split(separator: "\n", omittingEmptySubsequences: false) {
             let line = rawLine.trimmingCharacters(in: .whitespaces)
-            guard line.hasPrefix("[item."), line.hasSuffix("]") else { continue }
-            let inner = line.dropFirst("[item.".count).dropLast()
-            let name = inner.trimmingCharacters(in: CharacterSet(charactersIn: "\"'"))
+            guard let components = headerComponents(in: line), components.count >= 2,
+                  components[0] == "item" else { continue }
+            let name = components[1]
             guard !name.isEmpty, !seen.contains(name) else { continue }
             seen.insert(name)
             order.append(name)
@@ -54,13 +54,11 @@ public enum ConfigParser {
             let line = rawLine.trimmingCharacters(in: .whitespaces)
             guard !line.isEmpty, !line.hasPrefix("#") else { continue }
 
-            if line.hasPrefix("[item."), line.hasSuffix("]") {
-                let inner = line.dropFirst("[item.".count).dropLast()
-                let components = inner.split(separator: ".", maxSplits: 1, omittingEmptySubsequences: false)
-                let name = components[0].trimmingCharacters(in: CharacterSet(charactersIn: "\"'"))
-                guard !name.isEmpty else { continue }
+            if let components = headerComponents(in: line), components.count >= 2,
+               components[0] == "item" {
+                let name = components[1]
                 currentItem = name
-                currentSection = components.count == 2 ? String(components[1]) : nil
+                currentSection = components.count == 2 ? nil : components.dropFirst(2).joined(separator: ".")
                 lines[name] = lines[name] ?? lineNumber
                 if let currentSection {
                     lines["\(name).\(currentSection)"] = lineNumber
@@ -79,6 +77,50 @@ public enum ConfigParser {
         }
 
         return lines
+    }
+
+    private static func headerComponents(in line: String) -> [String]? {
+        guard line.first == "[", line.last == "]" else { return nil }
+
+        var components = [String]()
+        var component = ""
+        var quote: Character?
+        var escaped = false
+
+        func appendComponent() {
+            let value = component.trimmingCharacters(in: .whitespaces)
+            guard !value.isEmpty else { return }
+            components.append(value)
+            component.removeAll(keepingCapacity: true)
+        }
+
+        for character in line.dropFirst().dropLast() {
+            if let activeQuote = quote {
+                if activeQuote == "\"", escaped {
+                    component.append(character)
+                    escaped = false
+                } else if activeQuote == "\"", character == "\\" {
+                    escaped = true
+                } else if character == activeQuote {
+                    quote = nil
+                } else {
+                    component.append(character)
+                }
+                continue
+            }
+
+            if character == "\"" || character == "'" {
+                quote = character
+            } else if character == "." {
+                appendComponent()
+            } else {
+                component.append(character)
+            }
+        }
+
+        guard quote == nil, !escaped else { return nil }
+        appendComponent()
+        return components
     }
 
     private static func sourceLine(

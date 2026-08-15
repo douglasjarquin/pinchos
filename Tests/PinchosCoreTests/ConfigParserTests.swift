@@ -332,4 +332,20 @@ final class ConfigParserTests: XCTestCase {
             XCTAssertEqual(parseError?.line, 4)
         }
     }
+
+    func testSemanticErrorIncludesSourceLineForQuotedDottedItemName() {
+        let toml = """
+        [item."quoted.dot"]
+        type = "command"
+        run = "echo 42"
+        interval = "soon"
+        """
+
+        XCTAssertThrowsError(try ConfigParser.parse(toml)) { error in
+            let parseError = error as? ConfigParseError
+            XCTAssertTrue(parseError?.message.contains("item.quoted.dot") == true)
+            XCTAssertTrue(parseError?.message.contains("interval") == true)
+            XCTAssertEqual(parseError?.line, 4)
+        }
+    }
 }

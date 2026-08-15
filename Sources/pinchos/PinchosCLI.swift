@@ -361,7 +361,7 @@ struct PinchosCLI {
                         problemCount += 1
                     }
                 } else {
-                    reportFailure("item.\(item.name).run", "could not identify a command to check")
+                    reportFailure("item.\(item.name).run", "could not identify a single command to check safely")
                     problemCount += 1
                 }
             }
@@ -450,18 +450,81 @@ struct PinchosCLI {
     }
 
     private func commandName(from run: String) -> String? {
-        for rawToken in run.split(whereSeparator: \.isWhitespace) {
-            let token = String(rawToken).trimmingCharacters(in: CharacterSet(charactersIn: "'\""))
-            guard !token.isEmpty else { continue }
-            if token.contains("=") {
-                continue
-            }
-            if token == "!" {
-                continue
-            }
-            return token
+        var tokens = [String]()
+        var token = ""
+        var quote: Character?
+        var escaped = false
+
+        func appendToken() {
+            guard !token.isEmpty else { return }
+            tokens.append(token)
+            token.removeAll(keepingCapacity: true)
         }
-        return nil
+
+        for character in run {
+            if let activeQuote = quote {
+                if activeQuote == "'" {
+                    if character == activeQuote {
+                        quote = nil
+                    } else {
+                        token.append(character)
+                    }
+                } else if escaped {
+                    token.append(character)
+                    escaped = false
+                } else if character == "\\" {
+                    escaped = true
+                } else if character == activeQuote {
+                    quote = nil
+                } else {
+                    token.append(character)
+                }
+                continue
+            }
+
+            if character == "'" || character == "\"" {
+                quote = character
+            } else if character == "\\" {
+                escaped = true
+            } else if character.isWhitespace {
+                appendToken()
+            } else if ";|&()\n\r".contains(character) {
+                return nil
+            } else {
+                token.append(character)
+            }
+        }
+
+        guard quote == nil, !escaped else { return nil }
+        appendToken()
+
+        var commandIndex = 0
+        while commandIndex < tokens.count, isEnvironmentAssignment(tokens[commandIndex]) {
+            commandIndex += 1
+        }
+        guard commandIndex < tokens.count else { return nil }
+
+        let command = tokens[commandIndex]
+        guard !command.isEmpty,
+              !command.hasPrefix("$"),
+              !command.contains("$("),
+              !["!", "if", "for", "while", "until", "case", "function", "{", "}"].contains(command),
+              !command.hasPrefix(">"),
+              !command.hasPrefix("<") else { return nil }
+        return command
+    }
+
+    private func isEnvironmentAssignment(_ token: String) -> Bool {
+        let bytes = Array(token.utf8)
+        guard let equals = bytes.firstIndex(of: 61), equals > 0 else { return false }
+        let name = bytes[..<equals]
+        guard let first = name.first,
+              first == 95 || first >= 65 && first <= 90 || first >= 97 && first <= 122 else {
+            return false
+        }
+        return name.dropFirst().allSatisfy { byte in
+            byte == 95 || byte >= 48 && byte <= 57 || byte >= 65 && byte <= 90 || byte >= 97 && byte <= 122
+        }
     }
 
     private func shellQuote(_ value: String) -> String {

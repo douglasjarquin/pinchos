@@ -190,6 +190,51 @@ final class PinchosCLITests: XCTestCase {
         XCTAssertTrue(capture.stdout.contains("launch at login"))
     }
 
+    func testDoctorDoesNotClaimCompoundRunIsAvailable() async throws {
+        let root = try makeRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let configURL = root.appendingPathComponent("pinchos/pinchos.toml")
+        try FileManager.default.createDirectory(at: configURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try """
+        [item.compound]
+        type = "command"
+        run = "cd /tmp; definitely_missing_pinchos_command"
+        """.write(to: configURL, atomically: true, encoding: .utf8)
+        let capture = CLIOutputCapture()
+        let cli = PinchosCLI(configPath: configURL.path, output: capture.output)
+
+        let doctorCode = await cli.run(arguments: ["doctor"])
+
+        XCTAssertEqual(doctorCode, 4)
+        XCTAssertTrue(capture.stdout.contains("[FAIL] item.compound.run"))
+        XCTAssertTrue(capture.stdout.contains("single command"))
+    }
+
+    func testDoctorRecognizesExecutablePathContainingSpaces() async throws {
+        let root = try makeRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let configURL = root.appendingPathComponent("pinchos/pinchos.toml")
+        let executableURL = root.appendingPathComponent("tool with spaces")
+        try FileManager.default.createDirectory(at: configURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try "#!/bin/zsh\nexit 0\n".write(to: executableURL, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: executableURL.path)
+        try """
+        [item.spaced]
+        type = "command"
+        run = "'\(executableURL.path)'"
+        """.write(to: configURL, atomically: true, encoding: .utf8)
+        let parsed = try ConfigParser.parse(String(contentsOf: configURL), relativeTo: configURL)
+        XCTAssertEqual(parsed.items.first?.run, "'\(executableURL.path)'")
+        let capture = CLIOutputCapture()
+        let cli = PinchosCLI(configPath: configURL.path, output: capture.output)
+
+        let doctorCode = await cli.run(arguments: ["doctor"])
+
+        XCTAssertEqual(doctorCode, 0)
+        XCTAssertTrue(capture.stdout.contains("[PASS] item.spaced.run"))
+        XCTAssertTrue(capture.stdout.contains("tool with spaces"))
+    }
+
     func testRunUsesConfiguredShellWorkingDirectoryAndMergedEnvironment() async throws {
         let root = try makeRoot()
         defer { try? FileManager.default.removeItem(at: root) }
