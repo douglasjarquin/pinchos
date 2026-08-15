@@ -206,4 +206,114 @@ final class ConfigParserTests: XCTestCase {
             XCTAssertTrue(click.hasPrefix("open https://"), "\(item.name) click line should open a usage page URL, got: \(click)")
         }
     }
+
+    func testExpandsTildeInIconPath() throws {
+        let toml = """
+        [item.limits]
+        type = "command"
+        run = "echo 42"
+        icon = "~/Pictures/pinchos.svg"
+        """
+
+        let config = try ConfigParser.parse(toml)
+
+        XCTAssertEqual(
+            config.items[0].icon,
+            ("~/Pictures/pinchos.svg" as NSString).expandingTildeInPath
+        )
+    }
+
+    func testRejectsUnresolvableConfiguredShell() {
+        let toml = """
+        [item.limits]
+        type = "command"
+        run = "echo 42"
+        shell = ["/definitely/missing/pinchos-shell", "-lc"]
+        """
+
+        XCTAssertThrowsError(try ConfigParser.parse(toml)) { error in
+            let parseError = error as? ConfigParseError
+            XCTAssertTrue(parseError?.message.contains("shell") == true)
+            XCTAssertTrue(parseError?.message.contains("/definitely/missing/pinchos-shell") == true)
+        }
+    }
+
+    func testRejectsUnresolvableWorkingDirectory() {
+        let toml = """
+        [item.limits]
+        type = "command"
+        run = "echo 42"
+        working_directory = "/definitely/missing/pinchos-directory"
+        """
+
+        XCTAssertThrowsError(try ConfigParser.parse(toml)) { error in
+            let parseError = error as? ConfigParseError
+            XCTAssertTrue(parseError?.message.contains("working_directory") == true)
+            XCTAssertTrue(parseError?.message.contains("/definitely/missing/pinchos-directory") == true)
+        }
+    }
+
+    func testRejectsNonStringEnvironmentValue() {
+        let toml = """
+        [item.limits]
+        type = "command"
+        run = "echo 42"
+
+        [item.limits.env]
+        PATH = 42
+        """
+
+        XCTAssertThrowsError(try ConfigParser.parse(toml)) { error in
+            let parseError = error as? ConfigParseError
+            XCTAssertTrue(parseError?.message.contains("limits.env.PATH") == true)
+        }
+    }
+
+    func testRejectsEnvironmentNameThatCannotBeExportedToShell() {
+        let toml = """
+        [item.limits]
+        type = "command"
+        run = "echo 42"
+
+        [item.limits.env]
+        BAD-NAME = "value"
+        """
+
+        XCTAssertThrowsError(try ConfigParser.parse(toml)) { error in
+            let parseError = error as? ConfigParseError
+            XCTAssertTrue(parseError?.message.contains("valid environment name") == true)
+        }
+    }
+
+    func testParsesExecutionSettingsAndResolvesPathsRelativeToConfigFile() throws {
+        let configDirectory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("pinchos-config-\(UUID().uuidString)")
+        let workingDirectory = configDirectory.appendingPathComponent("src/project")
+        try FileManager.default.createDirectory(at: workingDirectory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: configDirectory) }
+
+        let toml = """
+        [item.example]
+        type = "command"
+        run = "printf ok"
+        shell = ["/bin/zsh", "-lc"]
+        working_directory = "src/project"
+        icon = "icons/status.svg"
+
+        [item.example.env]
+        PATH = "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin"
+        AWS_PROFILE = "production"
+        """
+
+        let config = try ConfigParser.parse(toml, relativeTo: configDirectory.appendingPathComponent("pinchos.toml"))
+        let item = config.items[0]
+
+        XCTAssertEqual(item.shell, ["/bin/zsh", "-lc"])
+        XCTAssertEqual(item.workingDirectory, workingDirectory.path)
+        XCTAssertEqual(item.environment, [
+            "PATH": "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin",
+            "AWS_PROFILE": "production"
+        ])
+        XCTAssertEqual(item.icon, configDirectory.appendingPathComponent("icons/status.svg").path)
+    }
 }

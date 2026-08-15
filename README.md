@@ -65,7 +65,9 @@ Every item is a `[item.<name>]` table. Items render left-to-right in the order t
 ```toml
 [item.<name>]
 type = "command"        # required, the only v1 module type
-run = "<shell command>" # required, executed via `/bin/sh -c` on its interval
+run = "<shell command>" # required, executed with `shell` on its interval
+shell = ["/bin/zsh", "-lc"] # optional, default ["/bin/sh", "-c"]
+working_directory = "~/src/project" # optional, tilde-expanded; relative paths are relative to this config file
 interval = "60s"        # optional, default "60s", minimum "1s". Formats: "30s", "5m", "1h"
 timeout = "15s"         # optional, default "15s", minimum "1s". Terminates the command process group when it expires
 max_output = "64KiB"    # optional, default "64KiB" per stdout/stderr stream. Formats: "B", "KiB", "MiB"
@@ -73,9 +75,18 @@ format = "{output}%"    # optional. {output} is the trimmed last stdout line of 
 click = "<shell command>" # optional, run (fire-and-forget) on left-click
 error_text = "–"   # optional, default "–". Shown when `run` fails, instead of the item disappearing.
 icon = "/path/to/icon.svg" # optional, a local image file (SVG/PNG/PDF) rendered as a template icon left of the text
+
+[item.<name>.env]
+PATH = "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin"
+AWS_PROFILE = "production"
 ```
 
 - `{output}` is the **only** placeholder. There's no JSON-path or nested-field extraction — pipe your command through `jq` (or anything else) to shape the value before it reaches pinchos.
+- `shell` is an executable path followed by the arguments used to invoke it; `run` is appended as the final argument. The default is `[/bin/sh, -c]`, preserving the original behavior.
+- `shell` and `working_directory` are resolved when the config loads. A leading `~` expands to the launching user's home directory, and relative filesystem paths are resolved relative to the config file, including `icon` paths.
+- `working_directory` is optional. When omitted, the command inherits Pinchos's process working directory.
+- `[item.<name>.env]` values merge with the inherited Pinchos environment. Configured values override inherited variables with the same name immediately before `run` starts, while variables not listed remain available to the command. This keeps configured values stable even when the selected shell runs login startup files.
+- Environment variable names must use letters, digits, and underscores, and must start with a letter or underscore.
 - `timeout` accepts whole seconds, minutes, or hours and terminates the command's process group after the configured duration.
 - Timeout and cancellation terminate the process group with `SIGTERM` followed immediately by `SIGKILL`, so managed descendants cannot outlive an item or the app.
 - A command that exits while leaving same-group background work running remains owned by its item until that work exits or the item is removed.
@@ -87,6 +98,7 @@ icon = "/path/to/icon.svg" # optional, a local image file (SVG/PNG/PDF) rendered
 - Skipped ticks are counted in the item's right-click diagnostics menu without replacing the last completed result.
 - The same timeout and output bounds apply to an optional click command, which is cancelled when its item is removed or Pinchos quits.
 - The diagnostics menu reports the last exit code or signal, duration, skipped ticks, per-stream truncation, and the latest bounded stderr line.
+- An unresolvable shell or working directory is reported in the config warning; a launch failure during execution is retained in the item's diagnostics menu with the resolved path.
 - A malformed config keeps the last good config running untouched, and pinchos additionally shows a single `pinchos ⚠︎` item; click it to see the parse error (with line number when available), reload, or quit. Fix the file and it clears automatically on the next successful reload.
 - Right-click any item (or the warning item) for **Reload Config** and **Quit** — the app is fully usable without ever touching the config file.
 

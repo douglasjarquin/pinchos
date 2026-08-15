@@ -18,6 +18,94 @@ final class CommandExecutionTests: XCTestCase {
         XCTAssertFalse(execution.stdoutTruncated)
     }
 
+    func testConfiguredEnvironmentMergesAndOverridesInheritedValuesAndUsesWorkingDirectory() async throws {
+        let workingDirectory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("pinchos-command-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: workingDirectory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: workingDirectory) }
+
+        let inheritedHome = try XCTUnwrap(ProcessInfo.processInfo.environment["HOME"])
+        let configuredPath = "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin"
+        let runner = CommandRunner(
+            command: "printf '%s\\n%s\\n%s\\n' \"$HOME\" \"$PATH\" \"$PINCHOS_TEST_OVERRIDE\"; pwd",
+            timeout: 1,
+            maxOutputBytes: 512,
+            shell: ["/bin/zsh", "-lc"],
+            workingDirectory: workingDirectory.path,
+            environment: [
+                "PATH": configuredPath,
+                "PINCHOS_TEST_OVERRIDE": "configured's value"
+            ]
+        )
+
+        let outcome = await runner.runIfIdle()
+        guard case .completed(let execution) = outcome else {
+            return XCTFail("expected configured execution to complete, got \(outcome)")
+        }
+        XCTAssertEqual(execution.terminalReason, .exited(code: 0))
+        let outputLines = execution.stdout.split(whereSeparator: \.isNewline).map(String.init)
+        guard outputLines.count == 4 else {
+            return XCTFail("expected four output lines, got \(outputLines)")
+        }
+        XCTAssertEqual(outputLines[0], inheritedHome)
+        XCTAssertEqual(outputLines[1], configuredPath)
+        XCTAssertEqual(outputLines[2], "configured's value")
+        XCTAssertEqual(URL(fileURLWithPath: outputLines[3]).lastPathComponent, workingDirectory.lastPathComponent)
+    }
+
+    func testUnresolvableConfiguredShellReportsItsPath() async {
+        let shell = "/definitely/missing/pinchos-shell"
+        let runner = CommandRunner(
+            command: "printf ok",
+            timeout: 1,
+            maxOutputBytes: 64,
+            shell: [shell, "-lc"]
+        )
+
+        guard case .completed(let execution) = await runner.runIfIdle() else {
+            return XCTFail("expected a completed launch failure")
+        }
+        guard case .launchFailed(let message) = execution.terminalReason else {
+            return XCTFail("expected shell launch failure, got \(execution.terminalReason)")
+        }
+        XCTAssertTrue(message.contains(shell), "launch diagnostic omitted shell path: \(message)")
+    }
+
+    func testUnresolvableWorkingDirectoryReportsItsPath() async {
+        let workingDirectory = "/definitely/missing/pinchos-directory"
+        let runner = CommandRunner(
+            command: "printf ok",
+            timeout: 1,
+            maxOutputBytes: 64,
+            workingDirectory: workingDirectory
+        )
+
+        guard case .completed(let execution) = await runner.runIfIdle() else {
+            return XCTFail("expected a completed launch failure")
+        }
+        guard case .launchFailed(let message) = execution.terminalReason else {
+            return XCTFail("expected working-directory launch failure, got \(execution.terminalReason)")
+        }
+        XCTAssertTrue(message.contains(workingDirectory), "launch diagnostic omitted working directory: \(message)")
+    }
+
+    func testInvalidConfiguredEnvironmentNameReportsDiagnostic() async {
+        let runner = CommandRunner(
+            command: "printf ok",
+            timeout: 1,
+            maxOutputBytes: 64,
+            environment: ["BAD-NAME": "value"]
+        )
+
+        guard case .completed(let execution) = await runner.runIfIdle() else {
+            return XCTFail("expected an environment launch failure")
+        }
+        guard case .launchFailed(let message) = execution.terminalReason else {
+            return XCTFail("expected environment launch failure, got \(execution.terminalReason)")
+        }
+        XCTAssertTrue(message.contains("BAD-NAME"), "launch diagnostic omitted environment name: \(message)")
+    }
+
     func testPreservesNonZeroExitCodeAndStderr() async {
         let runner = CommandRunner(command: "printf 'boom\\n' >&2; exit 7", timeout: 1, maxOutputBytes: 64)
         let outcome = await runner.runIfIdle()
