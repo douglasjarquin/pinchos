@@ -27,6 +27,10 @@ let package = Package(
         .testTarget(
             name: "PinchosCoreTests",
             dependencies: ["PinchosCore"]
+        ),
+        .testTarget(
+            name: "pinchosTests",
+            dependencies: ["pinchos"]
         )
     ]
 )
