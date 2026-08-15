@@ -58,6 +58,31 @@ Added items are appended when native status-item placement can preserve declarat
 If a declaration-order change cannot be represented by native insertion, pinchos rebuilds the configured status items to restore the requested order.
 Reload notifications are coalesced so in-place writes are applied after the file settles, and a malformed file leaves the last good configuration running.
 
+### CLI
+
+The release binary also provides setup, validation, diagnostics, and one-shot execution commands.
+
+```sh
+.build/release/pinchos --help
+.build/release/pinchos init
+.build/release/pinchos validate
+.build/release/pinchos doctor
+.build/release/pinchos config-path
+.build/release/pinchos open-config
+.build/release/pinchos run codex
+```
+
+Use `pinchos <command> --help` for command-specific help.
+`init` creates the config directory and writes the documented example only when the config does not already exist.
+`validate` rejects missing, empty, malformed, and semantically invalid configurations with item, key, and source-line context when available.
+`doctor` reports config accessibility, shell and command availability, working directories, icons, environment prerequisites, and launch-at-login state when the app bundle exposes it.
+`config-path` prints the resolved path without creating files, while `open-config` opens that path in its default application and creates an empty file only when necessary.
+`run <item>` uses the same configured shell vector, working directory, merged environment, timeout, and output bounds as the menu-bar app.
+
+CLI exit codes are suitable for scripts.
+`0` means success, `2` means invalid command usage, `3` means config or open failure, and `4` means `doctor` found a problem.
+`run` preserves a configured command's exit code, uses `124` for timeouts, and uses `127` for launch failures.
+
 ### Schema (v1)
 
 Every item is a `[item.<name>]` table. Items render left-to-right in the order their tables appear in the file.

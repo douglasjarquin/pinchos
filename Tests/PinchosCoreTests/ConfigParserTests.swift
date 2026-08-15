@@ -316,4 +316,89 @@ final class ConfigParserTests: XCTestCase {
         ])
         XCTAssertEqual(item.icon, configDirectory.appendingPathComponent("icons/status.svg").path)
     }
+
+    func testSemanticErrorIncludesItemKeyAndSourceLine() {
+        let toml = """
+        [item.limits]
+        type = "command"
+        run = "echo 42"
+        interval = "soon"
+        """
+
+        XCTAssertThrowsError(try ConfigParser.parse(toml)) { error in
+            let parseError = error as? ConfigParseError
+            XCTAssertTrue(parseError?.message.contains("item.limits") == true)
+            XCTAssertTrue(parseError?.message.contains("interval") == true)
+            XCTAssertEqual(parseError?.line, 4)
+        }
+    }
+
+    func testSemanticErrorIncludesSourceLineForQuotedDottedItemName() {
+        let toml = """
+        [item."quoted.dot"]
+        type = "command"
+        run = "echo 42"
+        interval = "soon"
+        """
+
+        XCTAssertThrowsError(try ConfigParser.parse(toml)) { error in
+            let parseError = error as? ConfigParseError
+            XCTAssertTrue(parseError?.message.contains("item.quoted.dot") == true)
+            XCTAssertTrue(parseError?.message.contains("interval") == true)
+            XCTAssertEqual(parseError?.line, 4)
+        }
+    }
+
+    func testMissingFieldUsesItemHeaderLineWhenMultilineValueContainsEquals() {
+        let toml = "[item.bad]\nrun = \"\"\"\ntype = \"command\"\n\"\"\"\n"
+
+        XCTAssertThrowsError(try ConfigParser.parse(toml)) { error in
+            let parseError = error as? ConfigParseError
+            XCTAssertTrue(parseError?.message.contains("missing required field 'type'") == true)
+            XCTAssertEqual(parseError?.line, 1)
+        }
+    }
+
+    func testMissingFieldUsesItemHeaderLineWhenMultilineLiteralContainsEquals() {
+        let toml = "[item.bad]\nrun = '''\ntype = \"command\"\n'''\n"
+
+        XCTAssertThrowsError(try ConfigParser.parse(toml)) { error in
+            let parseError = error as? ConfigParseError
+            XCTAssertTrue(parseError?.message.contains("missing required field 'type'") == true)
+            XCTAssertEqual(parseError?.line, 1)
+        }
+    }
+
+    func testEscapedMultilineDelimiterDoesNotCreateSourceLineForStringContent() {
+        let toml = #"""
+        [item.bad]
+        run = """
+        literal escaped delimiter: \"""
+        type = "command"
+        """
+        """#
+
+        XCTAssertThrowsError(try ConfigParser.parse(toml)) { error in
+            let parseError = error as? ConfigParseError
+            XCTAssertTrue(parseError?.message.contains("missing required field 'type'") == true)
+            XCTAssertEqual(parseError?.line, 1)
+        }
+    }
+
+    func testQuotedEnvironmentKeyContainingEqualsUsesItsSourceLine() {
+        let toml = """
+        [item.bad]
+        type = "command"
+        run = "echo ok"
+
+        [item.bad.env]
+        "BAD=NAME" = "value"
+        """
+
+        XCTAssertThrowsError(try ConfigParser.parse(toml)) { error in
+            let parseError = error as? ConfigParseError
+            XCTAssertTrue(parseError?.message.contains("item.bad.env.BAD=NAME") == true)
+            XCTAssertEqual(parseError?.line, 6)
+        }
+    }
 }
