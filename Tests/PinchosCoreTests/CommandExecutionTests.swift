@@ -18,6 +18,72 @@ final class CommandExecutionTests: XCTestCase {
         XCTAssertFalse(execution.stdoutTruncated)
     }
 
+    func testConfiguredEnvironmentMergesAndOverridesInheritedValuesAndUsesWorkingDirectory() async throws {
+        let workingDirectory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("pinchos-command-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: workingDirectory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: workingDirectory) }
+
+        let inheritedHome = try XCTUnwrap(ProcessInfo.processInfo.environment["HOME"])
+        let runner = CommandRunner(
+            command: "printf '%s\\n%s\\n%s\\n' \"$HOME\" \"$PATH\" \"$PINCHOS_TEST_OVERRIDE\"; pwd",
+            timeout: 1,
+            maxOutputBytes: 512,
+            shell: ["/bin/zsh", "-lc"],
+            workingDirectory: workingDirectory.path,
+            environment: [
+                "PATH": "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin",
+                "PINCHOS_TEST_OVERRIDE": "configured"
+            ]
+        )
+
+        let outcome = await runner.runIfIdle()
+        guard case .completed(let execution) = outcome else {
+            return XCTFail("expected configured execution to complete, got \(outcome)")
+        }
+        XCTAssertEqual(execution.terminalReason, .exited(code: 0))
+        XCTAssertTrue(execution.stdout.contains(inheritedHome), "inherited HOME was not preserved: \(execution.stdout)")
+        XCTAssertTrue(execution.stdout.contains("/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin"), "configured PATH was not applied: \(execution.stdout)")
+        XCTAssertTrue(execution.stdout.contains("configured"), "configured override was not applied: \(execution.stdout)")
+        XCTAssertTrue(execution.stdout.contains(workingDirectory.path), "working directory was not applied: \(execution.stdout)")
+    }
+
+    func testUnresolvableConfiguredShellReportsItsPath() async {
+        let shell = "/definitely/missing/pinchos-shell"
+        let runner = CommandRunner(
+            command: "printf ok",
+            timeout: 1,
+            maxOutputBytes: 64,
+            shell: [shell, "-lc"]
+        )
+
+        guard case .completed(let execution) = await runner.runIfIdle() else {
+            return XCTFail("expected a completed launch failure")
+        }
+        guard case .launchFailed(let message) = execution.terminalReason else {
+            return XCTFail("expected shell launch failure, got \(execution.terminalReason)")
+        }
+        XCTAssertTrue(message.contains(shell), "launch diagnostic omitted shell path: \(message)")
+    }
+
+    func testUnresolvableWorkingDirectoryReportsItsPath() async {
+        let workingDirectory = "/definitely/missing/pinchos-directory"
+        let runner = CommandRunner(
+            command: "printf ok",
+            timeout: 1,
+            maxOutputBytes: 64,
+            workingDirectory: workingDirectory
+        )
+
+        guard case .completed(let execution) = await runner.runIfIdle() else {
+            return XCTFail("expected a completed launch failure")
+        }
+        guard case .launchFailed(let message) = execution.terminalReason else {
+            return XCTFail("expected working-directory launch failure, got \(execution.terminalReason)")
+        }
+        XCTAssertTrue(message.contains(workingDirectory), "launch diagnostic omitted working directory: \(message)")
+    }
+
     func testPreservesNonZeroExitCodeAndStderr() async {
         let runner = CommandRunner(command: "printf 'boom\\n' >&2; exit 7", timeout: 1, maxOutputBytes: 64)
         let outcome = await runner.runIfIdle()

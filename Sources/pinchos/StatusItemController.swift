@@ -299,8 +299,11 @@ final class StatusItemController: StatusItemMenuDelegate {
                 menu.addItem(disabledItem(title: "Last result: timed out"))
             case .cancelled:
                 menu.addItem(disabledItem(title: "Last result: cancelled"))
-            case .launchFailed:
+            case .launchFailed(let message):
                 menu.addItem(disabledItem(title: "Last result: launch failed"))
+                if !message.isEmpty {
+                    menu.addItem(disabledItem(title: "launch: \(String(message.prefix(200)))"))
+                }
             }
             menu.addItem(disabledItem(title: String(format: "Duration: %.3fs", execution.duration)))
             menu.addItem(

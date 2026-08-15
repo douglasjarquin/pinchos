@@ -271,11 +271,14 @@ private enum CommandExecutionEngine {
     private static let drainGraceNanoseconds: UInt64 = 300_000_000
 
     private enum SpawnError: Error, CustomStringConvertible {
-        case posix(Int32)
+        case posix(Int32, context: String? = nil)
 
         var description: String {
             switch self {
-            case .posix(let code):
+            case .posix(let code, let context):
+                if let context {
+                    return "\(context): posix_spawn failed with status \(code)"
+                }
                 return "posix_spawn failed with status \(code)"
             }
         }
@@ -329,6 +332,9 @@ private enum CommandExecutionEngine {
 
     static func run(
         command: String,
+        shell: [String],
+        workingDirectory: String?,
+        environment: [String: String],
         timeout: TimeInterval,
         maxOutputBytes: Int,
         controller: ProcessGroupController
@@ -338,6 +344,9 @@ private enum CommandExecutionEngine {
             operation: {
                 await runProcess(
                     command: command,
+                    shell: shell,
+                    workingDirectory: workingDirectory,
+                    environment: environment,
                     timeout: timeout,
                     maxOutputBytes: maxOutputBytes,
                     controller: controller,
@@ -352,12 +361,39 @@ private enum CommandExecutionEngine {
 
     private static func runProcess(
         command: String,
+        shell: [String],
+        workingDirectory: String?,
+        environment: [String: String],
         timeout: TimeInterval,
         maxOutputBytes: Int,
         controller: ProcessGroupController,
         race: EventRace
     ) async -> CommandExecutionResult {
         let startedAt = DispatchTime.now().uptimeNanoseconds
+        guard let shellExecutable = shell.first, !shellExecutable.isEmpty else {
+            return launchFailure(
+                "shell argument vector must include an executable",
+                maxOutputBytes: maxOutputBytes,
+                startedAt: startedAt
+            )
+        }
+        guard FileManager.default.isExecutableFile(atPath: shellExecutable) else {
+            return launchFailure(
+                "shell executable cannot be resolved: \(shellExecutable)",
+                maxOutputBytes: maxOutputBytes,
+                startedAt: startedAt
+            )
+        }
+        if let workingDirectory {
+            var isDirectory = ObjCBool(false)
+            guard FileManager.default.fileExists(atPath: workingDirectory, isDirectory: &isDirectory), isDirectory.boolValue else {
+                return launchFailure(
+                    "working directory cannot be resolved: \(workingDirectory)",
+                    maxOutputBytes: maxOutputBytes,
+                    startedAt: startedAt
+                )
+            }
+        }
         var stdoutFileDescriptors = [Int32](repeating: -1, count: 2)
         var stderrFileDescriptors = [Int32](repeating: -1, count: 2)
 
@@ -400,6 +436,9 @@ private enum CommandExecutionEngine {
         do {
             processID = try spawn(
                 command: command,
+                shell: shell,
+                workingDirectory: workingDirectory,
+                environment: environment,
                 stdoutRead: stdoutFileDescriptors[0],
                 stdoutWrite: stdoutFileDescriptors[1],
                 stderrRead: stderrFileDescriptors[0],
@@ -528,6 +567,9 @@ private enum CommandExecutionEngine {
 
     private static func spawn(
         command: String,
+        shell: [String],
+        workingDirectory: String?,
+        environment: [String: String],
         stdoutRead: Int32,
         stdoutWrite: Int32,
         stderrRead: Int32,
@@ -542,6 +584,12 @@ private enum CommandExecutionEngine {
         var fileActions: posix_spawn_file_actions_t?
         try check(posix_spawn_file_actions_init(&fileActions))
         defer { posix_spawn_file_actions_destroy(&fileActions) }
+        if let workingDirectory {
+            let status = workingDirectory.withCString {
+                posix_spawn_file_actions_addchdir_np(&fileActions, $0)
+            }
+            try check(status, context: "unable to set working directory '\(workingDirectory)'")
+        }
         try check(posix_spawn_file_actions_adddup2(&fileActions, stdoutWrite, STDOUT_FILENO))
         try check(posix_spawn_file_actions_adddup2(&fileActions, stderrWrite, STDERR_FILENO))
         try check(posix_spawn_file_actions_addclose(&fileActions, stdoutRead))
@@ -549,33 +597,53 @@ private enum CommandExecutionEngine {
         try check(posix_spawn_file_actions_addclose(&fileActions, stderrRead))
         try check(posix_spawn_file_actions_addclose(&fileActions, stderrWrite))
 
-        guard let shell = strdup("/bin/sh"),
-            let option = strdup("-c"),
-            let commandCopy = strdup(command)
-        else {
-            throw SpawnError.posix(ENOMEM)
+        var arguments = [UnsafeMutablePointer<CChar>?]()
+        for argument in shell {
+            guard let argumentCopy = strdup(argument) else {
+                for argument in arguments {
+                    if let argument { free(argument) }
+                }
+                throw SpawnError.posix(ENOMEM, context: "unable to construct shell arguments")
+            }
+            arguments.append(argumentCopy)
         }
-        var arguments: [UnsafeMutablePointer<CChar>?] = [shell, option, commandCopy, nil]
+        guard let commandCopy = strdup(command) else {
+            for argument in arguments {
+                if let argument { free(argument) }
+            }
+            throw SpawnError.posix(ENOMEM, context: "unable to construct command argument")
+        }
+        arguments.append(commandCopy)
+        arguments.append(nil)
         defer {
             for argument in arguments {
                 if let argument { free(argument) }
             }
         }
 
-        var environment = ProcessInfo.processInfo.environment.map { key, value in
-            strdup("\(key)=\(value)")
+        let mergedEnvironment = ProcessInfo.processInfo.environment.merging(environment) { _, configured in
+            configured
         }
-        environment.append(nil)
+        var environmentEntries = mergedEnvironment.keys.sorted().map { key in
+            strdup("\(key)=\(mergedEnvironment[key]!)")
+        }
+        guard environmentEntries.allSatisfy({ $0 != nil }) else {
+            for value in environmentEntries {
+                if let value { free(value) }
+            }
+            throw SpawnError.posix(ENOMEM, context: "unable to construct process environment")
+        }
+        environmentEntries.append(nil)
         defer {
-            for value in environment {
+            for value in environmentEntries {
                 if let value { free(value) }
             }
         }
 
         var processID: pid_t = 0
         let status = arguments.withUnsafeMutableBufferPointer { argumentsBuffer in
-            environment.withUnsafeMutableBufferPointer { environmentBuffer in
-                "/bin/sh".withCString { shellPath in
+            environmentEntries.withUnsafeMutableBufferPointer { environmentBuffer in
+                shell[0].withCString { shellPath in
                     posix_spawn(
                         &processID,
                         shellPath,
@@ -587,12 +655,12 @@ private enum CommandExecutionEngine {
                 }
             }
         }
-        try check(status)
+        try check(status, context: "unable to launch shell '\(shell[0])'")
         return processID
     }
 
-    private static func check(_ status: Int32) throws {
-        guard status == 0 else { throw SpawnError.posix(status) }
+    private static func check(_ status: Int32, context: String? = nil) throws {
+        guard status == 0 else { throw SpawnError.posix(status, context: context) }
     }
 
     private static func drain(
@@ -734,6 +802,22 @@ private enum CommandExecutionEngine {
         )
     }
 
+    private static func launchFailure(
+        _ message: String,
+        maxOutputBytes: Int,
+        startedAt: UInt64
+    ) -> CommandExecutionResult {
+        CommandExecutionResult(
+            execution: makeExecution(
+                reason: .launchFailed(message),
+                stdout: OutputCollector(limit: maxOutputBytes),
+                stderr: OutputCollector(limit: maxOutputBytes),
+                startedAt: startedAt
+            ),
+            lingeringProcess: nil
+        )
+    }
+
     private static func nanoseconds(for timeout: TimeInterval) -> UInt64 {
         let maximum = UInt64(Int64.max)
         let value = timeout * 1_000_000_000
@@ -758,6 +842,9 @@ private enum CommandExecutionEngine {
 
 public actor CommandRunner {
     private let command: String
+    private let shell: [String]
+    private let workingDirectory: String?
+    private let environment: [String: String]
     private let timeout: TimeInterval
     private let maxOutputBytes: Int
     private var activeTask: Task<CommandExecutionResult, Never>?
@@ -767,10 +854,20 @@ public actor CommandRunner {
     private var cancellationInProgress = false
     private var runGeneration: UInt64 = 0
 
-    public init(command: String, timeout: TimeInterval, maxOutputBytes: Int) {
+    public init(
+        command: String,
+        timeout: TimeInterval,
+        maxOutputBytes: Int,
+        shell: [String] = ItemConfig.defaultShell,
+        workingDirectory: String? = nil,
+        environment: [String: String] = [:]
+    ) {
         precondition(timeout > 0, "command timeout must be positive")
         precondition(maxOutputBytes > 0, "maximum command output must be positive")
         self.command = command
+        self.shell = shell
+        self.workingDirectory = workingDirectory
+        self.environment = environment
         self.timeout = timeout
         self.maxOutputBytes = maxOutputBytes
     }
@@ -789,12 +886,18 @@ public actor CommandRunner {
 
         let controller = ProcessGroupController()
         let command = self.command
+        let shell = self.shell
+        let workingDirectory = self.workingDirectory
+        let environment = self.environment
         let timeout = self.timeout
         let maxOutputBytes = self.maxOutputBytes
         let task = Task.detached {
             await withTaskCancellationHandler {
                 await CommandExecutionEngine.run(
                     command: command,
+                    shell: shell,
+                    workingDirectory: workingDirectory,
+                    environment: environment,
                     timeout: timeout,
                     maxOutputBytes: maxOutputBytes,
                     controller: controller

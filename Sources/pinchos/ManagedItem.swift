@@ -32,13 +32,19 @@ final class ManagedItem: ManagedItemLifecycle {
         self.runner = CommandRunner(
             command: config.run,
             timeout: config.timeout,
-            maxOutputBytes: config.maxOutputBytes
+            maxOutputBytes: config.maxOutputBytes,
+            shell: config.shell,
+            workingDirectory: config.workingDirectory,
+            environment: config.environment
         )
         if let click = config.click {
             self.clickRunner = CommandRunner(
                 command: click,
                 timeout: config.timeout,
-                maxOutputBytes: config.maxOutputBytes
+                maxOutputBytes: config.maxOutputBytes,
+                shell: config.shell,
+                workingDirectory: config.workingDirectory,
+                environment: config.environment
             )
         } else {
             self.clickRunner = nil
@@ -85,6 +91,9 @@ final class ManagedItem: ManagedItemLifecycle {
         let runnerConfigurationChanged = previousConfig.run != config.run
             || previousConfig.timeout != config.timeout
             || previousConfig.maxOutputBytes != config.maxOutputBytes
+            || previousConfig.shell != config.shell
+            || previousConfig.workingDirectory != config.workingDirectory
+            || previousConfig.environment != config.environment
         let timerNeedsRestart = runnerConfigurationChanged || previousConfig.interval != config.interval
         if timerNeedsRestart {
             timer?.cancel()
@@ -98,13 +107,19 @@ final class ManagedItem: ManagedItemLifecycle {
             replacementRunner = CommandRunner(
                 command: config.run,
                 timeout: config.timeout,
-                maxOutputBytes: config.maxOutputBytes
+                maxOutputBytes: config.maxOutputBytes,
+                shell: config.shell,
+                workingDirectory: config.workingDirectory,
+                environment: config.environment
             )
         }
 
         let clickRunnerConfigurationChanged = previousConfig.click != config.click
             || previousConfig.timeout != config.timeout
             || previousConfig.maxOutputBytes != config.maxOutputBytes
+            || previousConfig.shell != config.shell
+            || previousConfig.workingDirectory != config.workingDirectory
+            || previousConfig.environment != config.environment
         if clickRunnerConfigurationChanged {
             await clickRunner?.cancelActive()
         }
@@ -112,7 +127,10 @@ final class ManagedItem: ManagedItemLifecycle {
             CommandRunner(
                 command: $0,
                 timeout: config.timeout,
-                maxOutputBytes: config.maxOutputBytes
+                maxOutputBytes: config.maxOutputBytes,
+                shell: config.shell,
+                workingDirectory: config.workingDirectory,
+                environment: config.environment
             )
         } : nil
 
