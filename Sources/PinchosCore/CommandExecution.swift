@@ -394,6 +394,22 @@ private enum CommandExecutionEngine {
                 )
             }
         }
+        if let invalidEnvironmentName = environment.keys.sorted().first(where: { !isValidEnvironmentName($0) }) {
+            return launchFailure(
+                "environment variable name cannot be exported: \(invalidEnvironmentName)",
+                maxOutputBytes: maxOutputBytes,
+                startedAt: startedAt
+            )
+        }
+        if let invalidEnvironmentValue = environment.keys.sorted().first(where: {
+            environment[$0]?.unicodeScalars.contains(where: { $0.value == 0 }) == true
+        }) {
+            return launchFailure(
+                "environment variable contains a NUL byte: \(invalidEnvironmentValue)",
+                maxOutputBytes: maxOutputBytes,
+                startedAt: startedAt
+            )
+        }
         var stdoutFileDescriptors = [Int32](repeating: -1, count: 2)
         var stderrFileDescriptors = [Int32](repeating: -1, count: 2)
 
@@ -607,7 +623,8 @@ private enum CommandExecutionEngine {
             }
             arguments.append(argumentCopy)
         }
-        guard let commandCopy = strdup(command) else {
+        let effectiveCommand = commandWithConfiguredEnvironment(command: command, environment: environment)
+        guard let commandCopy = strdup(effectiveCommand) else {
             for argument in arguments {
                 if let argument { free(argument) }
             }
@@ -661,6 +678,29 @@ private enum CommandExecutionEngine {
 
     private static func check(_ status: Int32, context: String? = nil) throws {
         guard status == 0 else { throw SpawnError.posix(status, context: context) }
+    }
+
+    private static func commandWithConfiguredEnvironment(command: String, environment: [String: String]) -> String {
+        guard !environment.isEmpty else { return command }
+        let exports = environment.keys.sorted().map { key in
+            "export \(key)=\(shellQuote(environment[key]!))"
+        }
+        return exports.joined(separator: "; ") + "; " + command
+    }
+
+    private static func shellQuote(_ value: String) -> String {
+        "'" + value.replacingOccurrences(of: "'", with: "'\\''") + "'"
+    }
+
+    private static func isValidEnvironmentName(_ name: String) -> Bool {
+        let bytes = Array(name.utf8)
+        guard let first = bytes.first else { return false }
+        guard first == 95 || first >= 65 && first <= 90 || first >= 97 && first <= 122 else {
+            return false
+        }
+        return bytes.dropFirst().allSatisfy { byte in
+            byte == 95 || byte >= 48 && byte <= 57 || byte >= 65 && byte <= 90 || byte >= 97 && byte <= 122
+        }
     }
 
     private static func drain(

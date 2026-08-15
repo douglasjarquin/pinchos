@@ -25,6 +25,7 @@ final class CommandExecutionTests: XCTestCase {
         defer { try? FileManager.default.removeItem(at: workingDirectory) }
 
         let inheritedHome = try XCTUnwrap(ProcessInfo.processInfo.environment["HOME"])
+        let configuredPath = "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin"
         let runner = CommandRunner(
             command: "printf '%s\\n%s\\n%s\\n' \"$HOME\" \"$PATH\" \"$PINCHOS_TEST_OVERRIDE\"; pwd",
             timeout: 1,
@@ -32,8 +33,8 @@ final class CommandExecutionTests: XCTestCase {
             shell: ["/bin/zsh", "-lc"],
             workingDirectory: workingDirectory.path,
             environment: [
-                "PATH": "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin",
-                "PINCHOS_TEST_OVERRIDE": "configured"
+                "PATH": configuredPath,
+                "PINCHOS_TEST_OVERRIDE": "configured's value"
             ]
         )
 
@@ -42,10 +43,14 @@ final class CommandExecutionTests: XCTestCase {
             return XCTFail("expected configured execution to complete, got \(outcome)")
         }
         XCTAssertEqual(execution.terminalReason, .exited(code: 0))
-        XCTAssertTrue(execution.stdout.contains(inheritedHome), "inherited HOME was not preserved: \(execution.stdout)")
-        XCTAssertTrue(execution.stdout.contains("/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin"), "configured PATH was not applied: \(execution.stdout)")
-        XCTAssertTrue(execution.stdout.contains("configured"), "configured override was not applied: \(execution.stdout)")
-        XCTAssertTrue(execution.stdout.contains(workingDirectory.path), "working directory was not applied: \(execution.stdout)")
+        let outputLines = execution.stdout.split(whereSeparator: \.isNewline).map(String.init)
+        guard outputLines.count == 4 else {
+            return XCTFail("expected four output lines, got \(outputLines)")
+        }
+        XCTAssertEqual(outputLines[0], inheritedHome)
+        XCTAssertEqual(outputLines[1], configuredPath)
+        XCTAssertEqual(outputLines[2], "configured's value")
+        XCTAssertEqual(URL(fileURLWithPath: outputLines[3]).lastPathComponent, workingDirectory.lastPathComponent)
     }
 
     func testUnresolvableConfiguredShellReportsItsPath() async {
@@ -82,6 +87,23 @@ final class CommandExecutionTests: XCTestCase {
             return XCTFail("expected working-directory launch failure, got \(execution.terminalReason)")
         }
         XCTAssertTrue(message.contains(workingDirectory), "launch diagnostic omitted working directory: \(message)")
+    }
+
+    func testInvalidConfiguredEnvironmentNameReportsDiagnostic() async {
+        let runner = CommandRunner(
+            command: "printf ok",
+            timeout: 1,
+            maxOutputBytes: 64,
+            environment: ["BAD-NAME": "value"]
+        )
+
+        guard case .completed(let execution) = await runner.runIfIdle() else {
+            return XCTFail("expected an environment launch failure")
+        }
+        guard case .launchFailed(let message) = execution.terminalReason else {
+            return XCTFail("expected environment launch failure, got \(execution.terminalReason)")
+        }
+        XCTAssertTrue(message.contains("BAD-NAME"), "launch diagnostic omitted environment name: \(message)")
     }
 
     func testPreservesNonZeroExitCodeAndStderr() async {

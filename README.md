@@ -85,7 +85,8 @@ AWS_PROFILE = "production"
 - `shell` is an executable path followed by the arguments used to invoke it; `run` is appended as the final argument. The default is `[/bin/sh, -c]`, preserving the original behavior.
 - `shell` and `working_directory` are resolved when the config loads. A leading `~` expands to the launching user's home directory, and relative filesystem paths are resolved relative to the config file, including `icon` paths.
 - `working_directory` is optional. When omitted, the command inherits Pinchos's process working directory.
-- `[item.<name>.env]` values merge with the inherited Pinchos environment. Configured values override inherited variables with the same name, while variables not listed remain available to the command.
+- `[item.<name>.env]` values merge with the inherited Pinchos environment. Configured values override inherited variables with the same name immediately before `run` starts, while variables not listed remain available to the command. This keeps configured values stable even when the selected shell runs login startup files.
+- Environment variable names must use letters, digits, and underscores, and must start with a letter or underscore.
 - `timeout` accepts whole seconds, minutes, or hours and terminates the command's process group after the configured duration.
 - Timeout and cancellation terminate the process group with `SIGTERM` followed immediately by `SIGKILL`, so managed descendants cannot outlive an item or the app.
 - A command that exits while leaving same-group background work running remains owned by its item until that work exits or the item is removed.

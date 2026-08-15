@@ -269,6 +269,22 @@ final class ConfigParserTests: XCTestCase {
         }
     }
 
+    func testRejectsEnvironmentNameThatCannotBeExportedToShell() {
+        let toml = """
+        [item.limits]
+        type = "command"
+        run = "echo 42"
+
+        [item.limits.env]
+        BAD-NAME = "value"
+        """
+
+        XCTAssertThrowsError(try ConfigParser.parse(toml)) { error in
+            let parseError = error as? ConfigParseError
+            XCTAssertTrue(parseError?.message.contains("valid environment name") == true)
+        }
+    }
+
     func testParsesExecutionSettingsAndResolvesPathsRelativeToConfigFile() throws {
         let configDirectory = FileManager.default.temporaryDirectory
             .appendingPathComponent("pinchos-config-\(UUID().uuidString)")

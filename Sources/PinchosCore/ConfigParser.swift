@@ -169,7 +169,7 @@ public enum ConfigParser {
 
         var environment = [String: String]()
         for (key, value) in table {
-            guard !key.isEmpty, !key.contains("="), !key.unicodeScalars.contains(where: { $0.value == 0 }) else {
+            guard isValidEnvironmentName(key) else {
                 throw ConfigParseError(message: "item.\(name).env.\(key) is not a valid environment name")
             }
             guard let string = value.string, !string.unicodeScalars.contains(where: { $0.value == 0 }) else {
@@ -178,6 +178,17 @@ public enum ConfigParser {
             environment[key] = string
         }
         return environment
+    }
+
+    private static func isValidEnvironmentName(_ name: String) -> Bool {
+        let bytes = Array(name.utf8)
+        guard let first = bytes.first else { return false }
+        guard first == 95 || first >= 65 && first <= 90 || first >= 97 && first <= 122 else {
+            return false
+        }
+        return bytes.dropFirst().allSatisfy { byte in
+            byte == 95 || byte >= 48 && byte <= 57 || byte >= 65 && byte <= 90 || byte >= 97 && byte <= 122
+        }
     }
 
     private static func resolvePath(_ rawPath: String, relativeTo configURL: URL?) -> String {
