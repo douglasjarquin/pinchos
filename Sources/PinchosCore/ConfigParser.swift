@@ -57,10 +57,44 @@ public enum ConfigParser {
             throw ConfigParseError(message: "item.\(name): invalid interval '\(intervalString)'")
         }
 
+        let timeoutString: String
+        if let timeoutValue = table["timeout"] {
+            guard let value = timeoutValue.string else {
+                throw ConfigParseError(message: "item.\(name): invalid timeout value")
+            }
+            timeoutString = value
+        } else {
+            timeoutString = "15s"
+        }
+        let timeout: TimeInterval
+        do {
+            timeout = try parseDuration(timeoutString)
+        } catch {
+            throw ConfigParseError(message: "item.\(name): invalid timeout '\(timeoutString)'")
+        }
+
+        let maxOutputString: String
+        if let maxOutputValue = table["max_output"] {
+            guard let value = maxOutputValue.string else {
+                throw ConfigParseError(message: "item.\(name): invalid max_output value")
+            }
+            maxOutputString = value
+        } else {
+            maxOutputString = "64KiB"
+        }
+        let maxOutputBytes: Int
+        do {
+            maxOutputBytes = try parseByteCount(maxOutputString)
+        } catch {
+            throw ConfigParseError(message: "item.\(name): invalid max_output '\(maxOutputString)'")
+        }
+
         return ItemConfig(
             name: name,
             run: run,
             interval: interval,
+            timeout: timeout,
+            maxOutputBytes: maxOutputBytes,
             format: table["format"]?.string,
             click: table["click"]?.string,
             errorText: table["error_text"]?.string ?? "\u{2013}",

@@ -17,6 +17,8 @@ final class ConfigParserTests: XCTestCase {
         XCTAssertNil(item.format)
         XCTAssertNil(item.click)
         XCTAssertEqual(item.errorText, "\u{2013}")
+        XCTAssertEqual(item.timeout, 15)
+        XCTAssertEqual(item.maxOutputBytes, 64 * 1024)
     }
 
     func testParsesAllFields() throws {
@@ -25,6 +27,8 @@ final class ConfigParserTests: XCTestCase {
         type = "command"
         run = "echo 42"
         interval = "30s"
+        timeout = "2s"
+        max_output = "64KiB"
         format = "\u{1F440} {output}%"
         click = "open https://example.com"
         error_text = "n/a"
@@ -33,6 +37,8 @@ final class ConfigParserTests: XCTestCase {
         let config = try ConfigParser.parse(toml)
         let item = config.items[0]
         XCTAssertEqual(item.interval, 30)
+        XCTAssertEqual(item.timeout, 2)
+        XCTAssertEqual(item.maxOutputBytes, 64 * 1024)
         XCTAssertEqual(item.format, "\u{1F440} {output}%")
         XCTAssertEqual(item.click, "open https://example.com")
         XCTAssertEqual(item.errorText, "n/a")
@@ -128,6 +134,48 @@ final class ConfigParserTests: XCTestCase {
             }
             XCTAssertTrue(parseError.message.contains("limits"))
         }
+    }
+
+    func testInvalidCommandBoundsThrowWithItemContext() {
+        let invalidTimeout = """
+        [item.limits]
+        type = "command"
+        run = "echo 42"
+        timeout = "soon"
+        """
+        XCTAssertThrowsError(try ConfigParser.parse(invalidTimeout)) { error in
+            let parseError = error as? ConfigParseError
+            XCTAssertTrue(parseError?.message.contains("limits") == true)
+            XCTAssertTrue(parseError?.message.contains("timeout") == true)
+        }
+
+        let invalidOutput = """
+        [item.limits]
+        type = "command"
+        run = "echo 42"
+        max_output = "64KB"
+        """
+        XCTAssertThrowsError(try ConfigParser.parse(invalidOutput)) { error in
+            let parseError = error as? ConfigParseError
+            XCTAssertTrue(parseError?.message.contains("limits") == true)
+            XCTAssertTrue(parseError?.message.contains("max_output") == true)
+        }
+
+        let wrongTimeoutType = """
+        [item.limits]
+        type = "command"
+        run = "echo 42"
+        timeout = 15
+        """
+        XCTAssertThrowsError(try ConfigParser.parse(wrongTimeoutType))
+
+        let wrongOutputType = """
+        [item.limits]
+        type = "command"
+        run = "echo 42"
+        max_output = 65536
+        """
+        XCTAssertThrowsError(try ConfigParser.parse(wrongOutputType))
     }
 
     func testMalformedTomlSyntaxThrowsWithLineInfo() {
