@@ -189,8 +189,13 @@ final class ManagedItem: ManagedItemLifecycle {
 
     private func startTimer() {
         timer?.cancel()
+        timer = nil
+        guard case .scheduled(let interval) = config.interval else {
+            requestRefresh()
+            return
+        }
         let newTimer = DispatchSource.makeTimerSource(queue: timerQueue)
-        newTimer.schedule(deadline: .now(), repeating: config.interval)
+        newTimer.schedule(deadline: .now(), repeating: interval)
         newTimer.setEventHandler { [weak self] in
             guard let self else { return }
             Task { @MainActor in
@@ -202,8 +207,25 @@ final class ManagedItem: ManagedItemLifecycle {
     }
 
     private func tick() async {
+        await refresh()
+    }
+
+    func refreshNow() {
+        requestRefresh()
+    }
+
+    private func requestRefresh() {
+        Task { @MainActor [weak self] in
+            await self?.refresh()
+        }
+    }
+
+    private func refresh() async {
         guard isActive, !isPreparingUpdate, !isPreparingRemoval else { return }
         let generation = configurationGeneration
+        if !(await runner.snapshot().isRunning) {
+            statusItem.button?.toolTip = "Refreshing..."
+        }
         let outcome = await runner.runIfIdle()
         guard isActive, generation == configurationGeneration else { return }
         let currentConfig = config
@@ -217,6 +239,9 @@ final class ManagedItem: ManagedItemLifecycle {
             }
             let trimmed = lastTrimmedLine(of: execution.stdout)
             statusItem.button?.title = applyFormat(currentConfig.format, output: trimmed)
+        }
+        if !(await runner.snapshot().isRunning) {
+            statusItem.button?.toolTip = nil
         }
     }
 
@@ -237,6 +262,8 @@ final class ManagedItem: ManagedItemLifecycle {
                 guard let self, self.isActive else { return }
                 _ = await clickRunner.runIfIdle()
             }
+        } else if config.refreshOnClick {
+            refreshNow()
         }
     }
 

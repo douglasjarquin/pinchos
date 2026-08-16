@@ -13,7 +13,7 @@ final class ConfigParserTests: XCTestCase {
         let item = config.items[0]
         XCTAssertEqual(item.name, "limits")
         XCTAssertEqual(item.run, "echo 42")
-        XCTAssertEqual(item.interval, 60)
+        XCTAssertEqual(item.interval, .scheduled(60))
         XCTAssertNil(item.format)
         XCTAssertNil(item.click)
         XCTAssertEqual(item.errorText, "\u{2013}")
@@ -36,7 +36,7 @@ final class ConfigParserTests: XCTestCase {
         """
         let config = try ConfigParser.parse(toml)
         let item = config.items[0]
-        XCTAssertEqual(item.interval, 30)
+        XCTAssertEqual(item.interval, .scheduled(30))
         XCTAssertEqual(item.timeout, 2)
         XCTAssertEqual(item.maxOutputBytes, 64 * 1024)
         XCTAssertEqual(item.format, "\u{1F440} {output}%")
@@ -399,6 +399,37 @@ final class ConfigParserTests: XCTestCase {
             let parseError = error as? ConfigParseError
             XCTAssertTrue(parseError?.message.contains("item.bad.env.BAD=NAME") == true)
             XCTAssertEqual(parseError?.line, 6)
+        }
+    }
+
+    func testManualIntervalIsAcceptedForOnDemandItem() throws {
+        let toml = """
+        [item.expensive]
+        type = "command"
+        run = "sleep 1; echo value"
+        interval = "manual"
+        refresh_on_click = true
+        """
+
+        let config = try ConfigParser.parse(toml)
+
+        XCTAssertEqual(config.items.count, 1)
+        XCTAssertEqual(String(describing: config.items[0].interval), "manual")
+        XCTAssertTrue(config.items[0].refreshOnClick)
+    }
+
+    func testInvalidRefreshOnClickThrowsWithItemContext() {
+        let toml = """
+        [item.expensive]
+        type = "command"
+        run = "echo value"
+        refresh_on_click = "yes"
+        """
+
+        XCTAssertThrowsError(try ConfigParser.parse(toml)) { error in
+            let parseError = error as? ConfigParseError
+            XCTAssertTrue(parseError?.message.contains("refresh_on_click") == true)
+            XCTAssertTrue(parseError?.message.contains("expensive") == true)
         }
     }
 }

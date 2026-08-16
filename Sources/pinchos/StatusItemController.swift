@@ -17,6 +17,7 @@ protocol ManagedItemLifecycle: AnyObject {
     func commitRemoval()
     func tearDown() async
     func runnerSnapshot() async -> CommandRunnerSnapshot
+    func refreshNow()
 }
 
 @MainActor
@@ -136,7 +137,7 @@ final class StatusItemController: StatusItemMenuDelegate {
     func showLifecycleMenu(for statusItem: NSStatusItem) {
         Task { @MainActor [weak self] in
             guard let self else { return }
-            let menu = await self.buildLifecycleMenu(for: statusItem)
+            let menu = await self.makeLifecycleMenu(for: statusItem)
             self.present(menu: menu, on: statusItem)
         }
     }
@@ -270,11 +271,16 @@ final class StatusItemController: StatusItemMenuDelegate {
         return menu
     }
 
-    private func buildLifecycleMenu(for statusItem: NSStatusItem?) async -> NSMenu {
+    func makeLifecycleMenu(for statusItem: NSStatusItem?) async -> NSMenu {
         let menu = NSMenu()
         if let statusItem,
             let item = items.values.first(where: { $0.owns(statusItem: statusItem) })
         {
+            let refresh = NSMenuItem(title: "Refresh Now", action: #selector(refreshAction(_:)), keyEquivalent: "")
+            refresh.target = self
+            refresh.representedObject = statusItem
+            menu.addItem(refresh)
+            menu.addItem(NSMenuItem.separator())
             addDiagnostics(from: await item.runnerSnapshot(), to: menu)
             menu.addItem(NSMenuItem.separator())
         }
@@ -334,6 +340,12 @@ final class StatusItemController: StatusItemMenuDelegate {
         statusItem.menu = menu
         statusItem.button?.performClick(nil)
         statusItem.menu = nil
+    }
+
+    @objc private func refreshAction(_ sender: NSMenuItem) {
+        guard let statusItem = sender.representedObject as? NSStatusItem,
+              let item = items.values.first(where: { $0.owns(statusItem: statusItem) }) else { return }
+        item.refreshNow()
     }
 
     @objc private func reloadConfigAction() {

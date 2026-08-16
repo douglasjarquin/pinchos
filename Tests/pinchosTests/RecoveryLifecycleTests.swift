@@ -20,7 +20,135 @@ private final class CallbackCounter: @unchecked Sendable {
     }
 }
 
+@MainActor
+private final class NoopStatusItemMenuDelegate: StatusItemMenuDelegate {
+    func showLifecycleMenu(for statusItem: NSStatusItem) {}
+}
+
 final class RecoveryLifecycleTests: XCTestCase {
+    @MainActor
+    func testManualItemRunsOnceOnActivationWithoutPeriodicTimer() async throws {
+        let item = ManagedItem(
+            config: ItemConfig(
+                name: "manual",
+                run: "printf 'manual\\n'",
+                interval: .manual
+            ),
+            menuDelegate: NoopStatusItemMenuDelegate(),
+            initiallyVisible: false
+        )
+        addTeardownBlock { @MainActor in
+            await item.tearDown()
+        }
+
+        item.activate()
+        let first = try await waitForExecution(item)
+        XCTAssertEqual(first.lastExecution?.stdout, "manual\n")
+
+        try await Task.sleep(for: .milliseconds(200))
+        let settled = await item.runnerSnapshot()
+        XCTAssertEqual(settled.skippedRefreshes, 0)
+        XCTAssertEqual(settled.lastExecution?.stdout, "manual\n")
+    }
+
+    @MainActor
+    func testManualRefreshKeepsLastGoodValueWhileAnotherRefreshRuns() async throws {
+        let marker = FileManager.default.temporaryDirectory
+            .appendingPathComponent("pinchos-manual-refresh-\(UUID().uuidString)")
+        let item = ManagedItem(
+            config: ItemConfig(
+                name: "manual",
+                run: "if [ ! -e '\(marker.path)' ]; then printf 'old\\n'; touch '\(marker.path)'; else sleep 0.3; printf 'new\\n'; fi",
+                interval: .manual
+            ),
+            menuDelegate: NoopStatusItemMenuDelegate(),
+            initiallyVisible: false
+        )
+        addTeardownBlock { @MainActor in
+            await item.tearDown()
+            try? FileManager.default.removeItem(at: marker)
+        }
+
+        item.refreshNow()
+        _ = try await waitForExecution(item)
+        XCTAssertEqual(item.statusItem.button?.title, "old")
+
+        item.refreshNow()
+        try await waitForRunning(item)
+        item.refreshNow()
+        _ = try await waitForSkippedRefresh(item)
+
+        XCTAssertEqual(item.statusItem.button?.title, "old")
+        try await waitForIdle(item)
+        XCTAssertEqual(item.statusItem.button?.title, "new")
+    }
+
+    @MainActor
+    private func waitForExecution(_ item: ManagedItem) async throws -> CommandRunnerSnapshot {
+        let deadline = Date().addingTimeInterval(2)
+        while Date() < deadline {
+            let snapshot = await item.runnerSnapshot()
+            if snapshot.lastExecution != nil {
+                return snapshot
+            }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        throw NSError(
+            domain: "RecoveryLifecycleTests",
+            code: 3,
+            userInfo: [NSLocalizedDescriptionKey: "manual item did not perform its initial run"]
+        )
+    }
+
+    @MainActor
+    private func waitForRunning(_ item: ManagedItem) async throws {
+        let deadline = Date().addingTimeInterval(2)
+        while Date() < deadline {
+            if await item.runnerSnapshot().isRunning {
+                return
+            }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        throw NSError(
+            domain: "RecoveryLifecycleTests",
+            code: 4,
+            userInfo: [NSLocalizedDescriptionKey: "manual refresh did not become active"]
+        )
+    }
+
+    @MainActor
+    private func waitForSkippedRefresh(_ item: ManagedItem) async throws -> CommandRunnerSnapshot {
+        let deadline = Date().addingTimeInterval(2)
+        while Date() < deadline {
+            let snapshot = await item.runnerSnapshot()
+            if snapshot.skippedRefreshes > 0 {
+                return snapshot
+            }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        throw NSError(
+            domain: "RecoveryLifecycleTests",
+            code: 5,
+            userInfo: [NSLocalizedDescriptionKey: "manual refresh was not coalesced while active"]
+        )
+    }
+
+    @MainActor
+    private func waitForIdle(_ item: ManagedItem) async throws {
+        let deadline = Date().addingTimeInterval(2)
+        while Date() < deadline {
+            if !(await item.runnerSnapshot().isRunning) {
+                return
+            }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        throw NSError(
+            domain: "RecoveryLifecycleTests",
+            code: 6,
+            userInfo: [NSLocalizedDescriptionKey: "manual refresh did not settle"]
+        )
+    }
+
     @MainActor
     func testExampleConfigCreationReportsFileFailure() throws {
         let root = FileManager.default.temporaryDirectory

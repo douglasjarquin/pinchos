@@ -9,15 +9,22 @@ private final class FakeManagedItem: ManagedItemLifecycle {
     private var pendingConfig: ItemConfig?
     private(set) var config: ItemConfig
     let initiallyVisible: Bool
+    let ownedStatusItem: NSStatusItem?
 
-    init(config: ItemConfig, eventLog: EventLog, initiallyVisible: Bool) {
+    init(
+        config: ItemConfig,
+        eventLog: EventLog,
+        initiallyVisible: Bool,
+        ownedStatusItem: NSStatusItem?
+    ) {
         self.config = config
         self.eventLog = eventLog
         self.initiallyVisible = initiallyVisible
+        self.ownedStatusItem = ownedStatusItem
     }
 
     func owns(statusItem: NSStatusItem) -> Bool {
-        false
+        ownedStatusItem === statusItem
     }
 
     func activate() {
@@ -51,6 +58,10 @@ private final class FakeManagedItem: ManagedItemLifecycle {
     func runnerSnapshot() async -> CommandRunnerSnapshot {
         CommandRunnerSnapshot(isRunning: false, lastExecution: nil, skippedRefreshes: 0)
     }
+
+    func refreshNow() {
+        eventLog.append("refresh-now:\(config.name)")
+    }
 }
 
 @MainActor
@@ -70,6 +81,7 @@ private final class EventLog {
 private final class FakeManagedItemFactory: ManagedItemFactory {
     let eventLog = EventLog()
     private(set) var created: [FakeManagedItem] = []
+    var statusItemToOwn: NSStatusItem?
 
     func make(
         config: ItemConfig,
@@ -79,8 +91,10 @@ private final class FakeManagedItemFactory: ManagedItemFactory {
         let item = FakeManagedItem(
             config: config,
             eventLog: eventLog,
-            initiallyVisible: initiallyVisible
+            initiallyVisible: initiallyVisible,
+            ownedStatusItem: statusItemToOwn
         )
+        statusItemToOwn = nil
         created.append(item)
         return item
     }
@@ -89,7 +103,7 @@ private final class FakeManagedItemFactory: ManagedItemFactory {
 @MainActor
 final class StatusItemControllerTests: XCTestCase {
     private func item(_ name: String, run: String? = nil) -> ItemConfig {
-        ItemConfig(name: name, run: run ?? "echo \(name)", interval: 60)
+        ItemConfig(name: name, run: run ?? "echo \(name)", interval: .scheduled(60))
     }
 
     private func makeController(factory: FakeManagedItemFactory) -> StatusItemController {
@@ -98,6 +112,27 @@ final class StatusItemControllerTests: XCTestCase {
             onReload: {},
             itemFactory: factory
         )
+    }
+
+    func testLifecycleMenuOffersRefreshNowAndDelegatesToItem() async throws {
+        let factory = FakeManagedItemFactory()
+        let statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
+        factory.statusItemToOwn = statusItem
+        let controller = makeController(factory: factory)
+        addTeardownBlock { @MainActor in
+            await controller.shutdown()
+            NSStatusBar.system.removeStatusItem(statusItem)
+        }
+
+        await controller.apply(config: PinchosConfig(items: [item("alpha")]))
+        let menu = await controller.makeLifecycleMenu(for: statusItem)
+        factory.eventLog.clear()
+
+        let refresh = try XCTUnwrap(menu.items.first(where: { $0.title == "Refresh Now" }))
+        XCTAssertTrue(refresh.isEnabled)
+        XCTAssertTrue((refresh.representedObject as? NSStatusItem) === statusItem)
+        XCTAssertTrue(NSApplication.shared.sendAction(refresh.action!, to: refresh.target, from: refresh))
+        XCTAssertEqual(factory.eventLog.events, ["refresh-now:alpha"])
     }
 
     func testNoOpReloadLeavesManagedItemsUntouched() async {

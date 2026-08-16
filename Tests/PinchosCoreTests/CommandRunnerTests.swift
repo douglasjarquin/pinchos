@@ -22,6 +22,23 @@ final class CommandRunnerTests: XCTestCase {
         XCTAssertEqual(snapshot.lastExecution, execution)
     }
 
+    func testManualRefreshDuringScheduledRunUsesTheSameExecutionGate() async throws {
+        let runner = CommandRunner(command: "sleep 0.2; printf scheduled", timeout: 1, maxOutputBytes: 64)
+        let scheduledTask = Task { await runner.runIfIdle() }
+        try await waitUntilRunning(runner)
+
+        let manualOutcome = await runner.runIfIdle()
+
+        XCTAssertEqual(manualOutcome, .skipped)
+        guard case .completed(let scheduledExecution) = await scheduledTask.value else {
+            return XCTFail("expected the scheduled execution to complete")
+        }
+        XCTAssertEqual(scheduledExecution.stdout, "scheduled")
+        let snapshot = await runner.snapshot()
+        XCTAssertEqual(snapshot.skippedRefreshes, 1)
+        XCTAssertEqual(snapshot.lastExecution, scheduledExecution)
+    }
+
     func testCancellationIsIdempotentAndRunnerCanRunAgain() async throws {
         let marker = FileManager.default.temporaryDirectory.appendingPathComponent("pinchos-runner-\(UUID().uuidString)")
         defer { try? FileManager.default.removeItem(at: marker) }

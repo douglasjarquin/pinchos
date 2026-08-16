@@ -44,7 +44,7 @@ final class RecoveryTests: XCTestCase {
         XCTAssertFalse(state.menu.canCreateExampleConfig)
 
         state.apply(config: PinchosConfig(items: [
-            ItemConfig(name: "clock", run: "echo clock", interval: 60)
+            ItemConfig(name: "clock", run: "echo clock", interval: .scheduled(60))
         ]))
         XCTAssertFalse(state.isVisible)
     }
