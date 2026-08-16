@@ -3,7 +3,9 @@ import PinchosCore
 
 @MainActor
 final class ManagedItem: ManagedItemLifecycle {
-    let statusItem: NSStatusItem
+    let statusItem: NSStatusItem?
+    private(set) var renderedTitle: String
+    private(set) var renderedToolTip: String?
     private(set) var config: ItemConfig
     private var runner: CommandRunner
     private var clickRunner: CommandRunner?
@@ -33,11 +35,16 @@ final class ManagedItem: ManagedItemLifecycle {
         initiallyVisible: Bool = true,
         timerFactory: @escaping (DispatchQueue) -> DispatchSourceTimer = { queue in
             DispatchSource.makeTimerSource(queue: queue)
+        },
+        statusItemFactory: @escaping () -> NSStatusItem? = {
+            NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         }
     ) {
         self.config = config
         self.menuDelegate = menuDelegate
         self.timerFactory = timerFactory
+        self.renderedTitle = config.errorText
+        self.renderedToolTip = nil
         self.runner = CommandRunner(
             command: config.run,
             timeout: config.timeout,
@@ -58,13 +65,14 @@ final class ManagedItem: ManagedItemLifecycle {
         } else {
             self.clickRunner = nil
         }
-        self.statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
-        statusItem.button?.title = config.errorText
-        statusItem.button?.target = self
-        statusItem.button?.action = #selector(handleClick)
-        statusItem.button?.sendAction(on: [.leftMouseUp, .rightMouseUp])
+        let statusItem = statusItemFactory()
+        self.statusItem = statusItem
+        statusItem?.button?.title = config.errorText
+        statusItem?.button?.target = self
+        statusItem?.button?.action = #selector(handleClick)
+        statusItem?.button?.sendAction(on: [.leftMouseUp, .rightMouseUp])
         applyIcon()
-        statusItem.isVisible = initiallyVisible
+        statusItem?.isVisible = initiallyVisible
         if initiallyVisible {
             startTimer()
         }
@@ -72,17 +80,18 @@ final class ManagedItem: ManagedItemLifecycle {
 
     func activate() {
         guard isActive else { return }
-        statusItem.isVisible = true
+        statusItem?.isVisible = true
         startTimer()
     }
 
     func owns(statusItem: NSStatusItem) -> Bool {
-        self.statusItem === statusItem
+        guard let ownedStatusItem = self.statusItem else { return false }
+        return ownedStatusItem === statusItem
     }
 
     private func applyIcon() {
-        guard let path = config.icon, let image = NSImage(contentsOfFile: path) else {
-            statusItem.button?.image = nil
+        guard let statusItem, let path = config.icon, let image = NSImage(contentsOfFile: path) else {
+            statusItem?.button?.image = nil
             return
         }
         image.size = NSSize(width: 16, height: 16)
@@ -188,7 +197,9 @@ final class ManagedItem: ManagedItemLifecycle {
         guard isActive else { return }
         isActive = false
         isPreparingRemoval = false
-        NSStatusBar.system.removeStatusItem(statusItem)
+        if let statusItem {
+            NSStatusBar.system.removeStatusItem(statusItem)
+        }
     }
 
     func tearDown() async {
@@ -235,7 +246,7 @@ final class ManagedItem: ManagedItemLifecycle {
         guard isActive, !isPreparingUpdate, !isPreparingRemoval else { return }
         let generation = configurationGeneration
         if !(await runner.snapshot().isRunning) {
-            statusItem.button?.toolTip = "Refreshing..."
+            setToolTip("Refreshing...")
         }
         let outcome = await runner.runIfIdle()
         guard isActive, generation == configurationGeneration else { return }
@@ -245,14 +256,14 @@ final class ManagedItem: ManagedItemLifecycle {
             return
         case .completed(let execution):
             if execution.terminalReason != .exited(code: 0) {
-                statusItem.button?.title = currentConfig.errorText
+                setTitle(currentConfig.errorText)
             } else {
                 let trimmed = lastTrimmedLine(of: execution.stdout)
-                statusItem.button?.title = applyFormat(currentConfig.format, output: trimmed)
+                setTitle(applyFormat(currentConfig.format, output: trimmed))
             }
         }
         if !(await runner.snapshot().isRunning) {
-            statusItem.button?.toolTip = nil
+            setToolTip(nil)
         }
     }
 
@@ -268,6 +279,7 @@ final class ManagedItem: ManagedItemLifecycle {
     func processClick(eventType: NSEvent.EventType) {
         guard isActive, !isPreparingUpdate, !isPreparingRemoval else { return }
         if eventType == .rightMouseUp {
+            guard let statusItem else { return }
             menuDelegate?.showLifecycleMenu(for: statusItem)
         } else if clickRunner != nil {
             guard let clickRunner else { return }
@@ -287,5 +299,15 @@ final class ManagedItem: ManagedItemLifecycle {
         guard pendingClickInvocations == 0, let continuation = clickInvocationsDrained else { return }
         clickInvocationsDrained = nil
         continuation.resume()
+    }
+
+    private func setTitle(_ title: String) {
+        renderedTitle = title
+        statusItem?.button?.title = title
+    }
+
+    private func setToolTip(_ toolTip: String?) {
+        renderedToolTip = toolTip
+        statusItem?.button?.toolTip = toolTip
     }
 }

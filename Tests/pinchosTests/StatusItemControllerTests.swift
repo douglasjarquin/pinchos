@@ -116,21 +116,18 @@ final class StatusItemControllerTests: XCTestCase {
 
     func testLifecycleMenuOffersRefreshNowAndDelegatesToItem() async throws {
         let factory = FakeManagedItemFactory()
-        let statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
-        factory.statusItemToOwn = statusItem
         let controller = makeController(factory: factory)
         addTeardownBlock { @MainActor in
             await controller.shutdown()
-            NSStatusBar.system.removeStatusItem(statusItem)
         }
 
         await controller.apply(config: PinchosConfig(items: [item("alpha")]))
-        let menu = await controller.makeLifecycleMenu(for: statusItem)
+        let menu = await controller.makeLifecycleMenu(forManagedItem: factory.created[0])
         factory.eventLog.clear()
 
         let refresh = try XCTUnwrap(menu.items.first(where: { $0.title == "Refresh Now" }))
         XCTAssertTrue(refresh.isEnabled)
-        XCTAssertTrue((refresh.representedObject as? NSStatusItem) === statusItem)
+        XCTAssertNotNil(refresh.representedObject)
         XCTAssertTrue(NSApplication.shared.sendAction(refresh.action!, to: refresh.target, from: refresh))
         XCTAssertEqual(factory.eventLog.events, ["refresh-now:alpha"])
     }

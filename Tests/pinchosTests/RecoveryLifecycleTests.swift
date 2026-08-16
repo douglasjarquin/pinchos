@@ -27,8 +27,26 @@ private final class NoopStatusItemMenuDelegate: StatusItemMenuDelegate {
 
 final class RecoveryLifecycleTests: XCTestCase {
     @MainActor
+    private func makeHeadlessItem(
+        config: ItemConfig,
+        menuDelegate: StatusItemMenuDelegate? = nil,
+        initiallyVisible: Bool = true,
+        timerFactory: @escaping (DispatchQueue) -> DispatchSourceTimer = { queue in
+            DispatchSource.makeTimerSource(queue: queue)
+        }
+    ) -> ManagedItem {
+        ManagedItem(
+            config: config,
+            menuDelegate: menuDelegate ?? NoopStatusItemMenuDelegate(),
+            initiallyVisible: initiallyVisible,
+            timerFactory: timerFactory,
+            statusItemFactory: { nil }
+        )
+    }
+
+    @MainActor
     func testManualItemRunsOnceOnActivationWithoutPeriodicTimer() async throws {
-        let item = ManagedItem(
+        let item = makeHeadlessItem(
             config: ItemConfig(
                 name: "manual",
                 run: "printf 'manual\\n'",
@@ -54,7 +72,7 @@ final class RecoveryLifecycleTests: XCTestCase {
     @MainActor
     func testManualActivationDoesNotCreatePeriodicTimer() async throws {
         let timerCreations = CallbackCounter()
-        let item = ManagedItem(
+        let item = makeHeadlessItem(
             config: ItemConfig(
                 name: "manual",
                 run: "printf manual",
@@ -85,7 +103,7 @@ final class RecoveryLifecycleTests: XCTestCase {
     func testManualRefreshKeepsLastGoodValueWhileAnotherRefreshRuns() async throws {
         let marker = FileManager.default.temporaryDirectory
             .appendingPathComponent("pinchos-manual-refresh-\(UUID().uuidString)")
-        let item = ManagedItem(
+        let item = makeHeadlessItem(
             config: ItemConfig(
                 name: "manual",
                 run: "if [ ! -e '\(marker.path)' ]; then printf 'old\\n'; touch '\(marker.path)'; else sleep 0.3; printf 'new\\n'; fi",
@@ -101,21 +119,21 @@ final class RecoveryLifecycleTests: XCTestCase {
 
         item.refreshNow()
         _ = try await waitForExecution(item)
-        XCTAssertEqual(item.statusItem.button?.title, "old")
+        XCTAssertEqual(item.renderedTitle, "old")
 
         item.refreshNow()
         try await waitForRunning(item)
         item.refreshNow()
         _ = try await waitForSkippedRefresh(item)
 
-        XCTAssertEqual(item.statusItem.button?.title, "old")
+        XCTAssertEqual(item.renderedTitle, "old")
         try await waitForIdle(item)
-        XCTAssertEqual(item.statusItem.button?.title, "new")
+        XCTAssertEqual(item.renderedTitle, "new")
     }
 
     @MainActor
     func testScheduledRefreshAndManualRefreshShareTheExecutionGate() async throws {
-        let item = ManagedItem(
+        let item = makeHeadlessItem(
             config: ItemConfig(
                 name: "scheduled",
                 run: "sleep 0.3; printf scheduled",
@@ -133,12 +151,12 @@ final class RecoveryLifecycleTests: XCTestCase {
 
         XCTAssertEqual(snapshot.skippedRefreshes, 1)
         try await waitForIdle(item)
-        XCTAssertEqual(item.statusItem.button?.title, "scheduled")
+        XCTAssertEqual(item.renderedTitle, "scheduled")
     }
 
     @MainActor
     func testManualItemDoesNotRefreshAfterRunnerConfigurationUpdate() async throws {
-        let item = ManagedItem(
+        let item = makeHeadlessItem(
             config: ItemConfig(
                 name: "manual",
                 run: "printf old",
@@ -153,7 +171,7 @@ final class RecoveryLifecycleTests: XCTestCase {
 
         item.activate()
         _ = try await waitForExecution(item)
-        XCTAssertEqual(item.statusItem.button?.title, "old")
+        XCTAssertEqual(item.renderedTitle, "old")
 
         await item.prepareUpdate(config: ItemConfig(
             name: "manual",
@@ -163,14 +181,14 @@ final class RecoveryLifecycleTests: XCTestCase {
         item.commitPreparedUpdate()
         try await Task.sleep(for: .milliseconds(200))
 
-        XCTAssertEqual(item.statusItem.button?.title, "old")
+        XCTAssertEqual(item.renderedTitle, "old")
     }
 
     @MainActor
     func testRefreshOnClickTriggersRefreshWhenNoClickActionIsConfigured() async throws {
         let marker = FileManager.default.temporaryDirectory
             .appendingPathComponent("pinchos-refresh-click-\(UUID().uuidString)")
-        let item = ManagedItem(
+        let item = makeHeadlessItem(
             config: ItemConfig(
                 name: "click",
                 run: "if [ ! -e '\(marker.path)' ]; then printf old; touch '\(marker.path)'; else sleep 0.2; printf clicked; fi",
@@ -187,12 +205,12 @@ final class RecoveryLifecycleTests: XCTestCase {
 
         item.refreshNow()
         _ = try await waitForExecution(item)
-        XCTAssertEqual(item.statusItem.button?.title, "old")
+        XCTAssertEqual(item.renderedTitle, "old")
 
         item.processClick(eventType: .leftMouseUp)
         try await waitForRunning(item)
         try await waitForIdle(item)
-        XCTAssertEqual(item.statusItem.button?.title, "clicked")
+        XCTAssertEqual(item.renderedTitle, "clicked")
     }
 
     @MainActor
@@ -201,7 +219,7 @@ final class RecoveryLifecycleTests: XCTestCase {
             .appendingPathComponent("pinchos-run-click-\(UUID().uuidString)")
         let clickMarker = FileManager.default.temporaryDirectory
             .appendingPathComponent("pinchos-action-click-\(UUID().uuidString)")
-        let item = ManagedItem(
+        let item = makeHeadlessItem(
             config: ItemConfig(
                 name: "click",
                 run: "if [ ! -e '\(runMarker.path)' ]; then printf old; touch '\(runMarker.path)'; else printf refreshed; fi",
@@ -220,16 +238,16 @@ final class RecoveryLifecycleTests: XCTestCase {
 
         item.refreshNow()
         _ = try await waitForExecution(item)
-        XCTAssertEqual(item.statusItem.button?.title, "old")
+        XCTAssertEqual(item.renderedTitle, "old")
 
         item.processClick(eventType: .leftMouseUp)
         try await waitForFile(clickMarker)
-        XCTAssertEqual(item.statusItem.button?.title, "old")
+        XCTAssertEqual(item.renderedTitle, "old")
     }
 
     @MainActor
     func testFailedRefreshClearsRunningFeedback() async throws {
-        let item = ManagedItem(
+        let item = makeHeadlessItem(
             config: ItemConfig(
                 name: "manual",
                 run: "exit 1",
@@ -247,8 +265,8 @@ final class RecoveryLifecycleTests: XCTestCase {
         _ = try await waitForExecution(item)
         try await waitForTooltipToClear(item)
 
-        XCTAssertEqual(item.statusItem.button?.title, "ERR")
-        XCTAssertNil(item.statusItem.button?.toolTip)
+        XCTAssertEqual(item.renderedTitle, "ERR")
+        XCTAssertNil(item.renderedToolTip)
     }
 
     @MainActor
@@ -321,7 +339,7 @@ final class RecoveryLifecycleTests: XCTestCase {
     private func waitForTooltipToClear(_ item: ManagedItem) async throws {
         let deadline = Date().addingTimeInterval(2)
         while Date() < deadline {
-            if item.statusItem.button?.toolTip == nil {
+            if item.renderedToolTip == nil {
                 return
             }
             try await Task.sleep(for: .milliseconds(10))

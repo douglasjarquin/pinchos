@@ -62,6 +62,15 @@ private enum RecoveryActionError: LocalizedError {
 }
 
 @MainActor
+private final class RefreshActionTarget: NSObject {
+    let item: any ManagedItemLifecycle
+
+    init(item: any ManagedItemLifecycle) {
+        self.item = item
+    }
+}
+
+@MainActor
 final class StatusItemController: StatusItemMenuDelegate {
     private let itemFactory: any ManagedItemFactory
     private var items: [String: any ManagedItemLifecycle] = [:]
@@ -272,13 +281,18 @@ final class StatusItemController: StatusItemMenuDelegate {
     }
 
     func makeLifecycleMenu(for statusItem: NSStatusItem?) async -> NSMenu {
+        let item = statusItem.flatMap { statusItem in
+            items.values.first(where: { $0.owns(statusItem: statusItem) })
+        }
+        return await makeLifecycleMenu(forManagedItem: item)
+    }
+
+    func makeLifecycleMenu(forManagedItem item: (any ManagedItemLifecycle)?) async -> NSMenu {
         let menu = NSMenu()
-        if let statusItem,
-            let item = items.values.first(where: { $0.owns(statusItem: statusItem) })
-        {
+        if let item {
             let refresh = NSMenuItem(title: "Refresh Now", action: #selector(refreshAction(_:)), keyEquivalent: "")
             refresh.target = self
-            refresh.representedObject = statusItem
+            refresh.representedObject = RefreshActionTarget(item: item)
             menu.addItem(refresh)
             menu.addItem(NSMenuItem.separator())
             addDiagnostics(from: await item.runnerSnapshot(), to: menu)
@@ -343,9 +357,8 @@ final class StatusItemController: StatusItemMenuDelegate {
     }
 
     @objc private func refreshAction(_ sender: NSMenuItem) {
-        guard let statusItem = sender.representedObject as? NSStatusItem,
-              let item = items.values.first(where: { $0.owns(statusItem: statusItem) }) else { return }
-        item.refreshNow()
+        guard let target = sender.representedObject as? RefreshActionTarget else { return }
+        target.item.refreshNow()
     }
 
     @objc private func reloadConfigAction() {
