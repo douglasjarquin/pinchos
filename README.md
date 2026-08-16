@@ -100,6 +100,9 @@ format = "{output}%"    # optional. {output} is the trimmed last stdout line of 
 click = "<shell command>" # optional, run (fire-and-forget) on left-click
 refresh_on_click = true  # optional, refresh `run` on left-click when `click` is absent
 error_text = "–"   # optional, default "–". Shown when `run` fails, instead of the item disappearing.
+on_error = "keep_last" # optional, default "replace". Keep the last successful value when `run` fails.
+stale_after = "15m"    # optional. Mark the last successful value stale at or after this age.
+tooltip = "Updated {updated_at} ({status})" # optional. Native tooltip template.
 icon = "/path/to/icon.svg" # optional, a local image file (SVG/PNG/PDF) rendered as a template icon left of the text
 
 [item.<name>.env]
@@ -107,7 +110,12 @@ PATH = "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin"
 AWS_PROFILE = "production"
 ```
 
-- `{output}` is the **only** placeholder. There's no JSON-path or nested-field extraction — pipe your command through `jq` (or anything else) to shape the value before it reaches pinchos.
+- `tooltip` is rendered by the native status-item tooltip. Supported placeholders are `{output}` (the full retained stdout, including newlines), `{updated_at}` (the last successful completion time), `{attempted_at}` (the last command start time), `{duration}` (the last run duration with three decimal places and an `s` suffix), `{exit_status}` (the last exit code or terminal result), `{error}` (the latest bounded stderr line or terminal error), `{stale}` (`yes` or `no`), and `{status}` (`running`, `fresh`, `stale`, `error`, or `unavailable`).
+- Timestamps use UTC ISO-8601 format.
+- Before the first successful run, `{output}` and `{updated_at}` are empty, while `{attempted_at}` and diagnostic placeholders become available after an attempt.
+- `{{` and `}}` escape literal braces.
+- An unknown placeholder or unmatched brace is a configuration error, so raw placeholder braces never leak into a native tooltip.
+- The full output is the command runner's retained output subject to `max_output`; a truncation flag and byte counts remain visible in the right-click diagnostics menu.
 - `shell` is an executable path followed by the arguments used to invoke it; `run` is appended as the final argument. The default is `[/bin/sh, -c]`, preserving the original behavior.
 - `shell` and `working_directory` are resolved when the config loads. A leading `~` expands to the launching user's home directory, and relative filesystem paths are resolved relative to the config file, including `icon` paths.
 - `working_directory` is optional. When omitted, the command inherits Pinchos's process working directory.
@@ -121,10 +129,11 @@ AWS_PROFILE = "production"
 - `max_output` is an independent retained-tail limit for stdout and stderr, so `64KiB` can retain up to 64KiB from each stream while both streams continue draining.
 - Retaining the tail keeps the final output line and the most recent stderr diagnostic available even when a command emits more than the configured limit.
 - `icon` is a plain filesystem path, not a built-in icon library — pinchos ships with no bundled icon catalog. Point it at any image file you like; it's drawn as a template image (tinted automatically for light/dark menu bars) at 16x16, to the left of the item's text. A missing or unreadable file just falls back to text-only — it never crashes the app.
-- A failing command never crashes pinchos and never blanks the item — it renders `error_text`.
+- A failing command never crashes pinchos. With the default `on_error = "replace"`, it renders `error_text`; with `on_error = "keep_last"`, it retains the last successful title and full output while marking the item with a compact warning indicator.
+- `stale_after` uses the last successful completion as its clock origin and becomes stale when the age is greater than or equal to the configured threshold. A first-run failure is `error`/`unavailable` rather than a fabricated stale value.
 - Command runs for a given item never overlap: if the previous run for that item hasn't finished when the next tick fires, the tick is skipped.
 - Manual refreshes use the same per-item execution gate as scheduled ticks, so repeated Refresh Now actions are skipped while a run is active.
-- While a refresh is running, the last good value stays visible and the item's tooltip reports `Refreshing...`. The right-click diagnostics menu reports the running state and the last completed result.
+- While a refresh is running, the last good value stays visible and the item's native tooltip reports the running state. The right-click diagnostics menu reports the full retained value, state, last attempt, last success, stale flag, duration, exit/error details, and the hardened runner's per-stream diagnostics.
 - Skipped ticks are counted in the item's right-click diagnostics menu without replacing the last completed result.
 - The same timeout and output bounds apply to an optional click command, which is cancelled when its item is removed or Pinchos quits.
 - The diagnostics menu reports the last exit code or signal, duration, skipped ticks, per-stream truncation, and the latest bounded stderr line.
