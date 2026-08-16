@@ -9,6 +9,7 @@ final class ManagedItem: ManagedItemLifecycle {
     private(set) var config: ItemConfig
     private var runner: CommandRunner
     private var clickRunner: CommandRunner?
+    private var actionRunners: [Int: CommandRunner]
     private var timer: DispatchSourceTimer?
     private let timerQueue = DispatchQueue(label: "com.pinchos.item-timer")
     private let timerFactory: (DispatchQueue) -> DispatchSourceTimer
@@ -21,6 +22,8 @@ final class ManagedItem: ManagedItemLifecycle {
     private var isPreparingRemoval = false
     private var pendingClickInvocations = 0
     private var clickInvocationsDrained: CheckedContinuation<Void, Never>?
+    private var pendingActionInvocations = 0
+    private var actionInvocationsDrained: CheckedContinuation<Void, Never>?
     private var lastSuccessfulOutput: String?
     private var lastAttemptedAt: Date?
     private var lastUpdatedAt: Date?
@@ -32,6 +35,8 @@ final class ManagedItem: ManagedItemLifecycle {
         let runner: CommandRunner?
         let clickRunner: CommandRunner?
         let clickRunnerConfigurationChanged: Bool
+        let actionRunners: [Int: CommandRunner]?
+        let actionRunnersConfigurationChanged: Bool
         let timerNeedsRestart: Bool
         let presentationNeedsUpdate: Bool
         let staleAfterChanged: Bool
@@ -75,6 +80,7 @@ final class ManagedItem: ManagedItemLifecycle {
         } else {
             self.clickRunner = nil
         }
+        self.actionRunners = Self.makeActionRunners(for: config)
         let statusItem = statusItemFactory()
         self.statusItem = statusItem
         statusItem?.button?.title = config.errorText
@@ -168,11 +174,28 @@ final class ManagedItem: ManagedItemLifecycle {
             )
         } : nil
 
+        let actionRunnersConfigurationChanged = previousConfig.actions != config.actions
+            || previousConfig.timeout != config.timeout
+            || previousConfig.maxOutputBytes != config.maxOutputBytes
+            || previousConfig.shell != config.shell
+            || previousConfig.workingDirectory != config.workingDirectory
+            || previousConfig.environment != config.environment
+        if actionRunnersConfigurationChanged {
+            for actionRunner in actionRunners.values {
+                await actionRunner.cancelActive()
+            }
+        }
+        let replacementActionRunners = actionRunnersConfigurationChanged
+            ? Self.makeActionRunners(for: config)
+            : nil
+
         pendingUpdate = PendingUpdate(
             config: config,
             runner: replacementRunner,
             clickRunner: replacementClickRunner,
             clickRunnerConfigurationChanged: clickRunnerConfigurationChanged,
+            actionRunners: replacementActionRunners,
+            actionRunnersConfigurationChanged: actionRunnersConfigurationChanged,
             timerNeedsRestart: timerNeedsRestart,
             presentationNeedsUpdate: presentationNeedsUpdate,
             staleAfterChanged: staleAfterChanged
@@ -188,6 +211,9 @@ final class ManagedItem: ManagedItemLifecycle {
         }
         if pendingUpdate.clickRunnerConfigurationChanged {
             clickRunner = pendingUpdate.clickRunner
+        }
+        if pendingUpdate.actionRunnersConfigurationChanged {
+            actionRunners = pendingUpdate.actionRunners ?? [:]
         }
         applyIcon()
         if pendingUpdate.timerNeedsRestart {
@@ -215,9 +241,17 @@ final class ManagedItem: ManagedItemLifecycle {
         timer = nil
         await runner.cancelActive()
         await clickRunner?.cancelActive()
+        for actionRunner in actionRunners.values {
+            await actionRunner.cancelActive()
+        }
         if pendingClickInvocations > 0 {
             await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
                 clickInvocationsDrained = continuation
+            }
+        }
+        if pendingActionInvocations > 0 {
+            await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+                actionInvocationsDrained = continuation
             }
         }
     }
@@ -431,6 +465,43 @@ final class ManagedItem: ManagedItemLifecycle {
         await runner.snapshot()
     }
 
+    func actionSnapshot(at index: Int) async -> CommandRunnerSnapshot? {
+        guard config.actions.indices.contains(index),
+            case .command = config.actions[index].kind,
+            let actionRunner = actionRunners[index]
+        else {
+            return nil
+        }
+        return await actionRunner.snapshot()
+    }
+
+    func invokeAction(at index: Int) {
+        guard isActive, !isPreparingUpdate, !isPreparingRemoval,
+            config.actions.indices.contains(index)
+        else {
+            return
+        }
+        switch config.actions[index].kind {
+        case .refresh:
+            refreshNow()
+        case .command:
+            guard let actionRunner = actionRunners[index] else { return }
+            pendingActionInvocations += 1
+            Task { @MainActor [weak self, actionRunner] in
+                defer { self?.finishActionInvocation() }
+                guard let self,
+                    self.isActive,
+                    !self.isPreparingUpdate,
+                    !self.isPreparingRemoval,
+                    self.actionRunners[index] === actionRunner
+                else {
+                    return
+                }
+                _ = await actionRunner.runIfIdle()
+            }
+        }
+    }
+
     @objc private func handleClick() {
         guard let event = NSApp.currentEvent else { return }
         processClick(eventType: event.type)
@@ -459,6 +530,29 @@ final class ManagedItem: ManagedItemLifecycle {
         guard pendingClickInvocations == 0, let continuation = clickInvocationsDrained else { return }
         clickInvocationsDrained = nil
         continuation.resume()
+    }
+
+    private func finishActionInvocation() {
+        pendingActionInvocations -= 1
+        guard pendingActionInvocations == 0, let continuation = actionInvocationsDrained else { return }
+        actionInvocationsDrained = nil
+        continuation.resume()
+    }
+
+    private static func makeActionRunners(for config: ItemConfig) -> [Int: CommandRunner] {
+        var runners: [Int: CommandRunner] = [:]
+        for (index, action) in config.actions.enumerated() {
+            guard case .command(let command) = action.kind else { continue }
+            runners[index] = CommandRunner(
+                command: command,
+                timeout: config.timeout,
+                maxOutputBytes: config.maxOutputBytes,
+                shell: config.shell,
+                workingDirectory: config.workingDirectory,
+                environment: config.environment
+            )
+        }
+        return runners
     }
 
     private func setTitle(_ title: String) {

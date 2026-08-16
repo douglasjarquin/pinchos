@@ -18,6 +18,8 @@ protocol ManagedItemLifecycle: AnyObject {
     func tearDown() async
     func runnerSnapshot() async -> CommandRunnerSnapshot
     func runtimeSnapshot() async -> ItemRuntimeSnapshot
+    func actionSnapshot(at index: Int) async -> CommandRunnerSnapshot?
+    func invokeAction(at index: Int)
     func refreshNow()
 }
 
@@ -68,6 +70,17 @@ private final class RefreshActionTarget: NSObject {
 
     init(item: any ManagedItemLifecycle) {
         self.item = item
+    }
+}
+
+@MainActor
+private final class ItemActionTarget: NSObject {
+    let item: any ManagedItemLifecycle
+    let index: Int
+
+    init(item: any ManagedItemLifecycle, index: Int) {
+        self.item = item
+        self.index = index
     }
 }
 
@@ -291,17 +304,43 @@ final class StatusItemController: StatusItemMenuDelegate {
     func makeLifecycleMenu(forManagedItem item: (any ManagedItemLifecycle)?) async -> NSMenu {
         let menu = NSMenu()
         if let item {
-            let refresh = NSMenuItem(title: "Refresh Now", action: #selector(refreshAction(_:)), keyEquivalent: "")
-            refresh.target = self
-            refresh.representedObject = RefreshActionTarget(item: item)
-            menu.addItem(refresh)
-            menu.addItem(NSMenuItem.separator())
+            var hasConfiguredRefresh = false
+            for (index, action) in item.config.actions.enumerated() {
+                let menuItem = NSMenuItem(title: action.title, action: #selector(itemAction(_:)), keyEquivalent: "")
+                menuItem.target = self
+                menuItem.representedObject = ItemActionTarget(item: item, index: index)
+                menu.addItem(menuItem)
+                if case .refresh = action.kind {
+                    hasConfiguredRefresh = true
+                }
+            }
+            if !item.config.actions.isEmpty {
+                menu.addItem(NSMenuItem.separator())
+            }
+            if !hasConfiguredRefresh {
+                let refresh = NSMenuItem(title: "Refresh Now", action: #selector(refreshAction(_:)), keyEquivalent: "")
+                refresh.target = self
+                refresh.representedObject = RefreshActionTarget(item: item)
+                menu.addItem(refresh)
+                menu.addItem(NSMenuItem.separator())
+            }
             let runtime = await item.runtimeSnapshot()
             addRuntimeState(from: runtime, to: menu)
             menu.addItem(NSMenuItem.separator())
             addDiagnostics(from: runtime.runnerSnapshot, to: menu)
+            var actionSnapshots: [(index: Int, snapshot: CommandRunnerSnapshot?)] = []
+            for index in item.config.actions.indices {
+                actionSnapshots.append((index: index, snapshot: await item.actionSnapshot(at: index)))
+            }
+            if actionSnapshots.contains(where: { $0.snapshot != nil }) {
+                menu.addItem(NSMenuItem.separator())
+                addActionDiagnostics(actions: item.config.actions, snapshots: actionSnapshots, to: menu)
+            }
             menu.addItem(NSMenuItem.separator())
         }
+        let openConfig = NSMenuItem(title: "Open Config", action: #selector(openConfigAction), keyEquivalent: "")
+        openConfig.target = self
+        menu.addItem(openConfig)
         let reload = NSMenuItem(title: "Reload Config", action: #selector(reloadConfigAction), keyEquivalent: "r")
         reload.target = self
         menu.addItem(reload)
@@ -309,6 +348,43 @@ final class StatusItemController: StatusItemMenuDelegate {
         quit.target = self
         menu.addItem(quit)
         return menu
+    }
+
+    private func addActionDiagnostics(
+        actions: [ItemAction],
+        snapshots: [(index: Int, snapshot: CommandRunnerSnapshot?)],
+        to menu: NSMenu
+    ) {
+        for entry in snapshots {
+            guard let snapshot = entry.snapshot else { continue }
+            let title = actions[entry.index].title
+            let actionPrefix = "Action \"\(title)\": "
+            menu.addItem(disabledItem(title: actionPrefix + (snapshot.isRunning ? "running" : "waiting")))
+            if let execution = snapshot.lastExecution {
+                switch execution.terminalReason {
+                case .exited(let code):
+                    menu.addItem(disabledItem(title: actionPrefix + "last exit code: \(code)"))
+                case .signaled(let signal):
+                    menu.addItem(disabledItem(title: actionPrefix + "last signal: \(signal)"))
+                case .timedOut:
+                    menu.addItem(disabledItem(title: actionPrefix + "last result: timed out"))
+                case .cancelled:
+                    menu.addItem(disabledItem(title: actionPrefix + "last result: cancelled"))
+                case .launchFailed(let message):
+                    menu.addItem(disabledItem(title: actionPrefix + "launch failed"))
+                    if !message.isEmpty {
+                        menu.addItem(disabledItem(title: actionPrefix + "launch: \(String(message.prefix(200)))"))
+                    }
+                }
+                let stderrLine = lastTrimmedLine(of: execution.stderr)
+                if !stderrLine.isEmpty {
+                    menu.addItem(disabledItem(title: actionPrefix + "stderr: \(String(stderrLine.prefix(200)))"))
+                }
+            }
+            if snapshot.skippedRefreshes > 0 {
+                menu.addItem(disabledItem(title: actionPrefix + "skipped invocations: \(snapshot.skippedRefreshes)"))
+            }
+        }
     }
 
     private func addRuntimeState(from snapshot: ItemRuntimeSnapshot, to menu: NSMenu) {
@@ -380,6 +456,11 @@ final class StatusItemController: StatusItemMenuDelegate {
     @objc private func refreshAction(_ sender: NSMenuItem) {
         guard let target = sender.representedObject as? RefreshActionTarget else { return }
         target.item.refreshNow()
+    }
+
+    @objc private func itemAction(_ sender: NSMenuItem) {
+        guard let target = sender.representedObject as? ItemActionTarget else { return }
+        target.item.invokeAction(at: target.index)
     }
 
     @objc private func reloadConfigAction() {
