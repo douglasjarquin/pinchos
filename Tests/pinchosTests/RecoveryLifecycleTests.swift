@@ -52,6 +52,36 @@ final class RecoveryLifecycleTests: XCTestCase {
     }
 
     @MainActor
+    func testManualActivationDoesNotCreatePeriodicTimer() async throws {
+        let timerCreations = CallbackCounter()
+        let item = ManagedItem(
+            config: ItemConfig(
+                name: "manual",
+                run: "printf manual",
+                interval: .manual
+            ),
+            menuDelegate: NoopStatusItemMenuDelegate(),
+            initiallyVisible: false,
+            timerFactory: { _ in
+                _ = timerCreations.increment()
+                let timer = DispatchSource.makeTimerSource()
+                timer.resume()
+                timer.cancel()
+                return timer
+            }
+        )
+        addTeardownBlock { @MainActor in
+            await item.tearDown()
+        }
+
+        item.activate()
+        _ = try await waitForExecution(item)
+        try await Task.sleep(for: .milliseconds(200))
+
+        XCTAssertEqual(timerCreations.value, 0)
+    }
+
+    @MainActor
     func testManualRefreshKeepsLastGoodValueWhileAnotherRefreshRuns() async throws {
         let marker = FileManager.default.temporaryDirectory
             .appendingPathComponent("pinchos-manual-refresh-\(UUID().uuidString)")
@@ -104,6 +134,36 @@ final class RecoveryLifecycleTests: XCTestCase {
         XCTAssertEqual(snapshot.skippedRefreshes, 1)
         try await waitForIdle(item)
         XCTAssertEqual(item.statusItem.button?.title, "scheduled")
+    }
+
+    @MainActor
+    func testManualItemDoesNotRefreshAfterRunnerConfigurationUpdate() async throws {
+        let item = ManagedItem(
+            config: ItemConfig(
+                name: "manual",
+                run: "printf old",
+                interval: .manual
+            ),
+            menuDelegate: NoopStatusItemMenuDelegate(),
+            initiallyVisible: false
+        )
+        addTeardownBlock { @MainActor in
+            await item.tearDown()
+        }
+
+        item.activate()
+        _ = try await waitForExecution(item)
+        XCTAssertEqual(item.statusItem.button?.title, "old")
+
+        await item.prepareUpdate(config: ItemConfig(
+            name: "manual",
+            run: "printf updated",
+            interval: .manual
+        ))
+        item.commitPreparedUpdate()
+        try await Task.sleep(for: .milliseconds(200))
+
+        XCTAssertEqual(item.statusItem.button?.title, "old")
     }
 
     @MainActor

@@ -9,6 +9,7 @@ final class ManagedItem: ManagedItemLifecycle {
     private var clickRunner: CommandRunner?
     private var timer: DispatchSourceTimer?
     private let timerQueue = DispatchQueue(label: "com.pinchos.item-timer")
+    private let timerFactory: (DispatchQueue) -> DispatchSourceTimer
     private weak var menuDelegate: StatusItemMenuDelegate?
     private var isActive = true
     private var configurationGeneration = 0
@@ -26,9 +27,17 @@ final class ManagedItem: ManagedItemLifecycle {
         let timerNeedsRestart: Bool
     }
 
-    init(config: ItemConfig, menuDelegate: StatusItemMenuDelegate, initiallyVisible: Bool = true) {
+    init(
+        config: ItemConfig,
+        menuDelegate: StatusItemMenuDelegate,
+        initiallyVisible: Bool = true,
+        timerFactory: @escaping (DispatchQueue) -> DispatchSourceTimer = { queue in
+            DispatchSource.makeTimerSource(queue: queue)
+        }
+    ) {
         self.config = config
         self.menuDelegate = menuDelegate
+        self.timerFactory = timerFactory
         self.runner = CommandRunner(
             command: config.run,
             timeout: config.timeout,
@@ -155,7 +164,7 @@ final class ManagedItem: ManagedItemLifecycle {
         }
         applyIcon()
         if pendingUpdate.timerNeedsRestart {
-            startTimer()
+            startTimer(runInitialRefresh: false)
         }
         isPreparingUpdate = false
     }
@@ -187,14 +196,16 @@ final class ManagedItem: ManagedItemLifecycle {
         commitRemoval()
     }
 
-    private func startTimer() {
+    private func startTimer(runInitialRefresh: Bool = true) {
         timer?.cancel()
         timer = nil
         guard case .scheduled(let interval) = config.interval else {
-            requestRefresh()
+            if runInitialRefresh {
+                requestRefresh()
+            }
             return
         }
-        let newTimer = DispatchSource.makeTimerSource(queue: timerQueue)
+        let newTimer = timerFactory(timerQueue)
         newTimer.schedule(deadline: .now(), repeating: interval)
         newTimer.setEventHandler { [weak self] in
             guard let self else { return }
