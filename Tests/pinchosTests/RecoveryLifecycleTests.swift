@@ -84,6 +84,90 @@ final class RecoveryLifecycleTests: XCTestCase {
     }
 
     @MainActor
+    func testScheduledRefreshAndManualRefreshShareTheExecutionGate() async throws {
+        let item = ManagedItem(
+            config: ItemConfig(
+                name: "scheduled",
+                run: "sleep 0.3; printf scheduled",
+                interval: .scheduled(1)
+            ),
+            menuDelegate: NoopStatusItemMenuDelegate()
+        )
+        addTeardownBlock { @MainActor in
+            await item.tearDown()
+        }
+
+        try await waitForRunning(item)
+        item.refreshNow()
+        let snapshot = try await waitForSkippedRefresh(item)
+
+        XCTAssertEqual(snapshot.skippedRefreshes, 1)
+        try await waitForIdle(item)
+        XCTAssertEqual(item.statusItem.button?.title, "scheduled")
+    }
+
+    @MainActor
+    func testRefreshOnClickTriggersRefreshWhenNoClickActionIsConfigured() async throws {
+        let marker = FileManager.default.temporaryDirectory
+            .appendingPathComponent("pinchos-refresh-click-\(UUID().uuidString)")
+        let item = ManagedItem(
+            config: ItemConfig(
+                name: "click",
+                run: "if [ ! -e '\(marker.path)' ]; then printf old; touch '\(marker.path)'; else sleep 0.2; printf clicked; fi",
+                interval: .manual,
+                refreshOnClick: true
+            ),
+            menuDelegate: NoopStatusItemMenuDelegate(),
+            initiallyVisible: false
+        )
+        addTeardownBlock { @MainActor in
+            await item.tearDown()
+            try? FileManager.default.removeItem(at: marker)
+        }
+
+        item.refreshNow()
+        _ = try await waitForExecution(item)
+        XCTAssertEqual(item.statusItem.button?.title, "old")
+
+        item.processClick(eventType: .leftMouseUp)
+        try await waitForRunning(item)
+        try await waitForIdle(item)
+        XCTAssertEqual(item.statusItem.button?.title, "clicked")
+    }
+
+    @MainActor
+    func testConfiguredClickActionTakesPrecedenceOverRefreshOnClick() async throws {
+        let runMarker = FileManager.default.temporaryDirectory
+            .appendingPathComponent("pinchos-run-click-\(UUID().uuidString)")
+        let clickMarker = FileManager.default.temporaryDirectory
+            .appendingPathComponent("pinchos-action-click-\(UUID().uuidString)")
+        let item = ManagedItem(
+            config: ItemConfig(
+                name: "click",
+                run: "if [ ! -e '\(runMarker.path)' ]; then printf old; touch '\(runMarker.path)'; else printf refreshed; fi",
+                interval: .manual,
+                click: "touch '\(clickMarker.path)'",
+                refreshOnClick: true
+            ),
+            menuDelegate: NoopStatusItemMenuDelegate(),
+            initiallyVisible: false
+        )
+        addTeardownBlock { @MainActor in
+            await item.tearDown()
+            try? FileManager.default.removeItem(at: runMarker)
+            try? FileManager.default.removeItem(at: clickMarker)
+        }
+
+        item.refreshNow()
+        _ = try await waitForExecution(item)
+        XCTAssertEqual(item.statusItem.button?.title, "old")
+
+        item.processClick(eventType: .leftMouseUp)
+        try await waitForFile(clickMarker)
+        XCTAssertEqual(item.statusItem.button?.title, "old")
+    }
+
+    @MainActor
     func testFailedRefreshClearsRunningFeedback() async throws {
         let item = ManagedItem(
             config: ItemConfig(
@@ -186,6 +270,22 @@ final class RecoveryLifecycleTests: XCTestCase {
             domain: "RecoveryLifecycleTests",
             code: 7,
             userInfo: [NSLocalizedDescriptionKey: "refresh feedback tooltip did not clear"]
+        )
+    }
+
+    @MainActor
+    private func waitForFile(_ file: URL) async throws {
+        let deadline = Date().addingTimeInterval(2)
+        while Date() < deadline {
+            if FileManager.default.fileExists(atPath: file.path) {
+                return
+            }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        throw NSError(
+            domain: "RecoveryLifecycleTests",
+            code: 8,
+            userInfo: [NSLocalizedDescriptionKey: "configured click action did not run"]
         )
     }
 

@@ -250,9 +250,13 @@ final class ManagedItem: ManagedItemLifecycle {
     }
 
     @objc private func handleClick() {
-        guard isActive, !isPreparingUpdate, !isPreparingRemoval else { return }
         guard let event = NSApp.currentEvent else { return }
-        if event.type == .rightMouseUp {
+        processClick(eventType: event.type)
+    }
+
+    func processClick(eventType: NSEvent.EventType) {
+        guard isActive, !isPreparingUpdate, !isPreparingRemoval else { return }
+        if eventType == .rightMouseUp {
             menuDelegate?.showLifecycleMenu(for: statusItem)
         } else if clickRunner != nil {
             guard let clickRunner else { return }

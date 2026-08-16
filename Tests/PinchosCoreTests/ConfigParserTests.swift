@@ -414,7 +414,7 @@ final class ConfigParserTests: XCTestCase {
         let config = try ConfigParser.parse(toml)
 
         XCTAssertEqual(config.items.count, 1)
-        XCTAssertEqual(String(describing: config.items[0].interval), "manual")
+        XCTAssertEqual(config.items[0].interval, .manual)
         XCTAssertTrue(config.items[0].refreshOnClick)
     }
 
