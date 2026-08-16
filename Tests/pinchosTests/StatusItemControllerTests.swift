@@ -10,6 +10,7 @@ private final class FakeManagedItem: ManagedItemLifecycle {
     private(set) var config: ItemConfig
     let initiallyVisible: Bool
     let ownedStatusItem: NSStatusItem?
+    var runtimeSnapshotValue: ItemRuntimeSnapshot?
 
     init(
         config: ItemConfig,
@@ -57,6 +58,19 @@ private final class FakeManagedItem: ManagedItemLifecycle {
 
     func runnerSnapshot() async -> CommandRunnerSnapshot {
         CommandRunnerSnapshot(isRunning: false, lastExecution: nil, skippedRefreshes: 0)
+    }
+
+    func runtimeSnapshot() async -> ItemRuntimeSnapshot {
+        runtimeSnapshotValue ?? ItemRuntimeSnapshot(
+            isRunning: false,
+            fullOutput: nil,
+            lastAttemptedAt: nil,
+            lastUpdatedAt: nil,
+            lastExecution: nil,
+            staleAfter: nil,
+            skippedRefreshes: 0,
+            now: Date()
+        )
     }
 
     func refreshNow() {
@@ -130,6 +144,52 @@ final class StatusItemControllerTests: XCTestCase {
         XCTAssertNotNil(refresh.representedObject)
         XCTAssertTrue(NSApplication.shared.sendAction(refresh.action!, to: refresh.target, from: refresh))
         XCTAssertEqual(factory.eventLog.events, ["refresh-now:alpha"])
+    }
+
+    func testLifecycleMenuShowsRuntimeStateAndRunnerDiagnostics() async throws {
+        let factory = FakeManagedItemFactory()
+        let controller = makeController(factory: factory)
+        addTeardownBlock { @MainActor in
+            await controller.shutdown()
+        }
+
+        await controller.apply(config: PinchosConfig(items: [item("alpha")]))
+        let attempt = Date(timeIntervalSince1970: 1_700_000_000)
+        let execution = CommandExecution(
+            terminalReason: .exited(code: 7),
+            stdout: "full\nvalue\n",
+            stderr: "diagnostic\n",
+            stdoutBytesRead: 11,
+            stderrBytesRead: 11,
+            stdoutTruncated: false,
+            stderrTruncated: false,
+            duration: 0.25
+        )
+        factory.created[0].runtimeSnapshotValue = ItemRuntimeSnapshot(
+            isRunning: false,
+            fullOutput: "full\nvalue\n",
+            lastAttemptedAt: attempt,
+            lastUpdatedAt: attempt.addingTimeInterval(-60),
+            lastExecution: execution,
+            staleAfter: 60,
+            skippedRefreshes: 2,
+            now: attempt
+        )
+
+        let menu = await controller.makeLifecycleMenu(forManagedItem: factory.created[0])
+        let titles = menu.items.map(\.title)
+
+        XCTAssertTrue(titles.contains("State: error"))
+        XCTAssertTrue(titles.contains("Value: full\nvalue\n"))
+        XCTAssertTrue(titles.contains("Last attempt: 2023-11-14T22:13:20Z"))
+        XCTAssertTrue(titles.contains("Last success: 2023-11-14T22:12:20Z"))
+        XCTAssertTrue(titles.contains("Stale: yes"))
+        XCTAssertTrue(titles.contains("Last duration: 0.250s"))
+        XCTAssertTrue(titles.contains("Last exit: 7"))
+        XCTAssertTrue(titles.contains("Error: diagnostic"))
+        XCTAssertTrue(titles.contains("Last exit code: 7"))
+        XCTAssertTrue(titles.contains("stderr: diagnostic"))
+        XCTAssertTrue(titles.contains("Skipped ticks: 2"))
     }
 
     func testNoOpReloadLeavesManagedItemsUntouched() async {

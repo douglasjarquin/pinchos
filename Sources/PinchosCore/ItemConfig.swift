@@ -1,5 +1,10 @@
 import Foundation
 
+public enum ItemErrorPolicy: String, Equatable, Sendable {
+    case replace = "replace"
+    case keepLast = "keep_last"
+}
+
 public enum RefreshInterval: Equatable, Sendable {
     case scheduled(TimeInterval)
     case manual
@@ -22,6 +27,9 @@ public struct ItemConfig: Equatable {
     public let click: String?
     public let refreshOnClick: Bool
     public let errorText: String
+    public let onError: ItemErrorPolicy
+    public let staleAfter: TimeInterval?
+    public let tooltip: String?
     public let icon: String?
 
     public init(
@@ -37,6 +45,9 @@ public struct ItemConfig: Equatable {
         click: String? = nil,
         refreshOnClick: Bool = false,
         errorText: String = "\u{2013}",
+        onError: ItemErrorPolicy = .replace,
+        staleAfter: TimeInterval? = nil,
+        tooltip: String? = nil,
         icon: String? = nil
     ) {
         self.name = name
@@ -51,6 +62,9 @@ public struct ItemConfig: Equatable {
         self.click = click
         self.refreshOnClick = refreshOnClick
         self.errorText = errorText
+        self.onError = onError
+        self.staleAfter = staleAfter
+        self.tooltip = tooltip
         self.icon = icon
     }
 }
@@ -95,5 +109,8 @@ public enum ExampleConfig {
     run = "date '+%H:%M:%S'"
     interval = "60s"
     format = "{output}"
+    on_error = "keep_last"
+    stale_after = "15m"
+    tooltip = "Updated {updated_at} ({status})"
     """
 }

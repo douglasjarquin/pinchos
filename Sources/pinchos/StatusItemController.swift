@@ -17,6 +17,7 @@ protocol ManagedItemLifecycle: AnyObject {
     func commitRemoval()
     func tearDown() async
     func runnerSnapshot() async -> CommandRunnerSnapshot
+    func runtimeSnapshot() async -> ItemRuntimeSnapshot
     func refreshNow()
 }
 
@@ -295,7 +296,10 @@ final class StatusItemController: StatusItemMenuDelegate {
             refresh.representedObject = RefreshActionTarget(item: item)
             menu.addItem(refresh)
             menu.addItem(NSMenuItem.separator())
-            addDiagnostics(from: await item.runnerSnapshot(), to: menu)
+            let runtime = await item.runtimeSnapshot()
+            addRuntimeState(from: runtime, to: menu)
+            menu.addItem(NSMenuItem.separator())
+            addDiagnostics(from: runtime.runnerSnapshot, to: menu)
             menu.addItem(NSMenuItem.separator())
         }
         let reload = NSMenuItem(title: "Reload Config", action: #selector(reloadConfigAction), keyEquivalent: "r")
@@ -305,6 +309,23 @@ final class StatusItemController: StatusItemMenuDelegate {
         quit.target = self
         menu.addItem(quit)
         return menu
+    }
+
+    private func addRuntimeState(from snapshot: ItemRuntimeSnapshot, to menu: NSMenu) {
+        menu.addItem(disabledItem(title: "State: \(snapshot.status.rawValue)"))
+        menu.addItem(disabledItem(title: snapshot.fullOutput.map { "Value: \($0)" } ?? "Value: unavailable"))
+        menu.addItem(disabledItem(title: "Last attempt: \(snapshot.lastAttemptedAt.map(formatTimestamp) ?? "unavailable")"))
+        menu.addItem(disabledItem(title: "Last success: \(snapshot.lastUpdatedAt.map(formatTimestamp) ?? "unavailable")"))
+        menu.addItem(disabledItem(title: "Stale: \(snapshot.isStale ? "yes" : "no")"))
+        if let duration = snapshot.lastRunDuration {
+            menu.addItem(disabledItem(title: String(format: "Last duration: %.3fs", duration)))
+        }
+        if let exitStatus = snapshot.exitStatus {
+            menu.addItem(disabledItem(title: "Last exit: \(exitStatus)"))
+        }
+        if let errorSummary = snapshot.errorSummary {
+            menu.addItem(disabledItem(title: "Error: \(errorSummary)"))
+        }
     }
 
     private func addDiagnostics(from snapshot: CommandRunnerSnapshot, to menu: NSMenu) {

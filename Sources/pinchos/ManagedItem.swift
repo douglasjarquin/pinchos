@@ -13,6 +13,7 @@ final class ManagedItem: ManagedItemLifecycle {
     private let timerQueue = DispatchQueue(label: "com.pinchos.item-timer")
     private let timerFactory: (DispatchQueue) -> DispatchSourceTimer
     private weak var menuDelegate: StatusItemMenuDelegate?
+    private let now: () -> Date
     private var isActive = true
     private var configurationGeneration = 0
     private var isPreparingUpdate = false
@@ -20,6 +21,11 @@ final class ManagedItem: ManagedItemLifecycle {
     private var isPreparingRemoval = false
     private var pendingClickInvocations = 0
     private var clickInvocationsDrained: CheckedContinuation<Void, Never>?
+    private var lastSuccessfulOutput: String?
+    private var lastAttemptedAt: Date?
+    private var lastUpdatedAt: Date?
+    private var lastSuccessfulTitle: String?
+    private var stalePresentationTask: Task<Void, Never>?
 
     private struct PendingUpdate {
         let config: ItemConfig
@@ -27,6 +33,8 @@ final class ManagedItem: ManagedItemLifecycle {
         let clickRunner: CommandRunner?
         let clickRunnerConfigurationChanged: Bool
         let timerNeedsRestart: Bool
+        let presentationNeedsUpdate: Bool
+        let staleAfterChanged: Bool
     }
 
     init(
@@ -36,6 +44,7 @@ final class ManagedItem: ManagedItemLifecycle {
         timerFactory: @escaping (DispatchQueue) -> DispatchSourceTimer = { queue in
             DispatchSource.makeTimerSource(queue: queue)
         },
+        now: @escaping () -> Date = Date.init,
         statusItemFactory: @escaping () -> NSStatusItem? = {
             NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         }
@@ -43,6 +52,7 @@ final class ManagedItem: ManagedItemLifecycle {
         self.config = config
         self.menuDelegate = menuDelegate
         self.timerFactory = timerFactory
+        self.now = now
         self.renderedTitle = config.errorText
         self.renderedToolTip = nil
         self.runner = CommandRunner(
@@ -113,6 +123,12 @@ final class ManagedItem: ManagedItemLifecycle {
             || previousConfig.workingDirectory != config.workingDirectory
             || previousConfig.environment != config.environment
         let timerNeedsRestart = runnerConfigurationChanged || previousConfig.interval != config.interval
+        let staleAfterChanged = previousConfig.staleAfter != config.staleAfter || runnerConfigurationChanged
+        let presentationNeedsUpdate = previousConfig.format != config.format
+            || previousConfig.errorText != config.errorText
+            || previousConfig.onError != config.onError
+            || previousConfig.staleAfter != config.staleAfter
+            || previousConfig.tooltip != config.tooltip
         if timerNeedsRestart {
             timer?.cancel()
             timer = nil
@@ -157,7 +173,9 @@ final class ManagedItem: ManagedItemLifecycle {
             runner: replacementRunner,
             clickRunner: replacementClickRunner,
             clickRunnerConfigurationChanged: clickRunnerConfigurationChanged,
-            timerNeedsRestart: timerNeedsRestart
+            timerNeedsRestart: timerNeedsRestart,
+            presentationNeedsUpdate: presentationNeedsUpdate,
+            staleAfterChanged: staleAfterChanged
         )
     }
 
@@ -175,6 +193,15 @@ final class ManagedItem: ManagedItemLifecycle {
         if pendingUpdate.timerNeedsRestart {
             startTimer(runInitialRefresh: false)
         }
+        if pendingUpdate.staleAfterChanged {
+            scheduleStalePresentation()
+        }
+        if pendingUpdate.presentationNeedsUpdate {
+            lastSuccessfulTitle = lastSuccessfulOutput.map {
+                applyFormat(config.format, output: lastTrimmedLine(of: $0))
+            }
+            requestPresentationUpdate()
+        }
         isPreparingUpdate = false
     }
 
@@ -182,6 +209,8 @@ final class ManagedItem: ManagedItemLifecycle {
         guard isActive, !isPreparingRemoval else { return }
         isPreparingRemoval = true
         configurationGeneration &+= 1
+        stalePresentationTask?.cancel()
+        stalePresentationTask = nil
         timer?.cancel()
         timer = nil
         await runner.cancelActive()
@@ -245,26 +274,157 @@ final class ManagedItem: ManagedItemLifecycle {
     private func refresh() async {
         guard isActive, !isPreparingUpdate, !isPreparingRemoval else { return }
         let generation = configurationGeneration
-        if !(await runner.snapshot().isRunning) {
-            setToolTip("Refreshing...")
+        let attemptedAt = now()
+        guard await runner.beginIfIdle() else { return }
+        lastAttemptedAt = attemptedAt
+        let runningRunnerSnapshot = await runner.snapshot()
+        guard isActive, generation == configurationGeneration else {
+            _ = await runner.finishActiveRun()
+            return
         }
-        let outcome = await runner.runIfIdle()
+        renderPresentation(
+            ItemRuntimeSnapshot(
+                isRunning: true,
+                fullOutput: lastSuccessfulOutput,
+                lastAttemptedAt: lastAttemptedAt,
+                lastUpdatedAt: lastUpdatedAt,
+                lastExecution: runningRunnerSnapshot.lastExecution,
+                staleAfter: config.staleAfter,
+                skippedRefreshes: runningRunnerSnapshot.skippedRefreshes,
+                now: now()
+            )
+        )
+        let outcome = await runner.finishActiveRun()
         guard isActive, generation == configurationGeneration else { return }
         let currentConfig = config
         switch outcome {
         case .skipped:
             return
         case .completed(let execution):
-            if execution.terminalReason != .exited(code: 0) {
-                setTitle(currentConfig.errorText)
-            } else {
-                let trimmed = lastTrimmedLine(of: execution.stdout)
-                setTitle(applyFormat(currentConfig.format, output: trimmed))
+            if execution.terminalReason == .exited(code: 0) {
+                lastSuccessfulOutput = execution.stdout
+                lastUpdatedAt = now()
+                lastSuccessfulTitle = applyFormat(
+                    currentConfig.format,
+                    output: lastTrimmedLine(of: execution.stdout)
+                )
+                scheduleStalePresentation()
+            } else if currentConfig.onError == .replace {
+                lastSuccessfulOutput = nil
+                lastUpdatedAt = nil
+                lastSuccessfulTitle = nil
+                stalePresentationTask?.cancel()
+                stalePresentationTask = nil
             }
         }
-        if !(await runner.snapshot().isRunning) {
-            setToolTip(nil)
+        let runnerSnapshot = await runner.snapshot()
+        guard isActive, generation == configurationGeneration else { return }
+        renderPresentation(
+            ItemRuntimeSnapshot(
+                isRunning: runnerSnapshot.isRunning,
+                fullOutput: lastSuccessfulOutput,
+                lastAttemptedAt: lastAttemptedAt,
+                lastUpdatedAt: lastUpdatedAt,
+                lastExecution: runnerSnapshot.lastExecution,
+                staleAfter: currentConfig.staleAfter,
+                skippedRefreshes: runnerSnapshot.skippedRefreshes,
+                now: now()
+            )
+        )
+    }
+
+    private func requestPresentationUpdate() {
+        Task { @MainActor [weak self] in
+            await self?.updatePresentation()
         }
+    }
+
+    private func updatePresentation() async {
+        let runnerSnapshot = await runner.snapshot()
+        guard isActive else { return }
+        let snapshot = ItemRuntimeSnapshot(
+            isRunning: runnerSnapshot.isRunning,
+            fullOutput: lastSuccessfulOutput,
+            lastAttemptedAt: lastAttemptedAt,
+            lastUpdatedAt: lastUpdatedAt,
+            lastExecution: runnerSnapshot.lastExecution,
+            staleAfter: config.staleAfter,
+            skippedRefreshes: runnerSnapshot.skippedRefreshes,
+            now: now()
+        )
+        renderPresentation(snapshot)
+    }
+
+    private func scheduleStalePresentation() {
+        stalePresentationTask?.cancel()
+        stalePresentationTask = nil
+        guard let staleAfter = config.staleAfter, let lastUpdatedAt else { return }
+        let generation = configurationGeneration
+        let remaining = lastUpdatedAt.addingTimeInterval(staleAfter).timeIntervalSince(now())
+        guard remaining > 0 else {
+            requestPresentationUpdate()
+            return
+        }
+        let nanoseconds = stalePresentationNanoseconds(for: remaining)
+        stalePresentationTask = Task { @MainActor [weak self] in
+            do {
+                try await Task.sleep(nanoseconds: nanoseconds)
+            } catch {
+                return
+            }
+            guard let self, self.isActive, self.configurationGeneration == generation else { return }
+            await self.updatePresentation()
+        }
+    }
+
+    private func stalePresentationNanoseconds(for remaining: TimeInterval) -> UInt64 {
+        let value = remaining * 1_000_000_000
+        guard value.isFinite, value < Double(UInt64.max) else { return .max }
+        return UInt64(max(1, value))
+    }
+
+    private func renderPresentation(_ snapshot: ItemRuntimeSnapshot) {
+        let baseTitle: String
+        switch snapshot.status {
+        case .fresh, .stale:
+            baseTitle = lastSuccessfulTitle ?? config.errorText
+        case .error:
+            baseTitle = config.onError == .keepLast
+                ? (lastSuccessfulTitle ?? config.errorText)
+                : config.errorText
+        case .running:
+            baseTitle = lastSuccessfulTitle ?? renderedTitle
+        case .unavailable:
+            baseTitle = config.errorText
+        }
+
+        let marker: String
+        switch snapshot.status {
+        case .stale:
+            marker = " ⌛︎"
+        case .error, .unavailable:
+            marker = " ⚠︎"
+        case .running, .fresh:
+            marker = ""
+        }
+        setTitle(baseTitle + marker)
+        setToolTip(renderTooltip(config.tooltip, state: snapshot))
+    }
+
+    func runtimeSnapshot() async -> ItemRuntimeSnapshot {
+        let runnerSnapshot = await runner.snapshot()
+        let snapshot = ItemRuntimeSnapshot(
+            isRunning: runnerSnapshot.isRunning,
+            fullOutput: lastSuccessfulOutput,
+            lastAttemptedAt: lastAttemptedAt,
+            lastUpdatedAt: lastUpdatedAt,
+            lastExecution: runnerSnapshot.lastExecution,
+            staleAfter: config.staleAfter,
+            skippedRefreshes: runnerSnapshot.skippedRefreshes,
+            now: now()
+        )
+        renderPresentation(snapshot)
+        return snapshot
     }
 
     func runnerSnapshot() async -> CommandRunnerSnapshot {

@@ -31,6 +31,7 @@ final class RecoveryLifecycleTests: XCTestCase {
         config: ItemConfig,
         menuDelegate: StatusItemMenuDelegate? = nil,
         initiallyVisible: Bool = true,
+        now: @escaping () -> Date = Date.init,
         timerFactory: @escaping (DispatchQueue) -> DispatchSourceTimer = { queue in
             DispatchSource.makeTimerSource(queue: queue)
         }
@@ -40,6 +41,7 @@ final class RecoveryLifecycleTests: XCTestCase {
             menuDelegate: menuDelegate ?? NoopStatusItemMenuDelegate(),
             initiallyVisible: initiallyVisible,
             timerFactory: timerFactory,
+            now: now,
             statusItemFactory: { nil }
         )
     }
@@ -119,16 +121,226 @@ final class RecoveryLifecycleTests: XCTestCase {
 
         item.refreshNow()
         _ = try await waitForExecution(item)
-        XCTAssertEqual(item.renderedTitle, "old")
+        _ = try await waitForRuntimeSnapshot(item) { snapshot in
+            snapshot.fullOutput == "old\n" && item.renderedTitle == "old"
+        }
 
         item.refreshNow()
         try await waitForRunning(item)
         item.refreshNow()
         _ = try await waitForSkippedRefresh(item)
 
-        XCTAssertEqual(item.renderedTitle, "old")
+        _ = try await waitForRuntimeSnapshot(item) { snapshot in
+            snapshot.isRunning && snapshot.fullOutput == "old\n" && item.renderedTitle == "old"
+        }
         try await waitForIdle(item)
+        _ = try await waitForRuntimeSnapshot(item) { snapshot in
+            snapshot.fullOutput == "new\n" && item.renderedTitle == "new"
+        }
         XCTAssertEqual(item.renderedTitle, "new")
+    }
+
+    @MainActor
+    func testSuccessFailureRecoveryTracksIndependentAttemptAndSuccessState() async throws {
+        let marker = FileManager.default.temporaryDirectory
+            .appendingPathComponent("pinchos-issue-11-recovery-\(UUID().uuidString)")
+        let item = makeHeadlessItem(
+            config: ItemConfig(
+                name: "recovery",
+                run: "count=$(cat '\(marker.path)' 2>/dev/null || echo 0); count=$((count + 1)); printf '%s' \"$count\" > '\(marker.path)'; if [ \"$count\" -eq 1 ]; then printf 'good\\n'; elif [ \"$count\" -eq 2 ]; then printf 'transient diagnostic\\n' >&2; exit 7; else printf 'recovered\\n'; fi",
+                interval: .manual,
+                onError: .keepLast,
+                tooltip: "{status}|{output}|{error}"
+            ),
+            initiallyVisible: false
+        )
+        addTeardownBlock { @MainActor in
+            await item.tearDown()
+            try? FileManager.default.removeItem(at: marker)
+        }
+
+        item.refreshNow()
+        let success = try await waitForRuntimeSnapshot(item) { snapshot in
+            snapshot.lastUpdatedAt != nil
+        }
+        let firstAttempt = try XCTUnwrap(success.lastAttemptedAt)
+        let firstUpdate = try XCTUnwrap(success.lastUpdatedAt)
+        XCTAssertEqual(success.status, .fresh)
+        XCTAssertEqual(success.fullOutput, "good\n")
+        XCTAssertEqual(success.lastExecution?.exitCode, 0)
+
+        item.refreshNow()
+        let failure = try await waitForRuntimeSnapshot(item) { snapshot in
+            snapshot.status == .error && snapshot.lastAttemptedAt != firstAttempt
+        }
+        XCTAssertGreaterThan(try XCTUnwrap(failure.lastAttemptedAt), firstAttempt)
+        XCTAssertEqual(failure.lastUpdatedAt, firstUpdate)
+        XCTAssertEqual(failure.fullOutput, "good\n")
+        XCTAssertEqual(failure.lastExecution?.exitCode, 7)
+        XCTAssertEqual(failure.errorSummary, "transient diagnostic")
+        XCTAssertEqual(item.renderedToolTip, "error|good\n|transient diagnostic")
+
+        item.refreshNow()
+        let recovery = try await waitForRuntimeSnapshot(item) { snapshot in
+            snapshot.status == .fresh && snapshot.fullOutput == "recovered\n"
+        }
+        XCTAssertGreaterThan(try XCTUnwrap(recovery.lastAttemptedAt), try XCTUnwrap(failure.lastAttemptedAt))
+        XCTAssertGreaterThan(try XCTUnwrap(recovery.lastUpdatedAt), firstUpdate)
+        XCTAssertEqual(recovery.fullOutput, "recovered\n")
+        XCTAssertEqual(recovery.lastExecution?.exitCode, 0)
+        XCTAssertEqual(item.renderedToolTip, "fresh|recovered\n|")
+    }
+
+    @MainActor
+    func testFirstRunFailureHasAttemptAndErrorButNoLastGoodValue() async throws {
+        let item = makeHeadlessItem(
+            config: ItemConfig(
+                name: "first-failure",
+                run: "printf 'first failure\\n' >&2; exit 9",
+                interval: .manual,
+                onError: .keepLast,
+                tooltip: "{status}|{output}|{updated_at}|{attempted_at}|{error}"
+            ),
+            initiallyVisible: false
+        )
+        addTeardownBlock { @MainActor in
+            await item.tearDown()
+        }
+
+        item.refreshNow()
+        let state = try await waitForRuntimeSnapshot(item) { snapshot in
+            snapshot.status == .error
+        }
+
+        XCTAssertNil(state.fullOutput)
+        XCTAssertNil(state.lastUpdatedAt)
+        XCTAssertNotNil(state.lastAttemptedAt)
+        XCTAssertEqual(state.lastExecution?.exitCode, 9)
+        XCTAssertEqual(state.errorSummary, "first failure")
+        XCTAssertEqual(item.renderedToolTip?.components(separatedBy: "|").prefix(3).joined(separator: "|"), "error||")
+    }
+
+    @MainActor
+    func testStaleAfterUsesInjectedClockAndTurnsStaleAtThreshold() async throws {
+        var now = Date(timeIntervalSince1970: 1_700_000_000)
+        let item = makeHeadlessItem(
+            config: ItemConfig(
+                name: "stale",
+                run: "printf 'fresh\\n'",
+                interval: .manual,
+                staleAfter: 60
+            ),
+            initiallyVisible: false,
+            now: { now }
+        )
+        addTeardownBlock { @MainActor in
+            await item.tearDown()
+        }
+
+        item.refreshNow()
+        let fresh = try await waitForRuntimeSnapshot(item) { snapshot in
+            snapshot.status == .fresh
+        }
+        XCTAssertFalse(fresh.isStale)
+
+        now = now.addingTimeInterval(60)
+        let stale = await item.runtimeSnapshot()
+        XCTAssertTrue(stale.isStale)
+        XCTAssertEqual(stale.status, .stale)
+        XCTAssertTrue(item.renderedTitle.hasSuffix("⌛︎"))
+    }
+
+    @MainActor
+    func testExtremeStaleAfterDoesNotTrapDuringPresentationScheduling() async throws {
+        let item = makeHeadlessItem(
+            config: ItemConfig(
+                name: "extreme-stale",
+                run: "printf 'value'",
+                interval: .manual,
+                staleAfter: TimeInterval(Int.max) * 3_600
+            ),
+            initiallyVisible: false
+        )
+        addTeardownBlock { @MainActor in
+            await item.tearDown()
+        }
+
+        item.refreshNow()
+        let snapshot = try await waitForRuntimeSnapshot(item) { snapshot in
+            snapshot.status == .fresh && snapshot.fullOutput == "value"
+        }
+
+        XCTAssertFalse(snapshot.isStale)
+        XCTAssertEqual(item.renderedTitle, "value")
+    }
+
+    @MainActor
+    func testRunningRefreshPreservesConfiguredTooltipAndRecordsAttemptStart() async throws {
+        let item = makeHeadlessItem(
+            config: ItemConfig(
+                name: "running",
+                run: "sleep 0.4; printf running",
+                interval: .manual,
+                tooltip: "Value={output}; Status={status}; Attempted={attempted_at}"
+            ),
+            initiallyVisible: false
+        )
+        addTeardownBlock { @MainActor in
+            await item.tearDown()
+        }
+
+        item.refreshNow()
+        try await waitForRunning(item)
+        let tooltipBeforeRuntimeObservation = item.renderedToolTip
+        let running = await item.runtimeSnapshot()
+
+        XCTAssertEqual(running.status, .running)
+        XCTAssertNotNil(running.lastAttemptedAt)
+        XCTAssertTrue(tooltipBeforeRuntimeObservation?.contains("Status=running") == true)
+        XCTAssertNotEqual(tooltipBeforeRuntimeObservation, "Refreshing...")
+
+        _ = try await waitForRuntimeSnapshot(item) { snapshot in
+            snapshot.status == .fresh && snapshot.fullOutput == "running"
+        }
+    }
+
+    @MainActor
+    func testStaleScheduleAfterConfigReloadUsesLastSuccessfulUpdate() async throws {
+        let item = makeHeadlessItem(
+            config: ItemConfig(
+                name: "stale-reload",
+                run: "printf value",
+                interval: .manual,
+                staleAfter: 5
+            ),
+            initiallyVisible: false
+        )
+        addTeardownBlock { @MainActor in
+            await item.tearDown()
+        }
+
+        item.refreshNow()
+        _ = try await waitForRuntimeSnapshot(item) { snapshot in
+            snapshot.status == .fresh && snapshot.fullOutput == "value"
+        }
+        try await Task.sleep(for: .milliseconds(1_200))
+
+        await item.prepareUpdate(config: ItemConfig(
+            name: "stale-reload",
+            run: "printf value",
+            interval: .manual,
+            staleAfter: 2
+        ))
+        item.commitPreparedUpdate()
+
+        let freshAfterReload = await item.runtimeSnapshot()
+        XCTAssertEqual(freshAfterReload.status, .fresh)
+        try await Task.sleep(for: .milliseconds(1_100))
+
+        let stale = await item.runtimeSnapshot()
+        XCTAssertEqual(stale.status, .stale)
+        XCTAssertTrue(stale.isStale)
+        XCTAssertTrue(item.renderedTitle.hasSuffix("⌛︎"))
     }
 
     @MainActor
@@ -151,6 +363,9 @@ final class RecoveryLifecycleTests: XCTestCase {
 
         XCTAssertEqual(snapshot.skippedRefreshes, 1)
         try await waitForIdle(item)
+        _ = try await waitForRuntimeSnapshot(item) { snapshot in
+            snapshot.fullOutput == "scheduled" && item.renderedTitle == "scheduled"
+        }
         XCTAssertEqual(item.renderedTitle, "scheduled")
     }
 
@@ -171,7 +386,9 @@ final class RecoveryLifecycleTests: XCTestCase {
 
         item.activate()
         _ = try await waitForExecution(item)
-        XCTAssertEqual(item.renderedTitle, "old")
+        _ = try await waitForRuntimeSnapshot(item) { snapshot in
+            snapshot.fullOutput == "old" && item.renderedTitle == "old"
+        }
 
         await item.prepareUpdate(config: ItemConfig(
             name: "manual",
@@ -179,9 +396,44 @@ final class RecoveryLifecycleTests: XCTestCase {
             interval: .manual
         ))
         item.commitPreparedUpdate()
-        try await Task.sleep(for: .milliseconds(200))
 
-        XCTAssertEqual(item.renderedTitle, "old")
+        _ = try await waitForRuntimeSnapshot(item) { _ in
+            item.renderedTitle == "old"
+        }
+    }
+
+    @MainActor
+    func testFormatUpdateRecomputesExistingSuccessfulTitle() async throws {
+        let item = makeHeadlessItem(
+            config: ItemConfig(
+                name: "format",
+                run: "printf value",
+                interval: .manual,
+                format: "old-{output}"
+            ),
+            initiallyVisible: false
+        )
+        addTeardownBlock { @MainActor in
+            await item.tearDown()
+        }
+
+        item.refreshNow()
+        _ = try await waitForRuntimeSnapshot(item) { snapshot in
+            snapshot.fullOutput == "value" && item.renderedTitle == "old-value"
+        }
+
+        await item.prepareUpdate(config: ItemConfig(
+            name: "format",
+            run: "printf value",
+            interval: .manual,
+            format: "new-{output}"
+        ))
+        item.commitPreparedUpdate()
+
+        _ = try await waitForRuntimeSnapshot(item) { _ in
+            item.renderedTitle == "new-value"
+        }
+        XCTAssertEqual(item.renderedTitle, "new-value")
     }
 
     @MainActor
@@ -205,11 +457,16 @@ final class RecoveryLifecycleTests: XCTestCase {
 
         item.refreshNow()
         _ = try await waitForExecution(item)
-        XCTAssertEqual(item.renderedTitle, "old")
+        _ = try await waitForRuntimeSnapshot(item) { snapshot in
+            snapshot.fullOutput == "old" && item.renderedTitle == "old"
+        }
 
         item.processClick(eventType: .leftMouseUp)
         try await waitForRunning(item)
         try await waitForIdle(item)
+        _ = try await waitForRuntimeSnapshot(item) { snapshot in
+            snapshot.fullOutput == "clicked" && item.renderedTitle == "clicked"
+        }
         XCTAssertEqual(item.renderedTitle, "clicked")
     }
 
@@ -238,11 +495,15 @@ final class RecoveryLifecycleTests: XCTestCase {
 
         item.refreshNow()
         _ = try await waitForExecution(item)
-        XCTAssertEqual(item.renderedTitle, "old")
+        _ = try await waitForRuntimeSnapshot(item) { snapshot in
+            snapshot.fullOutput == "old" && item.renderedTitle == "old"
+        }
 
         item.processClick(eventType: .leftMouseUp)
         try await waitForFile(clickMarker)
-        XCTAssertEqual(item.renderedTitle, "old")
+        _ = try await waitForRuntimeSnapshot(item) { snapshot in
+            snapshot.fullOutput == "old" && item.renderedTitle == "old"
+        }
     }
 
     @MainActor
@@ -262,11 +523,13 @@ final class RecoveryLifecycleTests: XCTestCase {
         }
 
         item.refreshNow()
-        _ = try await waitForExecution(item)
-        try await waitForTooltipToClear(item)
+        let state = try await waitForRuntimeSnapshot(item) { snapshot in
+            snapshot.status == .error
+        }
 
-        XCTAssertEqual(item.renderedTitle, "ERR")
-        XCTAssertNil(item.renderedToolTip)
+        XCTAssertEqual(state.errorSummary, "1")
+        XCTAssertEqual(item.renderedTitle, "ERR ⚠︎")
+        XCTAssertTrue(item.renderedToolTip?.contains("Status: error") == true)
     }
 
     @MainActor
@@ -283,6 +546,26 @@ final class RecoveryLifecycleTests: XCTestCase {
             domain: "RecoveryLifecycleTests",
             code: 3,
             userInfo: [NSLocalizedDescriptionKey: "manual item did not perform its initial run"]
+        )
+    }
+
+    @MainActor
+    private func waitForRuntimeSnapshot(
+        _ item: ManagedItem,
+        matching predicate: (ItemRuntimeSnapshot) -> Bool
+    ) async throws -> ItemRuntimeSnapshot {
+        let deadline = Date().addingTimeInterval(2)
+        while Date() < deadline {
+            let snapshot = await item.runtimeSnapshot()
+            if predicate(snapshot) {
+                return snapshot
+            }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        throw NSError(
+            domain: "RecoveryLifecycleTests",
+            code: 9,
+            userInfo: [NSLocalizedDescriptionKey: "runtime snapshot did not reach the expected state"]
         )
     }
 
@@ -332,22 +615,6 @@ final class RecoveryLifecycleTests: XCTestCase {
             domain: "RecoveryLifecycleTests",
             code: 6,
             userInfo: [NSLocalizedDescriptionKey: "manual refresh did not settle"]
-        )
-    }
-
-    @MainActor
-    private func waitForTooltipToClear(_ item: ManagedItem) async throws {
-        let deadline = Date().addingTimeInterval(2)
-        while Date() < deadline {
-            if item.renderedToolTip == nil {
-                return
-            }
-            try await Task.sleep(for: .milliseconds(10))
-        }
-        throw NSError(
-            domain: "RecoveryLifecycleTests",
-            code: 7,
-            userInfo: [NSLocalizedDescriptionKey: "refresh feedback tooltip did not clear"]
         )
     }
 

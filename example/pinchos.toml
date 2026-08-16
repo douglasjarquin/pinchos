@@ -8,6 +8,9 @@ format = "{output}%"
 icon = "/path/to/pinchos/example/icons/claude.svg"
 click = "open https://claude.ai/settings/usage"
 error_text = "–"
+on_error = "keep_last"
+stale_after = "15m"
+tooltip = "Updated {updated_at} ({status})"
 
 [item.codex]
 type = "command"

@@ -17,6 +17,9 @@ final class ConfigParserTests: XCTestCase {
         XCTAssertNil(item.format)
         XCTAssertNil(item.click)
         XCTAssertEqual(item.errorText, "\u{2013}")
+        XCTAssertEqual(item.onError, .replace)
+        XCTAssertNil(item.staleAfter)
+        XCTAssertNil(item.tooltip)
         XCTAssertEqual(item.timeout, 15)
         XCTAssertEqual(item.maxOutputBytes, 64 * 1024)
     }
@@ -43,6 +46,62 @@ final class ConfigParserTests: XCTestCase {
         XCTAssertEqual(item.click, "open https://example.com")
         XCTAssertEqual(item.errorText, "n/a")
         XCTAssertEqual(item.icon, "/path/to/icon.svg")
+    }
+
+    func testParsesTooltipErrorPolicyAndStaleAfter() throws {
+        let toml = """
+        [item.limits]
+        type = "command"
+        run = "echo 42"
+        on_error = "keep_last"
+        stale_after = "15m"
+        tooltip = "Updated {updated_at}"
+        """
+
+        let item = try ConfigParser.parse(toml).items[0]
+
+        XCTAssertEqual(item.onError, .keepLast)
+        XCTAssertEqual(item.staleAfter, 900)
+        XCTAssertEqual(item.tooltip, "Updated {updated_at}")
+    }
+
+    func testRejectsUnknownTooltipPlaceholder() {
+        let toml = """
+        [item.limits]
+        type = "command"
+        run = "echo 42"
+        tooltip = "{not_a_placeholder}"
+        """
+
+        XCTAssertThrowsError(try ConfigParser.parse(toml)) { error in
+            let parseError = error as? ConfigParseError
+            XCTAssertTrue(parseError?.message.contains("tooltip") == true)
+            XCTAssertTrue(parseError?.message.contains("not_a_placeholder") == true)
+        }
+    }
+
+    func testRejectsInvalidErrorPolicyAndStaleAfter() {
+        let invalidPolicy = """
+        [item.limits]
+        type = "command"
+        run = "echo 42"
+        on_error = "discard"
+        """
+        XCTAssertThrowsError(try ConfigParser.parse(invalidPolicy)) { error in
+            let parseError = error as? ConfigParseError
+            XCTAssertTrue(parseError?.message.contains("on_error") == true)
+        }
+
+        let invalidStaleAfter = """
+        [item.limits]
+        type = "command"
+        run = "echo 42"
+        stale_after = "0s"
+        """
+        XCTAssertThrowsError(try ConfigParser.parse(invalidStaleAfter)) { error in
+            let parseError = error as? ConfigParseError
+            XCTAssertTrue(parseError?.message.contains("stale_after") == true)
+        }
     }
 
     func testIconIsOptionalAndNilByDefault() throws {
