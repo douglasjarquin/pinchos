@@ -69,6 +69,26 @@ final class ConfigDiffTests: XCTestCase {
         XCTAssertTrue(diff.removed.isEmpty)
     }
 
+    func testDetectsChangedRuntimePresentationSettings() {
+        let old = PinchosConfig(items: [item("a")])
+        let new = PinchosConfig(items: [
+            ItemConfig(
+                name: "a",
+                run: "echo x",
+                interval: .scheduled(60),
+                onError: .keepLast,
+                staleAfter: 900,
+                tooltip: "{status}"
+            )
+        ])
+
+        let diff = ConfigDiffEngine.diff(old: old, new: new)
+
+        XCTAssertEqual(diff.changed.map(\.name), ["a"])
+        XCTAssertTrue(diff.added.isEmpty)
+        XCTAssertTrue(diff.removed.isEmpty)
+    }
+
     func testDetectsOrderChangeWithSameItems() {
         let old = PinchosConfig(items: [item("a"), item("b")])
         let new = PinchosConfig(items: [item("b"), item("a")])

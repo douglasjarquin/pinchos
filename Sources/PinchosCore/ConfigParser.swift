@@ -270,6 +270,62 @@ public enum ConfigParser {
             refreshOnClick = false
         }
 
+        let onError: ItemErrorPolicy
+        if let onErrorValue = table["on_error"] {
+            guard let rawValue = onErrorValue.string,
+                  let parsedValue = ItemErrorPolicy(rawValue: rawValue)
+            else {
+                throw ConfigParseError(
+                    message: "item.\(name): on_error must be 'replace' or 'keep_last'",
+                    line: sourceLine(item: name, key: "on_error", sourceLines: sourceLines)
+                )
+            }
+            onError = parsedValue
+        } else {
+            onError = .replace
+        }
+
+        let staleAfter: TimeInterval?
+        if let staleAfterValue = table["stale_after"] {
+            guard let rawValue = staleAfterValue.string else {
+                throw ConfigParseError(
+                    message: "item.\(name): stale_after must be a duration string",
+                    line: sourceLine(item: name, key: "stale_after", sourceLines: sourceLines)
+                )
+            }
+            do {
+                staleAfter = try parseDuration(rawValue)
+            } catch {
+                throw ConfigParseError(
+                    message: "item.\(name): invalid stale_after '\(rawValue)'",
+                    line: sourceLine(item: name, key: "stale_after", sourceLines: sourceLines)
+                )
+            }
+        } else {
+            staleAfter = nil
+        }
+
+        let tooltip: String?
+        if let tooltipValue = table["tooltip"] {
+            guard let value = tooltipValue.string else {
+                throw ConfigParseError(
+                    message: "item.\(name): tooltip must be a string",
+                    line: sourceLine(item: name, key: "tooltip", sourceLines: sourceLines)
+                )
+            }
+            do {
+                try validateTooltipTemplate(value)
+            } catch let error as TooltipTemplateError {
+                throw ConfigParseError(
+                    message: "item.\(name): invalid tooltip (\(error))",
+                    line: sourceLine(item: name, key: "tooltip", sourceLines: sourceLines)
+                )
+            }
+            tooltip = value
+        } else {
+            tooltip = nil
+        }
+
         let timeoutString: String
         if let timeoutValue = table["timeout"] {
             guard let value = timeoutValue.string else {
@@ -340,6 +396,9 @@ public enum ConfigParser {
             click: table["click"]?.string,
             refreshOnClick: refreshOnClick,
             errorText: table["error_text"]?.string ?? "\u{2013}",
+            onError: onError,
+            staleAfter: staleAfter,
+            tooltip: tooltip,
             icon: icon
         )
     }

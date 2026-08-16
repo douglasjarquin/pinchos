@@ -62,6 +62,101 @@ public struct CommandRunnerSnapshot: Equatable, Sendable {
     }
 }
 
+public enum ItemRuntimeStatus: String, Equatable, Sendable {
+    case running
+    case fresh
+    case stale
+    case error
+    case unavailable
+}
+
+public struct ItemRuntimeSnapshot: Equatable, Sendable {
+    public let isRunning: Bool
+    public let fullOutput: String?
+    public let lastAttemptedAt: Date?
+    public let lastUpdatedAt: Date?
+    public let lastExecution: CommandExecution?
+    public let staleAfter: TimeInterval?
+    public let skippedRefreshes: Int
+    public let isStale: Bool
+    public let status: ItemRuntimeStatus
+
+    public init(
+        isRunning: Bool,
+        fullOutput: String?,
+        lastAttemptedAt: Date?,
+        lastUpdatedAt: Date?,
+        lastExecution: CommandExecution?,
+        staleAfter: TimeInterval?,
+        skippedRefreshes: Int,
+        now: Date
+    ) {
+        self.isRunning = isRunning
+        self.fullOutput = fullOutput
+        self.lastAttemptedAt = lastAttemptedAt
+        self.lastUpdatedAt = lastUpdatedAt
+        self.lastExecution = lastExecution
+        self.staleAfter = staleAfter
+        self.skippedRefreshes = skippedRefreshes
+        if let staleAfter, let lastUpdatedAt {
+            self.isStale = now.timeIntervalSince(lastUpdatedAt) >= staleAfter
+        } else {
+            self.isStale = false
+        }
+
+        if isRunning {
+            status = .running
+        } else if let lastExecution, lastExecution.terminalReason != .exited(code: 0) {
+            status = .error
+        } else if fullOutput == nil {
+            status = .unavailable
+        } else if self.isStale {
+            status = .stale
+        } else {
+            status = .fresh
+        }
+    }
+
+    public var lastRunDuration: TimeInterval? {
+        lastExecution?.duration
+    }
+
+    public var exitStatus: String? {
+        guard let lastExecution else { return nil }
+        switch lastExecution.terminalReason {
+        case .exited(let code):
+            return String(code)
+        case .signaled(let signal):
+            return "signal \(signal)"
+        case .timedOut:
+            return "timed out"
+        case .cancelled:
+            return "cancelled"
+        case .launchFailed(let message):
+            return message.isEmpty ? "launch failed" : "launch failed: \(message)"
+        }
+    }
+
+    public var errorSummary: String? {
+        guard let lastExecution, lastExecution.terminalReason != .exited(code: 0) else {
+            return nil
+        }
+        let stderr = lastTrimmedLine(of: lastExecution.stderr)
+        if !stderr.isEmpty {
+            return stderr
+        }
+        return exitStatus
+    }
+
+    public var runnerSnapshot: CommandRunnerSnapshot {
+        CommandRunnerSnapshot(
+            isRunning: isRunning,
+            lastExecution: lastExecution,
+            skippedRefreshes: skippedRefreshes
+        )
+    }
+}
+
 private final class OutputCollector: @unchecked Sendable {
     private let limit: Int
     private let lock = NSLock()
