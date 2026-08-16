@@ -93,11 +93,12 @@ type = "command"        # required, the only v1 module type
 run = "<shell command>" # required, executed with `shell` on its interval
 shell = ["/bin/zsh", "-lc"] # optional, default ["/bin/sh", "-c"]
 working_directory = "~/src/project" # optional, tilde-expanded; relative paths are relative to this config file
-interval = "60s"        # optional, default "60s", minimum "1s". Formats: "30s", "5m", "1h"
+interval = "60s"        # optional, default "60s". Formats: "30s", "5m", "1h", or "manual"
 timeout = "15s"         # optional, default "15s", minimum "1s". Terminates the command process group when it expires
 max_output = "64KiB"    # optional, default "64KiB" per stdout/stderr stream. Formats: "B", "KiB", "MiB"
 format = "{output}%"    # optional. {output} is the trimmed last stdout line of `run`. Absent = raw output.
 click = "<shell command>" # optional, run (fire-and-forget) on left-click
+refresh_on_click = true  # optional, refresh `run` on left-click when `click` is absent
 error_text = "–"   # optional, default "–". Shown when `run` fails, instead of the item disappearing.
 icon = "/path/to/icon.svg" # optional, a local image file (SVG/PNG/PDF) rendered as a template icon left of the text
 
@@ -113,6 +114,8 @@ AWS_PROFILE = "production"
 - `[item.<name>.env]` values merge with the inherited Pinchos environment. Configured values override inherited variables with the same name immediately before `run` starts, while variables not listed remain available to the command. This keeps configured values stable even when the selected shell runs login startup files.
 - Environment variable names must use letters, digits, and underscores, and must start with a letter or underscore.
 - `timeout` accepts whole seconds, minutes, or hours and terminates the command's process group after the configured duration.
+- `interval = "manual"` runs the item once when it is first activated, then disables its periodic timer. Use **Refresh Now** from the item's right-click menu, or set `refresh_on_click = true`, for later runs.
+- `refresh_on_click` only applies when `click` is absent. A configured `click` command keeps ownership of the normal left-click action.
 - Timeout and cancellation terminate the process group with `SIGTERM` followed immediately by `SIGKILL`, so managed descendants cannot outlive an item or the app.
 - A command that exits while leaving same-group background work running remains owned by its item until that work exits or the item is removed.
 - `max_output` is an independent retained-tail limit for stdout and stderr, so `64KiB` can retain up to 64KiB from each stream while both streams continue draining.
@@ -120,12 +123,14 @@ AWS_PROFILE = "production"
 - `icon` is a plain filesystem path, not a built-in icon library — pinchos ships with no bundled icon catalog. Point it at any image file you like; it's drawn as a template image (tinted automatically for light/dark menu bars) at 16x16, to the left of the item's text. A missing or unreadable file just falls back to text-only — it never crashes the app.
 - A failing command never crashes pinchos and never blanks the item — it renders `error_text`.
 - Command runs for a given item never overlap: if the previous run for that item hasn't finished when the next tick fires, the tick is skipped.
+- Manual refreshes use the same per-item execution gate as scheduled ticks, so repeated Refresh Now actions are skipped while a run is active.
+- While a refresh is running, the last good value stays visible and the item's tooltip reports `Refreshing...`. The right-click diagnostics menu reports the running state and the last completed result.
 - Skipped ticks are counted in the item's right-click diagnostics menu without replacing the last completed result.
 - The same timeout and output bounds apply to an optional click command, which is cancelled when its item is removed or Pinchos quits.
 - The diagnostics menu reports the last exit code or signal, duration, skipped ticks, per-stream truncation, and the latest bounded stderr line.
 - An unresolvable shell or working directory is reported in the config warning; a launch failure during execution is retained in the item's diagnostics menu with the resolved path.
 - A malformed config keeps the last good config running untouched, and pinchos additionally shows a single `pinchos ⚠︎` item; click it to see the parse error (with line number when available), reload, or quit. Fix the file and it clears automatically on the next successful reload.
-- Right-click any item (or the warning item) for **Reload Config** and **Quit** — the app is fully usable without ever touching the config file.
+- Right-click any item for **Refresh Now**, **Reload Config**, and **Quit**. Right-click the warning item for its recovery actions. The app is fully usable without ever touching the config file.
 
 ### Example: the flagship "quota" preset
 
@@ -159,7 +164,7 @@ See [`example/pinchos.toml`](example/pinchos.toml) for a full working config wit
 ## Architecture
 
 - `Sources/PinchosCore` — UI-free library: TOML parsing (via TOMLKit), duration and byte-size parsing, `{output}` templating, the config-diff engine, and bounded process-group command execution with concurrent stdout/stderr draining.
-- `Sources/pinchos` — the AppKit executable: one `NSStatusItem` and one per-item `DispatchSourceTimer` per configured item, plus menu and lifecycle projection of `PinchosCore` runner snapshots and a `ConfigWatcher` (`DispatchSourceFileSystemObject`) for live reload.
+- `Sources/pinchos` — the AppKit executable: one `NSStatusItem` and one per-item scheduled `DispatchSourceTimer` when configured, plus manual refresh actions, menu and lifecycle projection of `PinchosCore` runner snapshots, and a `ConfigWatcher` (`DispatchSourceFileSystemObject`) for live reload.
 
 ### Why TOMLKit
 

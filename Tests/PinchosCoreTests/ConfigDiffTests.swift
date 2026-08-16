@@ -5,7 +5,7 @@ final class ConfigDiffTests: XCTestCase {
     private func item(
         _ name: String,
         run: String = "echo x",
-        interval: TimeInterval = 60,
+        interval: RefreshInterval = .scheduled(60),
         timeout: TimeInterval = 15,
         maxOutputBytes: Int = 64 * 1024
     ) -> ItemConfig {

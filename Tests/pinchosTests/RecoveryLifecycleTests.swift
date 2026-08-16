@@ -20,7 +20,353 @@ private final class CallbackCounter: @unchecked Sendable {
     }
 }
 
+@MainActor
+private final class NoopStatusItemMenuDelegate: StatusItemMenuDelegate {
+    func showLifecycleMenu(for statusItem: NSStatusItem) {}
+}
+
 final class RecoveryLifecycleTests: XCTestCase {
+    @MainActor
+    private func makeHeadlessItem(
+        config: ItemConfig,
+        menuDelegate: StatusItemMenuDelegate? = nil,
+        initiallyVisible: Bool = true,
+        timerFactory: @escaping (DispatchQueue) -> DispatchSourceTimer = { queue in
+            DispatchSource.makeTimerSource(queue: queue)
+        }
+    ) -> ManagedItem {
+        ManagedItem(
+            config: config,
+            menuDelegate: menuDelegate ?? NoopStatusItemMenuDelegate(),
+            initiallyVisible: initiallyVisible,
+            timerFactory: timerFactory,
+            statusItemFactory: { nil }
+        )
+    }
+
+    @MainActor
+    func testManualItemRunsOnceOnActivationWithoutPeriodicTimer() async throws {
+        let item = makeHeadlessItem(
+            config: ItemConfig(
+                name: "manual",
+                run: "printf 'manual\\n'",
+                interval: .manual
+            ),
+            menuDelegate: NoopStatusItemMenuDelegate(),
+            initiallyVisible: false
+        )
+        addTeardownBlock { @MainActor in
+            await item.tearDown()
+        }
+
+        item.activate()
+        let first = try await waitForExecution(item)
+        XCTAssertEqual(first.lastExecution?.stdout, "manual\n")
+
+        try await Task.sleep(for: .milliseconds(200))
+        let settled = await item.runnerSnapshot()
+        XCTAssertEqual(settled.skippedRefreshes, 0)
+        XCTAssertEqual(settled.lastExecution?.stdout, "manual\n")
+    }
+
+    @MainActor
+    func testManualActivationDoesNotCreatePeriodicTimer() async throws {
+        let timerCreations = CallbackCounter()
+        let item = makeHeadlessItem(
+            config: ItemConfig(
+                name: "manual",
+                run: "printf manual",
+                interval: .manual
+            ),
+            menuDelegate: NoopStatusItemMenuDelegate(),
+            initiallyVisible: false,
+            timerFactory: { _ in
+                _ = timerCreations.increment()
+                let timer = DispatchSource.makeTimerSource()
+                timer.resume()
+                timer.cancel()
+                return timer
+            }
+        )
+        addTeardownBlock { @MainActor in
+            await item.tearDown()
+        }
+
+        item.activate()
+        _ = try await waitForExecution(item)
+        try await Task.sleep(for: .milliseconds(200))
+
+        XCTAssertEqual(timerCreations.value, 0)
+    }
+
+    @MainActor
+    func testManualRefreshKeepsLastGoodValueWhileAnotherRefreshRuns() async throws {
+        let marker = FileManager.default.temporaryDirectory
+            .appendingPathComponent("pinchos-manual-refresh-\(UUID().uuidString)")
+        let item = makeHeadlessItem(
+            config: ItemConfig(
+                name: "manual",
+                run: "if [ ! -e '\(marker.path)' ]; then printf 'old\\n'; touch '\(marker.path)'; else sleep 0.3; printf 'new\\n'; fi",
+                interval: .manual
+            ),
+            menuDelegate: NoopStatusItemMenuDelegate(),
+            initiallyVisible: false
+        )
+        addTeardownBlock { @MainActor in
+            await item.tearDown()
+            try? FileManager.default.removeItem(at: marker)
+        }
+
+        item.refreshNow()
+        _ = try await waitForExecution(item)
+        XCTAssertEqual(item.renderedTitle, "old")
+
+        item.refreshNow()
+        try await waitForRunning(item)
+        item.refreshNow()
+        _ = try await waitForSkippedRefresh(item)
+
+        XCTAssertEqual(item.renderedTitle, "old")
+        try await waitForIdle(item)
+        XCTAssertEqual(item.renderedTitle, "new")
+    }
+
+    @MainActor
+    func testScheduledRefreshAndManualRefreshShareTheExecutionGate() async throws {
+        let item = makeHeadlessItem(
+            config: ItemConfig(
+                name: "scheduled",
+                run: "sleep 0.3; printf scheduled",
+                interval: .scheduled(1)
+            ),
+            menuDelegate: NoopStatusItemMenuDelegate()
+        )
+        addTeardownBlock { @MainActor in
+            await item.tearDown()
+        }
+
+        try await waitForRunning(item)
+        item.refreshNow()
+        let snapshot = try await waitForSkippedRefresh(item)
+
+        XCTAssertEqual(snapshot.skippedRefreshes, 1)
+        try await waitForIdle(item)
+        XCTAssertEqual(item.renderedTitle, "scheduled")
+    }
+
+    @MainActor
+    func testManualItemDoesNotRefreshAfterRunnerConfigurationUpdate() async throws {
+        let item = makeHeadlessItem(
+            config: ItemConfig(
+                name: "manual",
+                run: "printf old",
+                interval: .manual
+            ),
+            menuDelegate: NoopStatusItemMenuDelegate(),
+            initiallyVisible: false
+        )
+        addTeardownBlock { @MainActor in
+            await item.tearDown()
+        }
+
+        item.activate()
+        _ = try await waitForExecution(item)
+        XCTAssertEqual(item.renderedTitle, "old")
+
+        await item.prepareUpdate(config: ItemConfig(
+            name: "manual",
+            run: "printf updated",
+            interval: .manual
+        ))
+        item.commitPreparedUpdate()
+        try await Task.sleep(for: .milliseconds(200))
+
+        XCTAssertEqual(item.renderedTitle, "old")
+    }
+
+    @MainActor
+    func testRefreshOnClickTriggersRefreshWhenNoClickActionIsConfigured() async throws {
+        let marker = FileManager.default.temporaryDirectory
+            .appendingPathComponent("pinchos-refresh-click-\(UUID().uuidString)")
+        let item = makeHeadlessItem(
+            config: ItemConfig(
+                name: "click",
+                run: "if [ ! -e '\(marker.path)' ]; then printf old; touch '\(marker.path)'; else sleep 0.2; printf clicked; fi",
+                interval: .manual,
+                refreshOnClick: true
+            ),
+            menuDelegate: NoopStatusItemMenuDelegate(),
+            initiallyVisible: false
+        )
+        addTeardownBlock { @MainActor in
+            await item.tearDown()
+            try? FileManager.default.removeItem(at: marker)
+        }
+
+        item.refreshNow()
+        _ = try await waitForExecution(item)
+        XCTAssertEqual(item.renderedTitle, "old")
+
+        item.processClick(eventType: .leftMouseUp)
+        try await waitForRunning(item)
+        try await waitForIdle(item)
+        XCTAssertEqual(item.renderedTitle, "clicked")
+    }
+
+    @MainActor
+    func testConfiguredClickActionTakesPrecedenceOverRefreshOnClick() async throws {
+        let runMarker = FileManager.default.temporaryDirectory
+            .appendingPathComponent("pinchos-run-click-\(UUID().uuidString)")
+        let clickMarker = FileManager.default.temporaryDirectory
+            .appendingPathComponent("pinchos-action-click-\(UUID().uuidString)")
+        let item = makeHeadlessItem(
+            config: ItemConfig(
+                name: "click",
+                run: "if [ ! -e '\(runMarker.path)' ]; then printf old; touch '\(runMarker.path)'; else printf refreshed; fi",
+                interval: .manual,
+                click: "touch '\(clickMarker.path)'",
+                refreshOnClick: true
+            ),
+            menuDelegate: NoopStatusItemMenuDelegate(),
+            initiallyVisible: false
+        )
+        addTeardownBlock { @MainActor in
+            await item.tearDown()
+            try? FileManager.default.removeItem(at: runMarker)
+            try? FileManager.default.removeItem(at: clickMarker)
+        }
+
+        item.refreshNow()
+        _ = try await waitForExecution(item)
+        XCTAssertEqual(item.renderedTitle, "old")
+
+        item.processClick(eventType: .leftMouseUp)
+        try await waitForFile(clickMarker)
+        XCTAssertEqual(item.renderedTitle, "old")
+    }
+
+    @MainActor
+    func testFailedRefreshClearsRunningFeedback() async throws {
+        let item = makeHeadlessItem(
+            config: ItemConfig(
+                name: "manual",
+                run: "exit 1",
+                interval: .manual,
+                errorText: "ERR"
+            ),
+            menuDelegate: NoopStatusItemMenuDelegate(),
+            initiallyVisible: false
+        )
+        addTeardownBlock { @MainActor in
+            await item.tearDown()
+        }
+
+        item.refreshNow()
+        _ = try await waitForExecution(item)
+        try await waitForTooltipToClear(item)
+
+        XCTAssertEqual(item.renderedTitle, "ERR")
+        XCTAssertNil(item.renderedToolTip)
+    }
+
+    @MainActor
+    private func waitForExecution(_ item: ManagedItem) async throws -> CommandRunnerSnapshot {
+        let deadline = Date().addingTimeInterval(2)
+        while Date() < deadline {
+            let snapshot = await item.runnerSnapshot()
+            if snapshot.lastExecution != nil {
+                return snapshot
+            }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        throw NSError(
+            domain: "RecoveryLifecycleTests",
+            code: 3,
+            userInfo: [NSLocalizedDescriptionKey: "manual item did not perform its initial run"]
+        )
+    }
+
+    @MainActor
+    private func waitForRunning(_ item: ManagedItem) async throws {
+        let deadline = Date().addingTimeInterval(2)
+        while Date() < deadline {
+            if await item.runnerSnapshot().isRunning {
+                return
+            }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        throw NSError(
+            domain: "RecoveryLifecycleTests",
+            code: 4,
+            userInfo: [NSLocalizedDescriptionKey: "manual refresh did not become active"]
+        )
+    }
+
+    @MainActor
+    private func waitForSkippedRefresh(_ item: ManagedItem) async throws -> CommandRunnerSnapshot {
+        let deadline = Date().addingTimeInterval(2)
+        while Date() < deadline {
+            let snapshot = await item.runnerSnapshot()
+            if snapshot.skippedRefreshes > 0 {
+                return snapshot
+            }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        throw NSError(
+            domain: "RecoveryLifecycleTests",
+            code: 5,
+            userInfo: [NSLocalizedDescriptionKey: "manual refresh was not coalesced while active"]
+        )
+    }
+
+    @MainActor
+    private func waitForIdle(_ item: ManagedItem) async throws {
+        let deadline = Date().addingTimeInterval(2)
+        while Date() < deadline {
+            if !(await item.runnerSnapshot().isRunning) {
+                return
+            }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        throw NSError(
+            domain: "RecoveryLifecycleTests",
+            code: 6,
+            userInfo: [NSLocalizedDescriptionKey: "manual refresh did not settle"]
+        )
+    }
+
+    @MainActor
+    private func waitForTooltipToClear(_ item: ManagedItem) async throws {
+        let deadline = Date().addingTimeInterval(2)
+        while Date() < deadline {
+            if item.renderedToolTip == nil {
+                return
+            }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        throw NSError(
+            domain: "RecoveryLifecycleTests",
+            code: 7,
+            userInfo: [NSLocalizedDescriptionKey: "refresh feedback tooltip did not clear"]
+        )
+    }
+
+    @MainActor
+    private func waitForFile(_ file: URL) async throws {
+        let deadline = Date().addingTimeInterval(2)
+        while Date() < deadline {
+            if FileManager.default.fileExists(atPath: file.path) {
+                return
+            }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        throw NSError(
+            domain: "RecoveryLifecycleTests",
+            code: 8,
+            userInfo: [NSLocalizedDescriptionKey: "configured click action did not run"]
+        )
+    }
+
     @MainActor
     func testExampleConfigCreationReportsFileFailure() throws {
         let root = FileManager.default.temporaryDirectory

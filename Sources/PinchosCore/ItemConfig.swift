@@ -1,5 +1,10 @@
 import Foundation
 
+public enum RefreshInterval: Equatable, Sendable {
+    case scheduled(TimeInterval)
+    case manual
+}
+
 public struct ItemConfig: Equatable {
     public static let defaultShell = ["/bin/sh", "-c"]
     public static let defaultTimeout: TimeInterval = 15
@@ -10,18 +15,19 @@ public struct ItemConfig: Equatable {
     public let shell: [String]
     public let workingDirectory: String?
     public let environment: [String: String]
-    public let interval: TimeInterval
+    public let interval: RefreshInterval
     public let timeout: TimeInterval
     public let maxOutputBytes: Int
     public let format: String?
     public let click: String?
+    public let refreshOnClick: Bool
     public let errorText: String
     public let icon: String?
 
     public init(
         name: String,
         run: String,
-        interval: TimeInterval,
+        interval: RefreshInterval,
         timeout: TimeInterval = ItemConfig.defaultTimeout,
         maxOutputBytes: Int = ItemConfig.defaultMaxOutputBytes,
         shell: [String] = ItemConfig.defaultShell,
@@ -29,6 +35,7 @@ public struct ItemConfig: Equatable {
         environment: [String: String] = [:],
         format: String? = nil,
         click: String? = nil,
+        refreshOnClick: Bool = false,
         errorText: String = "\u{2013}",
         icon: String? = nil
     ) {
@@ -42,6 +49,7 @@ public struct ItemConfig: Equatable {
         self.maxOutputBytes = maxOutputBytes
         self.format = format
         self.click = click
+        self.refreshOnClick = refreshOnClick
         self.errorText = errorText
         self.icon = icon
     }

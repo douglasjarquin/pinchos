@@ -17,6 +17,7 @@ protocol ManagedItemLifecycle: AnyObject {
     func commitRemoval()
     func tearDown() async
     func runnerSnapshot() async -> CommandRunnerSnapshot
+    func refreshNow()
 }
 
 @MainActor
@@ -57,6 +58,15 @@ private enum RecoveryActionError: LocalizedError {
         case .unableToOpenConfigDirectory:
             return "Unable to open the Pinchos config directory."
         }
+    }
+}
+
+@MainActor
+private final class RefreshActionTarget: NSObject {
+    let item: any ManagedItemLifecycle
+
+    init(item: any ManagedItemLifecycle) {
+        self.item = item
     }
 }
 
@@ -136,7 +146,7 @@ final class StatusItemController: StatusItemMenuDelegate {
     func showLifecycleMenu(for statusItem: NSStatusItem) {
         Task { @MainActor [weak self] in
             guard let self else { return }
-            let menu = await self.buildLifecycleMenu(for: statusItem)
+            let menu = await self.makeLifecycleMenu(for: statusItem)
             self.present(menu: menu, on: statusItem)
         }
     }
@@ -270,11 +280,21 @@ final class StatusItemController: StatusItemMenuDelegate {
         return menu
     }
 
-    private func buildLifecycleMenu(for statusItem: NSStatusItem?) async -> NSMenu {
+    func makeLifecycleMenu(for statusItem: NSStatusItem?) async -> NSMenu {
+        let item = statusItem.flatMap { statusItem in
+            items.values.first(where: { $0.owns(statusItem: statusItem) })
+        }
+        return await makeLifecycleMenu(forManagedItem: item)
+    }
+
+    func makeLifecycleMenu(forManagedItem item: (any ManagedItemLifecycle)?) async -> NSMenu {
         let menu = NSMenu()
-        if let statusItem,
-            let item = items.values.first(where: { $0.owns(statusItem: statusItem) })
-        {
+        if let item {
+            let refresh = NSMenuItem(title: "Refresh Now", action: #selector(refreshAction(_:)), keyEquivalent: "")
+            refresh.target = self
+            refresh.representedObject = RefreshActionTarget(item: item)
+            menu.addItem(refresh)
+            menu.addItem(NSMenuItem.separator())
             addDiagnostics(from: await item.runnerSnapshot(), to: menu)
             menu.addItem(NSMenuItem.separator())
         }
@@ -334,6 +354,11 @@ final class StatusItemController: StatusItemMenuDelegate {
         statusItem.menu = menu
         statusItem.button?.performClick(nil)
         statusItem.menu = nil
+    }
+
+    @objc private func refreshAction(_ sender: NSMenuItem) {
+        guard let target = sender.representedObject as? RefreshActionTarget else { return }
+        target.item.refreshNow()
     }
 
     @objc private func reloadConfigAction() {

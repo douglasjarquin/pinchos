@@ -241,14 +241,33 @@ public enum ConfigParser {
         let environment = try parseEnvironment(name: name, value: table["env"], sourceLines: sourceLines)
 
         let intervalString = table["interval"]?.string ?? "60s"
-        let interval: TimeInterval
-        do {
-            interval = try parseDuration(intervalString)
-        } catch {
-            throw ConfigParseError(
-                message: "item.\(name): invalid interval '\(intervalString)'",
-                line: sourceLine(item: name, key: "interval", sourceLines: sourceLines)
-            )
+        let refreshInterval: RefreshInterval
+        if intervalString == "manual" {
+            refreshInterval = .manual
+        } else {
+            let interval: TimeInterval
+            do {
+                interval = try parseDuration(intervalString)
+            } catch {
+                throw ConfigParseError(
+                    message: "item.\(name): invalid interval '\(intervalString)'",
+                    line: sourceLine(item: name, key: "interval", sourceLines: sourceLines)
+                )
+            }
+            refreshInterval = .scheduled(interval)
+        }
+
+        let refreshOnClick: Bool
+        if let refreshOnClickValue = table["refresh_on_click"] {
+            guard let value = refreshOnClickValue.bool else {
+                throw ConfigParseError(
+                    message: "item.\(name): refresh_on_click must be a boolean",
+                    line: sourceLine(item: name, key: "refresh_on_click", sourceLines: sourceLines)
+                )
+            }
+            refreshOnClick = value
+        } else {
+            refreshOnClick = false
         }
 
         let timeoutString: String
@@ -311,7 +330,7 @@ public enum ConfigParser {
         return ItemConfig(
             name: name,
             run: run,
-            interval: interval,
+            interval: refreshInterval,
             timeout: timeout,
             maxOutputBytes: maxOutputBytes,
             shell: shell,
@@ -319,6 +338,7 @@ public enum ConfigParser {
             environment: environment,
             format: table["format"]?.string,
             click: table["click"]?.string,
+            refreshOnClick: refreshOnClick,
             errorText: table["error_text"]?.string ?? "\u{2013}",
             icon: icon
         )
