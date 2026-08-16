@@ -11,6 +11,7 @@ private final class FakeManagedItem: ManagedItemLifecycle {
     let initiallyVisible: Bool
     let ownedStatusItem: NSStatusItem?
     var runtimeSnapshotValue: ItemRuntimeSnapshot?
+    var actionSnapshotValues: [CommandRunnerSnapshot?] = []
 
     init(
         config: ItemConfig,
@@ -71,6 +72,15 @@ private final class FakeManagedItem: ManagedItemLifecycle {
             skippedRefreshes: 0,
             now: Date()
         )
+    }
+
+    func actionSnapshot(at index: Int) async -> CommandRunnerSnapshot? {
+        guard actionSnapshotValues.indices.contains(index) else { return nil }
+        return actionSnapshotValues[index]
+    }
+
+    func invokeAction(at index: Int) {
+        eventLog.append("action:\(index)")
     }
 
     func refreshNow() {
@@ -144,6 +154,7 @@ final class StatusItemControllerTests: XCTestCase {
         XCTAssertNotNil(refresh.representedObject)
         XCTAssertTrue(NSApplication.shared.sendAction(refresh.action!, to: refresh.target, from: refresh))
         XCTAssertEqual(factory.eventLog.events, ["refresh-now:alpha"])
+        XCTAssertEqual(Array(menu.items.suffix(3).map(\.title)), ["Open Config", "Reload Config", "Quit Pinchos"])
     }
 
     func testLifecycleMenuShowsRuntimeStateAndRunnerDiagnostics() async throws {
@@ -190,6 +201,99 @@ final class StatusItemControllerTests: XCTestCase {
         XCTAssertTrue(titles.contains("Last exit code: 7"))
         XCTAssertTrue(titles.contains("stderr: diagnostic"))
         XCTAssertTrue(titles.contains("Skipped ticks: 2"))
+    }
+
+    func testLifecycleMenuPlacesDeclarativeActionsBeforeGlobalActions() async throws {
+        let toml = """
+        [item.codex]
+        type = "command"
+        run = "echo value"
+
+        [[item.codex.action]]
+        title = "Open usage"
+        run = "open https://example.com/usage"
+
+        [[item.codex.action]]
+        title = "Refresh now"
+        refresh = true
+        """
+        let config = try ConfigParser.parse(toml)
+        let factory = FakeManagedItemFactory()
+        let controller = makeController(factory: factory)
+        addTeardownBlock { @MainActor in
+            await controller.shutdown()
+        }
+
+        await controller.apply(config: config)
+        let menu = await controller.makeLifecycleMenu(forManagedItem: factory.created[0])
+        let titles = menu.items.map(\.title)
+
+        XCTAssertEqual(Array(titles.prefix(2)), ["Open usage", "Refresh now"])
+        XCTAssertFalse(titles.contains("Refresh Now"))
+        XCTAssertEqual(Array(titles.suffix(3)), ["Open Config", "Reload Config", "Quit Pinchos"])
+    }
+
+    func testLifecycleMenuInvokesDeclarativeActionsInOrder() async throws {
+        let factory = FakeManagedItemFactory()
+        let controller = makeController(factory: factory)
+        addTeardownBlock { @MainActor in
+            await controller.shutdown()
+        }
+        let config = ItemConfig(
+            name: "codex",
+            run: "echo value",
+            interval: .manual,
+            actions: [
+                ItemAction(title: "Open usage", kind: .command("echo usage")),
+                ItemAction(title: "Refresh now", kind: .refresh)
+            ]
+        )
+
+        await controller.apply(config: PinchosConfig(items: [config]))
+        let menu = await controller.makeLifecycleMenu(forManagedItem: factory.created[0])
+        factory.eventLog.clear()
+
+        for action in menu.items.prefix(2) {
+            XCTAssertTrue(NSApplication.shared.sendAction(action.action!, to: action.target, from: action))
+        }
+
+        XCTAssertEqual(factory.eventLog.events, ["action:0", "action:1"])
+    }
+
+    func testLifecycleMenuShowsDeclarativeActionDiagnostics() async throws {
+        let factory = FakeManagedItemFactory()
+        let controller = makeController(factory: factory)
+        addTeardownBlock { @MainActor in
+            await controller.shutdown()
+        }
+        let config = ItemConfig(
+            name: "codex",
+            run: "echo value",
+            interval: .manual,
+            actions: [ItemAction(title: "Fail action", kind: .command("exit 7"))]
+        )
+        await controller.apply(config: PinchosConfig(items: [config]))
+        let execution = CommandExecution(
+            terminalReason: .exited(code: 7),
+            stdout: "",
+            stderr: "action-error\n",
+            stdoutBytesRead: 0,
+            stderrBytesRead: 13,
+            stdoutTruncated: false,
+            stderrTruncated: false,
+            duration: 0.1
+        )
+        factory.created[0].actionSnapshotValues = [
+            CommandRunnerSnapshot(isRunning: false, lastExecution: execution, skippedRefreshes: 2)
+        ]
+
+        let menu = await controller.makeLifecycleMenu(forManagedItem: factory.created[0])
+        let titles = menu.items.map(\.title)
+
+        XCTAssertTrue(titles.contains("Action \"Fail action\": waiting"))
+        XCTAssertTrue(titles.contains("Action \"Fail action\": last exit code: 7"))
+        XCTAssertTrue(titles.contains("Action \"Fail action\": stderr: action-error"))
+        XCTAssertTrue(titles.contains("Action \"Fail action\": skipped invocations: 2"))
     }
 
     func testNoOpReloadLeavesManagedItemsUntouched() async {

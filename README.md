@@ -108,6 +108,14 @@ icon = "/path/to/icon.svg" # optional, a local image file (SVG/PNG/PDF) rendered
 [item.<name>.env]
 PATH = "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin"
 AWS_PROFILE = "production"
+
+[[item.<name>.action]]
+title = "Open usage"
+run = "open https://example.com/usage"
+
+[[item.<name>.action]]
+title = "Refresh now"
+refresh = true
 ```
 
 - `tooltip` is rendered by the native status-item tooltip. Supported placeholders are `{output}` (the full retained stdout, including newlines), `{updated_at}` (the last successful completion time), `{attempted_at}` (the last command start time), `{duration}` (the last run duration with three decimal places and an `s` suffix), `{exit_status}` (the last exit code or terminal result), `{error}` (the latest bounded stderr line or terminal error), `{stale}` (`yes` or `no`), and `{status}` (`running`, `fresh`, `stale`, `error`, or `unavailable`).
@@ -124,6 +132,11 @@ AWS_PROFILE = "production"
 - `timeout` accepts whole seconds, minutes, or hours and terminates the command's process group after the configured duration.
 - `interval = "manual"` runs the item once when it is first activated, then disables its periodic timer. Use **Refresh Now** from the item's right-click menu, or set `refresh_on_click = true`, for later runs.
 - `refresh_on_click` only applies when `click` is absent. A configured `click` command keeps ownership of the normal left-click action.
+- An item may declare zero or more `action` tables.
+- Actions appear in declaration order at the top of the item's right-click menu.
+- A `run` action uses the item's shell, working directory, environment, timeout, and output bound.
+- A `refresh = true` action invokes the native item refresh without starting a second shell command.
+- Repeated command-action invocations are skipped while that action is running, and the skipped count is retained in the item's diagnostics.
 - Timeout and cancellation terminate the process group with `SIGTERM` followed immediately by `SIGKILL`, so managed descendants cannot outlive an item or the app.
 - A command that exits while leaving same-group background work running remains owned by its item until that work exits or the item is removed.
 - `max_output` is an independent retained-tail limit for stdout and stderr, so `64KiB` can retain up to 64KiB from each stream while both streams continue draining.
@@ -139,7 +152,9 @@ AWS_PROFILE = "production"
 - The diagnostics menu reports the last exit code or signal, duration, skipped ticks, per-stream truncation, and the latest bounded stderr line.
 - An unresolvable shell or working directory is reported in the config warning; a launch failure during execution is retained in the item's diagnostics menu with the resolved path.
 - A malformed config keeps the last good config running untouched, and pinchos additionally shows a single `pinchos ⚠︎` item; click it to see the parse error (with line number when available), reload, or quit. Fix the file and it clears automatically on the next successful reload.
-- Right-click any item for **Refresh Now**, **Reload Config**, and **Quit**. Right-click the warning item for its recovery actions. The app is fully usable without ever touching the config file.
+- Right-click any item for its configured actions, **Refresh Now** when no built-in refresh action is configured, item diagnostics, then the global **Open Config**, **Reload Config**, and **Quit Pinchos** actions.
+- Right-click the warning item for its recovery actions.
+- The app is fully usable without ever touching the config file.
 
 ### Example: the flagship "quota" preset
 
@@ -173,7 +188,7 @@ See [`example/pinchos.toml`](example/pinchos.toml) for a full working config wit
 ## Architecture
 
 - `Sources/PinchosCore` — UI-free library: TOML parsing (via TOMLKit), duration and byte-size parsing, `{output}` templating, the config-diff engine, and bounded process-group command execution with concurrent stdout/stderr draining.
-- `Sources/pinchos` — the AppKit executable: one `NSStatusItem` and one per-item scheduled `DispatchSourceTimer` when configured, plus manual refresh actions, menu and lifecycle projection of `PinchosCore` runner snapshots, and a `ConfigWatcher` (`DispatchSourceFileSystemObject`) for live reload.
+- `Sources/pinchos` — the AppKit executable: one `NSStatusItem` and one per-item scheduled `DispatchSourceTimer` when configured, plus manual refresh actions, declarative per-item menu actions, menu and lifecycle projection of `PinchosCore` runner snapshots, and a `ConfigWatcher` (`DispatchSourceFileSystemObject`) for live reload.
 
 ### Why TOMLKit
 

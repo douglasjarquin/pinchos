@@ -507,6 +507,95 @@ final class RecoveryLifecycleTests: XCTestCase {
     }
 
     @MainActor
+    func testBuiltInRefreshActionUsesItemRunnerAndSharesItsBusyGate() async throws {
+        let item = makeHeadlessItem(
+            config: ItemConfig(
+                name: "refresh-action",
+                run: "sleep 0.25; printf refreshed",
+                interval: .manual,
+                actions: [ItemAction(title: "Refresh now", kind: .refresh)]
+            ),
+            initiallyVisible: false
+        )
+        addTeardownBlock { @MainActor in
+            await item.tearDown()
+        }
+
+        item.invokeAction(at: 0)
+        try await waitForRunning(item)
+        let actionSnapshot = await item.actionSnapshot(at: 0)
+        XCTAssertNil(actionSnapshot)
+
+        item.invokeAction(at: 0)
+        let skipped = try await waitForSkippedRefresh(item)
+        XCTAssertEqual(skipped.skippedRefreshes, 1)
+
+        try await waitForIdle(item)
+        _ = try await waitForRuntimeSnapshot(item) { snapshot in
+            snapshot.fullOutput == "refreshed" && snapshot.status == .fresh
+        }
+    }
+
+    @MainActor
+    func testCommandActionInheritsEnvironmentAndSkipsRepeatedInvocation() async throws {
+        let item = makeHeadlessItem(
+            config: ItemConfig(
+                name: "command-action",
+                run: "printf unused",
+                interval: .manual,
+                environment: ["PINCHOS_ACTION_VALUE": "configured"],
+                actions: [
+                    ItemAction(
+                        title: "Run action",
+                        kind: .command("printf '%s' \"$PINCHOS_ACTION_VALUE\"; sleep 0.25")
+                    )
+                ]
+            ),
+            initiallyVisible: false
+        )
+        addTeardownBlock { @MainActor in
+            await item.tearDown()
+        }
+
+        item.invokeAction(at: 0)
+        try await waitForActionRunning(item, at: 0)
+        item.invokeAction(at: 0)
+        let skipped = try await waitForActionSkipped(item, at: 0)
+        XCTAssertEqual(skipped.skippedRefreshes, 1)
+
+        let completed = try await waitForActionExecution(item, at: 0)
+        XCTAssertEqual(completed.lastExecution?.terminalReason, .exited(code: 0))
+        XCTAssertEqual(completed.lastExecution?.stdout, "configured")
+    }
+
+    @MainActor
+    func testCommandActionFailureRetainsDiagnosticsForMenuProjection() async throws {
+        let item = makeHeadlessItem(
+            config: ItemConfig(
+                name: "failed-action",
+                run: "printf unused",
+                interval: .manual,
+                actions: [
+                    ItemAction(
+                        title: "Fail action",
+                        kind: .command("printf 'action-error\\n' >&2; exit 7")
+                    )
+                ]
+            ),
+            initiallyVisible: false
+        )
+        addTeardownBlock { @MainActor in
+            await item.tearDown()
+        }
+
+        item.invokeAction(at: 0)
+        let snapshot = try await waitForActionExecution(item, at: 0)
+
+        XCTAssertEqual(snapshot.lastExecution?.terminalReason, .exited(code: 7))
+        XCTAssertEqual(snapshot.lastExecution?.stderr, "action-error\n")
+    }
+
+    @MainActor
     func testFailedRefreshClearsRunningFeedback() async throws {
         let item = makeHeadlessItem(
             config: ItemConfig(
@@ -599,6 +688,54 @@ final class RecoveryLifecycleTests: XCTestCase {
             domain: "RecoveryLifecycleTests",
             code: 5,
             userInfo: [NSLocalizedDescriptionKey: "manual refresh was not coalesced while active"]
+        )
+    }
+
+    @MainActor
+    private func waitForActionRunning(_ item: ManagedItem, at index: Int) async throws {
+        let deadline = Date().addingTimeInterval(2)
+        while Date() < deadline {
+            if await item.actionSnapshot(at: index)?.isRunning == true {
+                return
+            }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        throw NSError(
+            domain: "RecoveryLifecycleTests",
+            code: 10,
+            userInfo: [NSLocalizedDescriptionKey: "command action did not become active"]
+        )
+    }
+
+    @MainActor
+    private func waitForActionSkipped(_ item: ManagedItem, at index: Int) async throws -> CommandRunnerSnapshot {
+        let deadline = Date().addingTimeInterval(2)
+        while Date() < deadline {
+            if let snapshot = await item.actionSnapshot(at: index), snapshot.skippedRefreshes > 0 {
+                return snapshot
+            }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        throw NSError(
+            domain: "RecoveryLifecycleTests",
+            code: 11,
+            userInfo: [NSLocalizedDescriptionKey: "repeated command action was not coalesced while active"]
+        )
+    }
+
+    @MainActor
+    private func waitForActionExecution(_ item: ManagedItem, at index: Int) async throws -> CommandRunnerSnapshot {
+        let deadline = Date().addingTimeInterval(2)
+        while Date() < deadline {
+            if let snapshot = await item.actionSnapshot(at: index), snapshot.lastExecution != nil {
+                return snapshot
+            }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        throw NSError(
+            domain: "RecoveryLifecycleTests",
+            code: 12,
+            userInfo: [NSLocalizedDescriptionKey: "command action did not finish"]
         )
     }
 

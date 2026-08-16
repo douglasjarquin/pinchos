@@ -10,6 +10,21 @@ public enum RefreshInterval: Equatable, Sendable {
     case manual
 }
 
+public enum ItemActionKind: Equatable, Sendable {
+    case command(String)
+    case refresh
+}
+
+public struct ItemAction: Equatable, Sendable {
+    public let title: String
+    public let kind: ItemActionKind
+
+    public init(title: String, kind: ItemActionKind) {
+        self.title = title
+        self.kind = kind
+    }
+}
+
 public struct ItemConfig: Equatable {
     public static let defaultShell = ["/bin/sh", "-c"]
     public static let defaultTimeout: TimeInterval = 15
@@ -30,6 +45,7 @@ public struct ItemConfig: Equatable {
     public let onError: ItemErrorPolicy
     public let staleAfter: TimeInterval?
     public let tooltip: String?
+    public let actions: [ItemAction]
     public let icon: String?
 
     public init(
@@ -48,6 +64,7 @@ public struct ItemConfig: Equatable {
         onError: ItemErrorPolicy = .replace,
         staleAfter: TimeInterval? = nil,
         tooltip: String? = nil,
+        actions: [ItemAction] = [],
         icon: String? = nil
     ) {
         self.name = name
@@ -65,6 +82,7 @@ public struct ItemConfig: Equatable {
         self.onError = onError
         self.staleAfter = staleAfter
         self.tooltip = tooltip
+        self.actions = actions
         self.icon = icon
     }
 }

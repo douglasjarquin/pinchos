@@ -34,7 +34,7 @@ public enum ConfigParser {
         var order: [String] = []
         for rawLine in text.split(separator: "\n", omittingEmptySubsequences: false) {
             let line = rawLine.trimmingCharacters(in: .whitespaces)
-            guard let components = headerComponents(in: line), components.count >= 2,
+            guard let components = headerComponents(in: line) ?? arrayHeaderComponents(in: line), components.count >= 2,
                   components[0] == "item" else { continue }
             let name = components[1]
             guard !name.isEmpty, !seen.contains(name) else { continue }
@@ -59,6 +59,16 @@ public enum ConfigParser {
                 if unescapedDelimiterCount(delimiter, in: line) > 0 {
                     multilineDelimiter = nil
                 }
+                continue
+            }
+
+            if let components = arrayHeaderComponents(in: line), components.count >= 3,
+               components[0] == "item" {
+                let name = components[1]
+                currentItem = name
+                let section = components.dropFirst(2).joined(separator: ".")
+                currentSection = section
+                lines["\(name).\(section)"] = lineNumber
                 continue
             }
 
@@ -90,6 +100,24 @@ public enum ConfigParser {
 
     private static func headerComponents(in line: String) -> [String]? {
         guard line.first == "[", line.last == "]" else { return nil }
+        guard !line.hasPrefix("[["),
+              !line.hasSuffix("]]") else { return nil }
+
+        return components(in: line, openingLength: 1, closingLength: 1)
+    }
+
+    private static func arrayHeaderComponents(in line: String) -> [String]? {
+        guard line.hasPrefix("[["),
+              line.hasSuffix("]]") else { return nil }
+        return components(in: line, openingLength: 2, closingLength: 2)
+    }
+
+    private static func components(
+        in line: String,
+        openingLength: Int,
+        closingLength: Int
+    ) -> [String]? {
+        guard line.count >= openingLength + closingLength else { return nil }
 
         var components = [String]()
         var component = ""
@@ -103,7 +131,9 @@ public enum ConfigParser {
             component.removeAll(keepingCapacity: true)
         }
 
-        for character in line.dropFirst().dropLast() {
+        let start = line.index(line.startIndex, offsetBy: openingLength)
+        let end = line.index(line.endIndex, offsetBy: -closingLength)
+        for character in line[start..<end] {
             if let activeQuote = quote {
                 if activeQuote == "\"", escaped {
                     component.append(character)
@@ -326,6 +356,12 @@ public enum ConfigParser {
             tooltip = nil
         }
 
+        let actions = try parseActions(
+            name: name,
+            value: table["action"],
+            sourceLines: sourceLines
+        )
+
         let timeoutString: String
         if let timeoutValue = table["timeout"] {
             guard let value = timeoutValue.string else {
@@ -399,8 +435,82 @@ public enum ConfigParser {
             onError: onError,
             staleAfter: staleAfter,
             tooltip: tooltip,
+            actions: actions,
             icon: icon
         )
+    }
+
+    private static func parseActions(
+        name: String,
+        value: TOMLValueConvertible?,
+        sourceLines: [String: Int]
+    ) throws -> [ItemAction] {
+        guard let value else { return [] }
+        guard let array = value.array else {
+            throw ConfigParseError(
+                message: "item.\(name).action must be an array of tables",
+                line: sourceLine(item: name, key: "action", sourceLines: sourceLines)
+            )
+        }
+
+        return try array.enumerated().map { index, element in
+            guard let table = element.table else {
+                throw ConfigParseError(
+                    message: "item.\(name).action[\(index)] must be a table",
+                    line: sourceLine(item: name, key: "action", sourceLines: sourceLines)
+                )
+            }
+            guard let title = table["title"]?.string, !title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                throw ConfigParseError(
+                    message: "item.\(name).action[\(index)]: title must be a non-empty string",
+                    line: sourceLine(item: name, key: "action", sourceLines: sourceLines)
+                )
+            }
+
+            let runValue = table["run"]
+            if let runValue, runValue.string == nil {
+                throw ConfigParseError(
+                    message: "item.\(name).action[\(index)]: run must be a non-empty string",
+                    line: sourceLine(item: name, key: "action", sourceLines: sourceLines)
+                )
+            }
+            let run = runValue?.string
+            let refresh: Bool?
+            if let refreshValue = table["refresh"] {
+                guard let parsedRefresh = refreshValue.bool else {
+                    throw ConfigParseError(
+                        message: "item.\(name).action[\(index)]: refresh must be a boolean",
+                        line: sourceLine(item: name, key: "action", sourceLines: sourceLines)
+                    )
+                }
+                refresh = parsedRefresh
+            } else {
+                refresh = nil
+            }
+
+            if run != nil, refresh != nil {
+                throw ConfigParseError(
+                    message: "item.\(name).action[\(index)]: specify either run or refresh = true, not both",
+                    line: sourceLine(item: name, key: "action", sourceLines: sourceLines)
+                )
+            }
+            if let run {
+                guard !run.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                    throw ConfigParseError(
+                        message: "item.\(name).action[\(index)]: run must be a non-empty string",
+                        line: sourceLine(item: name, key: "action", sourceLines: sourceLines)
+                    )
+                }
+                return ItemAction(title: title, kind: .command(run))
+            }
+            guard refresh == true else {
+                throw ConfigParseError(
+                    message: "item.\(name).action[\(index)]: specify run or refresh = true",
+                    line: sourceLine(item: name, key: "action", sourceLines: sourceLines)
+                )
+            }
+            return ItemAction(title: title, kind: .refresh)
+        }
     }
 
     private static func parseShell(

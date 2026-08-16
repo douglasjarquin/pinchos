@@ -16,6 +16,7 @@ final class ConfigParserTests: XCTestCase {
         XCTAssertEqual(item.interval, .scheduled(60))
         XCTAssertNil(item.format)
         XCTAssertNil(item.click)
+        XCTAssertTrue(item.actions.isEmpty)
         XCTAssertEqual(item.errorText, "\u{2013}")
         XCTAssertEqual(item.onError, .replace)
         XCTAssertNil(item.staleAfter)
@@ -489,6 +490,104 @@ final class ConfigParserTests: XCTestCase {
             let parseError = error as? ConfigParseError
             XCTAssertTrue(parseError?.message.contains("refresh_on_click") == true)
             XCTAssertTrue(parseError?.message.contains("expensive") == true)
+        }
+    }
+
+    func testDeclarativeActionTablesAreProjectedIntoTheItemModel() throws {
+        let toml = """
+        [item.codex]
+        type = "command"
+        run = "echo value"
+
+        [[item.codex.action]]
+        title = "Open usage"
+        run = "open https://example.com/usage"
+
+        [[item.codex.action]]
+        title = "Refresh now"
+        refresh = true
+        """
+
+        let item = try XCTUnwrap(ConfigParser.parse(toml).items.first)
+
+        XCTAssertEqual(item.actions.map(\.title), ["Open usage", "Refresh now"])
+        XCTAssertEqual(item.actions.map(\.kind), [
+            .command("open https://example.com/usage"),
+            .refresh
+        ])
+    }
+
+    func testRejectsActionWithoutExactlyOneOperation() {
+        let bothOperations = """
+        [item.codex]
+        type = "command"
+        run = "echo value"
+
+        [[item.codex.action]]
+        title = "Invalid"
+        run = "echo action"
+        refresh = true
+        """
+        let missingOperation = """
+        [item.codex]
+        type = "command"
+        run = "echo value"
+
+        [[item.codex.action]]
+        title = "Invalid"
+        """
+
+        for toml in [bothOperations, missingOperation] {
+            XCTAssertThrowsError(try ConfigParser.parse(toml)) { error in
+                let parseError = error as? ConfigParseError
+                XCTAssertTrue(parseError?.message.contains("action[0]") == true)
+            }
+        }
+    }
+
+    func testRejectsInvalidActionValues() {
+        let invalidConfigurations = [
+            """
+            [item.codex]
+            type = "command"
+            run = "echo value"
+
+            [[item.codex.action]]
+            title = "Invalid"
+            run = "echo action"
+            refresh = false
+            """,
+            """
+            [item.codex]
+            type = "command"
+            run = "echo value"
+
+            [[item.codex.action]]
+            title = "Invalid"
+            refresh = "true"
+            """,
+            """
+            [item.codex]
+            type = "command"
+            run = "echo value"
+
+            [[item.codex.action]]
+            title = " "
+            refresh = true
+            """,
+            """
+            [item.codex]
+            type = "command"
+            run = "echo value"
+
+            [[item.codex.action]]
+            title = "Invalid"
+            run = "   "
+            """
+        ]
+
+        for toml in invalidConfigurations {
+            XCTAssertThrowsError(try ConfigParser.parse(toml))
         }
     }
 }
