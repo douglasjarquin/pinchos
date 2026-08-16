@@ -130,10 +130,12 @@ final class RecoveryLifecycleTests: XCTestCase {
         item.refreshNow()
         _ = try await waitForSkippedRefresh(item)
 
-        XCTAssertEqual(item.renderedTitle, "old")
+        _ = try await waitForRuntimeSnapshot(item) { snapshot in
+            snapshot.isRunning && snapshot.fullOutput == "old\n" && item.renderedTitle == "old"
+        }
         try await waitForIdle(item)
         _ = try await waitForRuntimeSnapshot(item) { snapshot in
-            snapshot.fullOutput == "new\n"
+            snapshot.fullOutput == "new\n" && item.renderedTitle == "new"
         }
         XCTAssertEqual(item.renderedTitle, "new")
     }
@@ -338,7 +340,7 @@ final class RecoveryLifecycleTests: XCTestCase {
         XCTAssertEqual(snapshot.skippedRefreshes, 1)
         try await waitForIdle(item)
         _ = try await waitForRuntimeSnapshot(item) { snapshot in
-            snapshot.fullOutput == "scheduled"
+            snapshot.fullOutput == "scheduled" && item.renderedTitle == "scheduled"
         }
         XCTAssertEqual(item.renderedTitle, "scheduled")
     }
@@ -360,7 +362,9 @@ final class RecoveryLifecycleTests: XCTestCase {
 
         item.activate()
         _ = try await waitForExecution(item)
-        XCTAssertEqual(item.renderedTitle, "old")
+        _ = try await waitForRuntimeSnapshot(item) { snapshot in
+            snapshot.fullOutput == "old" && item.renderedTitle == "old"
+        }
 
         await item.prepareUpdate(config: ItemConfig(
             name: "manual",
@@ -368,9 +372,10 @@ final class RecoveryLifecycleTests: XCTestCase {
             interval: .manual
         ))
         item.commitPreparedUpdate()
-        try await Task.sleep(for: .milliseconds(200))
 
-        XCTAssertEqual(item.renderedTitle, "old")
+        _ = try await waitForRuntimeSnapshot(item) { _ in
+            item.renderedTitle == "old"
+        }
     }
 
     @MainActor
@@ -428,13 +433,15 @@ final class RecoveryLifecycleTests: XCTestCase {
 
         item.refreshNow()
         _ = try await waitForExecution(item)
-        XCTAssertEqual(item.renderedTitle, "old")
+        _ = try await waitForRuntimeSnapshot(item) { snapshot in
+            snapshot.fullOutput == "old" && item.renderedTitle == "old"
+        }
 
         item.processClick(eventType: .leftMouseUp)
         try await waitForRunning(item)
         try await waitForIdle(item)
         _ = try await waitForRuntimeSnapshot(item) { snapshot in
-            snapshot.fullOutput == "clicked"
+            snapshot.fullOutput == "clicked" && item.renderedTitle == "clicked"
         }
         XCTAssertEqual(item.renderedTitle, "clicked")
     }
@@ -464,11 +471,15 @@ final class RecoveryLifecycleTests: XCTestCase {
 
         item.refreshNow()
         _ = try await waitForExecution(item)
-        XCTAssertEqual(item.renderedTitle, "old")
+        _ = try await waitForRuntimeSnapshot(item) { snapshot in
+            snapshot.fullOutput == "old" && item.renderedTitle == "old"
+        }
 
         item.processClick(eventType: .leftMouseUp)
         try await waitForFile(clickMarker)
-        XCTAssertEqual(item.renderedTitle, "old")
+        _ = try await waitForRuntimeSnapshot(item) { snapshot in
+            snapshot.fullOutput == "old" && item.renderedTitle == "old"
+        }
     }
 
     @MainActor
