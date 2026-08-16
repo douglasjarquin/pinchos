@@ -251,6 +251,30 @@ final class RecoveryLifecycleTests: XCTestCase {
     }
 
     @MainActor
+    func testExtremeStaleAfterDoesNotTrapDuringPresentationScheduling() async throws {
+        let item = makeHeadlessItem(
+            config: ItemConfig(
+                name: "extreme-stale",
+                run: "printf 'value'",
+                interval: .manual,
+                staleAfter: TimeInterval(Int.max) * 3_600
+            ),
+            initiallyVisible: false
+        )
+        addTeardownBlock { @MainActor in
+            await item.tearDown()
+        }
+
+        item.refreshNow()
+        let snapshot = try await waitForRuntimeSnapshot(item) { snapshot in
+            snapshot.status == .fresh && snapshot.fullOutput == "value"
+        }
+
+        XCTAssertFalse(snapshot.isStale)
+        XCTAssertEqual(item.renderedTitle, "value")
+    }
+
+    @MainActor
     func testRunningRefreshPreservesConfiguredTooltipAndRecordsAttemptStart() async throws {
         let item = makeHeadlessItem(
             config: ItemConfig(

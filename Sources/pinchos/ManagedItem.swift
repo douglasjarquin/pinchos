@@ -365,7 +365,7 @@ final class ManagedItem: ManagedItemLifecycle {
             requestPresentationUpdate()
             return
         }
-        let nanoseconds = UInt64(min(remaining * 1_000_000_000, Double(UInt64.max)))
+        let nanoseconds = stalePresentationNanoseconds(for: remaining)
         stalePresentationTask = Task { @MainActor [weak self] in
             do {
                 try await Task.sleep(nanoseconds: nanoseconds)
@@ -375,6 +375,12 @@ final class ManagedItem: ManagedItemLifecycle {
             guard let self, self.isActive, self.configurationGeneration == generation else { return }
             await self.updatePresentation()
         }
+    }
+
+    private func stalePresentationNanoseconds(for remaining: TimeInterval) -> UInt64 {
+        let value = remaining * 1_000_000_000
+        guard value.isFinite, value < Double(UInt64.max) else { return .max }
+        return UInt64(max(1, value))
     }
 
     private func renderPresentation(_ snapshot: ItemRuntimeSnapshot) {
