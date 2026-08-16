@@ -233,12 +233,12 @@ final class ManagedItem: ManagedItemLifecycle {
         case .skipped:
             return
         case .completed(let execution):
-            guard execution.terminalReason == .exited(code: 0) else {
+            if execution.terminalReason != .exited(code: 0) {
                 statusItem.button?.title = currentConfig.errorText
-                return
+            } else {
+                let trimmed = lastTrimmedLine(of: execution.stdout)
+                statusItem.button?.title = applyFormat(currentConfig.format, output: trimmed)
             }
-            let trimmed = lastTrimmedLine(of: execution.stdout)
-            statusItem.button?.title = applyFormat(currentConfig.format, output: trimmed)
         }
         if !(await runner.snapshot().isRunning) {
             statusItem.button?.toolTip = nil

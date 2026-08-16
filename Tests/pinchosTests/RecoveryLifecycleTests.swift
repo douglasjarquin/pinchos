@@ -84,6 +84,30 @@ final class RecoveryLifecycleTests: XCTestCase {
     }
 
     @MainActor
+    func testFailedRefreshClearsRunningFeedback() async throws {
+        let item = ManagedItem(
+            config: ItemConfig(
+                name: "manual",
+                run: "exit 1",
+                interval: .manual,
+                errorText: "ERR"
+            ),
+            menuDelegate: NoopStatusItemMenuDelegate(),
+            initiallyVisible: false
+        )
+        addTeardownBlock { @MainActor in
+            await item.tearDown()
+        }
+
+        item.refreshNow()
+        _ = try await waitForExecution(item)
+        try await waitForTooltipToClear(item)
+
+        XCTAssertEqual(item.statusItem.button?.title, "ERR")
+        XCTAssertNil(item.statusItem.button?.toolTip)
+    }
+
+    @MainActor
     private func waitForExecution(_ item: ManagedItem) async throws -> CommandRunnerSnapshot {
         let deadline = Date().addingTimeInterval(2)
         while Date() < deadline {
@@ -146,6 +170,22 @@ final class RecoveryLifecycleTests: XCTestCase {
             domain: "RecoveryLifecycleTests",
             code: 6,
             userInfo: [NSLocalizedDescriptionKey: "manual refresh did not settle"]
+        )
+    }
+
+    @MainActor
+    private func waitForTooltipToClear(_ item: ManagedItem) async throws {
+        let deadline = Date().addingTimeInterval(2)
+        while Date() < deadline {
+            if item.statusItem.button?.toolTip == nil {
+                return
+            }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        throw NSError(
+            domain: "RecoveryLifecycleTests",
+            code: 7,
+            userInfo: [NSLocalizedDescriptionKey: "refresh feedback tooltip did not clear"]
         )
     }
 
