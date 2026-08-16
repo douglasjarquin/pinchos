@@ -60,6 +60,24 @@ final class ConfigDiffTests: XCTestCase {
         XCTAssertFalse(diff.requiresNativeRebuild)
     }
 
+    func testDetectsChangedDeclarativeActions() {
+        let old = PinchosConfig(items: [item("a")])
+        let new = PinchosConfig(items: [
+            ItemConfig(
+                name: "a",
+                run: "echo x",
+                interval: .scheduled(60),
+                actions: [ItemAction(title: "Refresh", kind: .refresh)]
+            )
+        ])
+
+        let diff = ConfigDiffEngine.diff(old: old, new: new)
+
+        XCTAssertEqual(diff.changed.map(\.name), ["a"])
+        XCTAssertTrue(diff.added.isEmpty)
+        XCTAssertTrue(diff.removed.isEmpty)
+    }
+
     func testDetectsChangedCommandBounds() {
         let old = PinchosConfig(items: [item("a")])
         let new = PinchosConfig(items: [item("a", timeout: 30, maxOutputBytes: 128 * 1024)])
