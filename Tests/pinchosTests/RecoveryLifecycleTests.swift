@@ -121,7 +121,9 @@ final class RecoveryLifecycleTests: XCTestCase {
 
         item.refreshNow()
         _ = try await waitForExecution(item)
-        XCTAssertEqual(item.renderedTitle, "old")
+        _ = try await waitForRuntimeSnapshot(item) { snapshot in
+            snapshot.fullOutput == "old\n" && item.renderedTitle == "old"
+        }
 
         item.refreshNow()
         try await waitForRunning(item)
@@ -243,6 +245,75 @@ final class RecoveryLifecycleTests: XCTestCase {
         let stale = await item.runtimeSnapshot()
         XCTAssertTrue(stale.isStale)
         XCTAssertEqual(stale.status, .stale)
+        XCTAssertTrue(item.renderedTitle.hasSuffix("⌛︎"))
+    }
+
+    @MainActor
+    func testRunningRefreshPreservesConfiguredTooltipAndRecordsAttemptStart() async throws {
+        let item = makeHeadlessItem(
+            config: ItemConfig(
+                name: "running",
+                run: "sleep 0.4; printf running",
+                interval: .manual,
+                tooltip: "Value={output}; Status={status}; Attempted={attempted_at}"
+            ),
+            initiallyVisible: false
+        )
+        addTeardownBlock { @MainActor in
+            await item.tearDown()
+        }
+
+        item.refreshNow()
+        try await waitForRunning(item)
+        let tooltipBeforeRuntimeObservation = item.renderedToolTip
+        let running = await item.runtimeSnapshot()
+
+        XCTAssertEqual(running.status, .running)
+        XCTAssertNotNil(running.lastAttemptedAt)
+        XCTAssertTrue(tooltipBeforeRuntimeObservation?.contains("Status=running") == true)
+        XCTAssertNotEqual(tooltipBeforeRuntimeObservation, "Refreshing...")
+
+        _ = try await waitForRuntimeSnapshot(item) { snapshot in
+            snapshot.status == .fresh && snapshot.fullOutput == "running"
+        }
+    }
+
+    @MainActor
+    func testStaleScheduleAfterConfigReloadUsesLastSuccessfulUpdate() async throws {
+        let item = makeHeadlessItem(
+            config: ItemConfig(
+                name: "stale-reload",
+                run: "printf value",
+                interval: .manual,
+                staleAfter: 5
+            ),
+            initiallyVisible: false
+        )
+        addTeardownBlock { @MainActor in
+            await item.tearDown()
+        }
+
+        item.refreshNow()
+        _ = try await waitForRuntimeSnapshot(item) { snapshot in
+            snapshot.status == .fresh && snapshot.fullOutput == "value"
+        }
+        try await Task.sleep(for: .milliseconds(1_200))
+
+        await item.prepareUpdate(config: ItemConfig(
+            name: "stale-reload",
+            run: "printf value",
+            interval: .manual,
+            staleAfter: 2
+        ))
+        item.commitPreparedUpdate()
+
+        let freshAfterReload = await item.runtimeSnapshot()
+        XCTAssertEqual(freshAfterReload.status, .fresh)
+        try await Task.sleep(for: .milliseconds(1_100))
+
+        let stale = await item.runtimeSnapshot()
+        XCTAssertEqual(stale.status, .stale)
+        XCTAssertTrue(stale.isStale)
         XCTAssertTrue(item.renderedTitle.hasSuffix("⌛︎"))
     }
 

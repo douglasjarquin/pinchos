@@ -1007,7 +1007,7 @@ public actor CommandRunner {
         self.maxOutputBytes = maxOutputBytes
     }
 
-    public func runIfIdle() async -> CommandRunOutcome {
+    public func beginIfIdle() async -> Bool {
         let generation = runGeneration
         await settleLingeringProcesses()
         guard generation == runGeneration,
@@ -1016,7 +1016,7 @@ public actor CommandRunner {
             !cancellationInProgress
         else {
             skippedRefreshes += 1
-            return .skipped
+            return false
         }
 
         let controller = ProcessGroupController()
@@ -1042,6 +1042,11 @@ public actor CommandRunner {
             }
         }
         activeTask = task
+        return true
+    }
+
+    public func finishActiveRun() async -> CommandRunOutcome {
+        guard let task = activeTask else { return .skipped }
         let result = await task.value
         var completedExecution = result.execution
         lastExecution = completedExecution
@@ -1057,6 +1062,11 @@ public actor CommandRunner {
         }
         activeTask = nil
         return .completed(completedExecution)
+    }
+
+    public func runIfIdle() async -> CommandRunOutcome {
+        guard await beginIfIdle() else { return .skipped }
+        return await finishActiveRun()
     }
 
     public func cancelActive() async {

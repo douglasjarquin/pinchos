@@ -275,17 +275,32 @@ final class ManagedItem: ManagedItemLifecycle {
         guard isActive, !isPreparingUpdate, !isPreparingRemoval else { return }
         let generation = configurationGeneration
         let attemptedAt = now()
-        if !(await runner.snapshot().isRunning) {
-            setToolTip("Refreshing...")
+        guard await runner.beginIfIdle() else { return }
+        lastAttemptedAt = attemptedAt
+        let runningRunnerSnapshot = await runner.snapshot()
+        guard isActive, generation == configurationGeneration else {
+            _ = await runner.finishActiveRun()
+            return
         }
-        let outcome = await runner.runIfIdle()
+        renderPresentation(
+            ItemRuntimeSnapshot(
+                isRunning: true,
+                fullOutput: lastSuccessfulOutput,
+                lastAttemptedAt: lastAttemptedAt,
+                lastUpdatedAt: lastUpdatedAt,
+                lastExecution: runningRunnerSnapshot.lastExecution,
+                staleAfter: config.staleAfter,
+                skippedRefreshes: runningRunnerSnapshot.skippedRefreshes,
+                now: now()
+            )
+        )
+        let outcome = await runner.finishActiveRun()
         guard isActive, generation == configurationGeneration else { return }
         let currentConfig = config
         switch outcome {
         case .skipped:
             return
         case .completed(let execution):
-            lastAttemptedAt = attemptedAt
             if execution.terminalReason == .exited(code: 0) {
                 lastSuccessfulOutput = execution.stdout
                 lastUpdatedAt = now()
@@ -343,9 +358,14 @@ final class ManagedItem: ManagedItemLifecycle {
     private func scheduleStalePresentation() {
         stalePresentationTask?.cancel()
         stalePresentationTask = nil
-        guard let staleAfter = config.staleAfter, lastUpdatedAt != nil else { return }
+        guard let staleAfter = config.staleAfter, let lastUpdatedAt else { return }
         let generation = configurationGeneration
-        let nanoseconds = UInt64(min(staleAfter * 1_000_000_000, Double(UInt64.max)))
+        let remaining = lastUpdatedAt.addingTimeInterval(staleAfter).timeIntervalSince(now())
+        guard remaining > 0 else {
+            requestPresentationUpdate()
+            return
+        }
+        let nanoseconds = UInt64(min(remaining * 1_000_000_000, Double(UInt64.max)))
         stalePresentationTask = Task { @MainActor [weak self] in
             do {
                 try await Task.sleep(nanoseconds: nanoseconds)
