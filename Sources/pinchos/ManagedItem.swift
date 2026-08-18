@@ -20,6 +20,8 @@ final class ManagedItem: ManagedItemLifecycle {
     private var isPreparingUpdate = false
     private var pendingUpdate: PendingUpdate?
     private var isPreparingRemoval = false
+    private var pendingRefreshInvocations = 0
+    private var refreshInvocationsDrained: CheckedContinuation<Void, Never>?
     private var pendingClickInvocations = 0
     private var clickInvocationsDrained: CheckedContinuation<Void, Never>?
     private var pendingActionInvocations = 0
@@ -144,6 +146,7 @@ final class ManagedItem: ManagedItemLifecycle {
         if runnerConfigurationChanged {
             configurationGeneration &+= 1
             await runner.cancelActive()
+            await drainRefreshInvocations()
             replacementRunner = CommandRunner(
                 command: config.run,
                 timeout: config.timeout,
@@ -240,6 +243,7 @@ final class ManagedItem: ManagedItemLifecycle {
         timer?.cancel()
         timer = nil
         await runner.cancelActive()
+        await drainRefreshInvocations()
         await clickRunner?.cancelActive()
         for actionRunner in actionRunners.values {
             await actionRunner.cancelActive()
@@ -284,15 +288,15 @@ final class ManagedItem: ManagedItemLifecycle {
         newTimer.setEventHandler { [weak self] in
             guard let self else { return }
             Task { @MainActor in
-                await self.tick()
+                self.tick()
             }
         }
         timer = newTimer
         newTimer.resume()
     }
 
-    private func tick() async {
-        await refresh()
+    private func tick() {
+        requestRefresh()
     }
 
     func refreshNow() {
@@ -300,8 +304,11 @@ final class ManagedItem: ManagedItemLifecycle {
     }
 
     private func requestRefresh() {
-        Task { @MainActor [weak self] in
-            await self?.refresh()
+        guard isActive, !isPreparingUpdate, !isPreparingRemoval else { return }
+        pendingRefreshInvocations += 1
+        Task { @MainActor [self] in
+            defer { finishRefreshInvocation() }
+            await refresh()
         }
     }
 
@@ -530,6 +537,20 @@ final class ManagedItem: ManagedItemLifecycle {
         guard pendingClickInvocations == 0, let continuation = clickInvocationsDrained else { return }
         clickInvocationsDrained = nil
         continuation.resume()
+    }
+
+    private func finishRefreshInvocation() {
+        pendingRefreshInvocations -= 1
+        guard pendingRefreshInvocations == 0, let continuation = refreshInvocationsDrained else { return }
+        refreshInvocationsDrained = nil
+        continuation.resume()
+    }
+
+    private func drainRefreshInvocations() async {
+        guard pendingRefreshInvocations > 0 else { return }
+        await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+            refreshInvocationsDrained = continuation
+        }
     }
 
     private func finishActionInvocation() {

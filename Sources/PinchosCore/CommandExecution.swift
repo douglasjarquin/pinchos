@@ -230,21 +230,25 @@ private final class LingeringOutput: @unchecked Sendable {
     }
 }
 
-private final class ProcessGroupController: @unchecked Sendable {
-    fileprivate enum Claim: Equatable {
+final class ProcessGroupController: @unchecked Sendable {
+    enum Claim: Equatable {
         case natural
         case timedOut
         case cancelled
     }
 
     private let lock = NSLock()
-    private var processGroupID: pid_t?
+    private var session: ProcessSessionIdentity?
     private var claim: Claim?
     private var cleanupRequested = false
 
-    func install(processGroupID: pid_t) {
+    init(session: ProcessSessionIdentity? = nil) {
+        self.session = session
+    }
+
+    func install(session: ProcessSessionIdentity) {
         lock.lock()
-        self.processGroupID = processGroupID
+        self.session = session
         let shouldTerminate = claim == .timedOut || claim == .cancelled
         lock.unlock()
 
@@ -261,13 +265,13 @@ private final class ProcessGroupController: @unchecked Sendable {
         return true
     }
 
-    fileprivate func beginTermination(_ reason: Claim) -> Bool {
+    func beginTermination(_ reason: Claim) -> Bool {
         lock.lock()
         let canClaim = claim == nil || claim == reason || claim == .natural
         if claim == nil {
             claim = reason
         }
-        let shouldRequest = processGroupID != nil && !cleanupRequested
+        let shouldRequest = session != nil && !cleanupRequested
         lock.unlock()
         if shouldRequest {
             requestGroupTermination()
@@ -277,20 +281,16 @@ private final class ProcessGroupController: @unchecked Sendable {
 
     func requestGroupTermination() {
         lock.lock()
-        guard !cleanupRequested, let processGroupID else {
-            lock.unlock()
-            return
-        }
-        guard groupHasMembers(processGroupID) else {
-            self.processGroupID = nil
+        guard !cleanupRequested, let session else {
             lock.unlock()
             return
         }
         cleanupRequested = true
         lock.unlock()
 
-        _ = kill(-processGroupID, SIGTERM)
-        _ = kill(-processGroupID, SIGKILL)
+        if session.isOwned {
+            session.requestTermination()
+        }
     }
 
     func claimDescription() -> CommandTerminalReason? {
@@ -306,30 +306,32 @@ private final class ProcessGroupController: @unchecked Sendable {
         }
     }
 
-    func hasMembers() -> Bool {
+    func hasDescendants() -> Bool {
         lock.lock()
-        guard let processGroupID else {
+        guard let session else {
             lock.unlock()
             return false
         }
-        let hasMembers = groupHasMembers(processGroupID)
-        if !hasMembers {
-            self.processGroupID = nil
-        }
         lock.unlock()
-        return hasMembers
+        return session.hasDescendants
     }
 
-    private func groupHasMembers(_ processGroupID: pid_t) -> Bool {
-        let result = kill(-processGroupID, 0)
-        return result == 0 || errno == EPERM
+    func release() {
+        lock.lock()
+        let session = self.session
+        lock.unlock()
+        session?.release()
     }
 
     func waitForExit() async {
-        for _ in 0..<100 {
-            guard hasMembers() else { return }
-            try? await Task.sleep(nanoseconds: 10_000_000)
-        }
+        await currentSession()?.waitForExit()
+    }
+
+    private func currentSession() -> ProcessSessionIdentity? {
+        lock.lock()
+        let session = self.session
+        lock.unlock()
+        return session
     }
 }
 
@@ -545,17 +547,29 @@ private enum CommandExecutionEngine {
 
         let processID: pid_t
         do {
+            let session = try SupervisorProcessSession.launch(
+                stdoutRead: stdoutFileDescriptors[0],
+                stdoutWrite: stdoutFileDescriptors[1],
+                stderrRead: stderrFileDescriptors[0],
+                stderrWrite: stderrFileDescriptors[1],
+                environment: environment
+            )
+            controller.install(session: session)
             processID = try spawn(
                 command: command,
                 shell: shell,
                 workingDirectory: workingDirectory,
                 environment: environment,
+                processGroupID: session.processGroupID,
                 stdoutRead: stdoutFileDescriptors[0],
                 stdoutWrite: stdoutFileDescriptors[1],
                 stderrRead: stderrFileDescriptors[0],
                 stderrWrite: stderrFileDescriptors[1]
             )
+            try session.start()
         } catch {
+            controller.requestGroupTermination()
+            await controller.waitForExit()
             closeIfOpen(stdoutFileDescriptors)
             closeIfOpen(stderrFileDescriptors)
             return CommandExecutionResult(
@@ -573,7 +587,6 @@ private enum CommandExecutionEngine {
         stdoutFileDescriptors[1] = -1
         close(stderrFileDescriptors[1])
         stderrFileDescriptors[1] = -1
-        controller.install(processGroupID: processID)
         let stdoutReadFileDescriptor = stdoutFileDescriptors[0]
         let stderrReadFileDescriptor = stderrFileDescriptors[0]
 
@@ -624,7 +637,7 @@ private enum CommandExecutionEngine {
                 reason = .timedOut
             }
             _ = await waitTask.value
-            keepProcessGroup = controller.hasMembers()
+            keepProcessGroup = controller.hasDescendants()
         case .cancellation:
             timerTask.cancel()
             if !controller.beginTermination(.cancelled), let claimed = controller.claimDescription() {
@@ -633,14 +646,14 @@ private enum CommandExecutionEngine {
                 reason = .cancelled
             }
             _ = await waitTask.value
-            keepProcessGroup = controller.hasMembers()
+            keepProcessGroup = controller.hasDescendants()
         case .process(let waitResult):
             if controller.claimNatural() {
                 reason = terminalReason(for: waitResult)
             } else {
                 reason = controller.claimDescription() ?? terminalReason(for: waitResult)
             }
-            keepProcessGroup = controller.hasMembers()
+            keepProcessGroup = controller.hasDescendants()
             if !keepProcessGroup {
                 timerTask.cancel()
             }
@@ -654,6 +667,10 @@ private enum CommandExecutionEngine {
             controller: drainController,
             keepRunning: keepProcessGroup
         )
+        if lingeringOutput == nil {
+            controller.release()
+            await controller.waitForExit()
+        }
         let execution = makeExecution(
             reason: reason,
             stdout: stdout,
@@ -681,6 +698,7 @@ private enum CommandExecutionEngine {
         shell: [String],
         workingDirectory: String?,
         environment: [String: String],
+        processGroupID: pid_t,
         stdoutRead: Int32,
         stdoutWrite: Int32,
         stderrRead: Int32,
@@ -690,7 +708,7 @@ private enum CommandExecutionEngine {
         try check(posix_spawnattr_init(&attributes))
         defer { posix_spawnattr_destroy(&attributes) }
         try check(posix_spawnattr_setflags(&attributes, Int16(POSIX_SPAWN_SETPGROUP)))
-        try check(posix_spawnattr_setpgroup(&attributes, 0))
+        try check(posix_spawnattr_setpgroup(&attributes, processGroupID))
 
         var fileActions: posix_spawn_file_actions_t?
         try check(posix_spawn_file_actions_init(&fileActions))
@@ -983,6 +1001,7 @@ public actor CommandRunner {
     private let timeout: TimeInterval
     private let maxOutputBytes: Int
     private var activeTask: Task<CommandExecutionResult, Never>?
+    private var activeController: ProcessGroupController?
     private var lingeringProcesses: [LingeringProcess] = []
     private var lastExecution: CommandExecution?
     private var skippedRefreshes = 0
@@ -1005,6 +1024,14 @@ public actor CommandRunner {
         self.environment = environment
         self.timeout = timeout
         self.maxOutputBytes = maxOutputBytes
+    }
+
+    deinit {
+        for process in lingeringProcesses {
+            process.timeoutTask.cancel()
+            process.output.stop()
+            process.controller.requestGroupTermination()
+        }
     }
 
     public func beginIfIdle() async -> Bool {
@@ -1042,19 +1069,29 @@ public actor CommandRunner {
             }
         }
         activeTask = task
+        activeController = controller
         return true
     }
 
     public func finishActiveRun() async -> CommandRunOutcome {
         guard let task = activeTask else { return .skipped }
+        let generation = runGeneration
         let result = await task.value
+        activeController = nil
+        if generation != runGeneration {
+            let execution = await finishCancelledRun(result)
+            activeTask = nil
+            return .completed(execution)
+        }
         var completedExecution = result.execution
         lastExecution = completedExecution
         if let process = result.lingeringProcess {
-            if process.controller.hasMembers() {
+            if process.controller.hasDescendants() {
                 lingeringProcesses.append(process)
             } else {
                 process.timeoutTask.cancel()
+                process.controller.release()
+                await process.controller.waitForExit()
                 await process.output.stopAndWait()
                 completedExecution = process.currentExecution()
                 lastExecution = completedExecution
@@ -1076,11 +1113,11 @@ public actor CommandRunner {
 
         let activeTask = self.activeTask
         activeTask?.cancel()
+        activeController?.requestGroupTermination()
         if let activeTask {
             _ = await activeTask.value
-            while self.activeTask != nil {
-                await Task.yield()
-            }
+            self.activeTask = nil
+            activeController = nil
         }
 
         for process in lingeringProcesses {
@@ -1104,22 +1141,36 @@ public actor CommandRunner {
         process.output.stop()
         _ = process.controller.beginTermination(.cancelled)
         await process.controller.waitForExit()
+        process.controller.release()
         await process.output.stopAndWait()
+    }
+
+    private func finishCancelledRun(_ result: CommandExecutionResult) async -> CommandExecution {
+        var execution = result.execution
+        if let process = result.lingeringProcess {
+            await terminate(process)
+            execution = process.currentExecution()
+        }
+        lastExecution = execution
+        return execution
     }
 
     private func settleLingeringProcesses() async {
         var activeProcesses = [LingeringProcess]()
         for process in lingeringProcesses {
-            guard !process.controller.hasMembers() else {
+            guard !process.controller.hasDescendants() else {
                 activeProcesses.append(process)
                 continue
             }
             process.timeoutTask.cancel()
+            process.controller.release()
+            await process.controller.waitForExit()
             await process.output.stopAndWait()
             lastExecution = process.currentExecution()
         }
         lingeringProcesses = activeProcesses
     }
+
 }
 
 public func lastTrimmedLine(of output: String) -> String {

@@ -186,6 +186,27 @@ final class CommandExecutionTests: XCTestCase {
         XCTAssertFalse(snapshot.isRunning)
     }
 
+    func testCancelActiveCompletesWhenFinishActiveRunRacesTeardown() async throws {
+        let childPIDURL = temporaryURL("cancel-race-child")
+        defer { try? FileManager.default.removeItem(at: childPIDURL) }
+        let command = "trap '' TERM; (trap '' TERM; while :; do sleep 1; done) & child=$!; printf '%s' \"$child\" > '\(childPIDURL.path)'; wait \"$child\""
+        let runner = CommandRunner(command: command, timeout: 30, maxOutputBytes: 64)
+
+        let runTask = Task { await runner.runIfIdle() }
+        let childPID = try await waitForPID(at: childPIDURL)
+        let cancellationTask = Task { await runner.cancelActive() }
+        let outcome = await runTask.value
+        await cancellationTask.value
+
+        guard case .completed(let execution) = outcome else {
+            return XCTFail("expected a completed cancellation, got \(outcome)")
+        }
+        XCTAssertEqual(execution.terminalReason, .cancelled)
+        XCTAssertTrue(waitUntilGone(childPID), "teardown left child process \(childPID) alive")
+        let snapshot = await runner.snapshot()
+        XCTAssertFalse(snapshot.isRunning)
+    }
+
     func testTimeoutDoesNotWaitForDetachedPipeHolder() async throws {
         try XCTSkipUnless(FileManager.default.isExecutableFile(atPath: "/usr/bin/perl"))
         let childPIDURL = temporaryURL("detached-child")
@@ -320,6 +341,26 @@ final class CommandExecutionTests: XCTestCase {
         XCTAssertEqual(snapshot.lastExecution?.stderr, "late-diagnostic\n")
     }
 
+    func testCancellationDoesNotSignalARecycledProcessGroupAfterSessionOwnershipEnds() {
+        let session = FakeProcessSession(isOwned: false, hasDescendants: true)
+        let controller = ProcessGroupController(session: session)
+
+        _ = controller.beginTermination(.cancelled)
+
+        XCTAssertEqual(session.terminationRequestCount, 0)
+    }
+
+    func testOwnedProcessSessionReceivesOneTerminationSequenceForRepeatedClaims() {
+        let session = FakeProcessSession(isOwned: true, hasDescendants: true)
+        let controller = ProcessGroupController(session: session)
+
+        _ = controller.beginTermination(.cancelled)
+        _ = controller.beginTermination(.timedOut)
+        controller.requestGroupTermination()
+
+        XCTAssertEqual(session.terminationRequestCount, 1)
+    }
+
     private func temporaryURL(_ prefix: String) -> URL {
         FileManager.default.temporaryDirectory.appendingPathComponent("pinchos-\(prefix)-\(UUID().uuidString)")
     }
@@ -345,4 +386,26 @@ final class CommandExecutionTests: XCTestCase {
         } while Date() < deadline
         return false
     }
+}
+
+private final class FakeProcessSession: ProcessSessionIdentity, @unchecked Sendable {
+    var isOwned: Bool
+    var hasDescendants: Bool
+    private(set) var terminationRequestCount = 0
+
+    init(isOwned: Bool, hasDescendants: Bool) {
+        self.isOwned = isOwned
+        self.hasDescendants = hasDescendants
+    }
+
+    func requestTermination() {
+        terminationRequestCount += 1
+    }
+
+    func release() {
+        isOwned = false
+        hasDescendants = false
+    }
+
+    func waitForExit() async {}
 }
