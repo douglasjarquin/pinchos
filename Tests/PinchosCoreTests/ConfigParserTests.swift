@@ -112,6 +112,34 @@ final class ConfigParserTests: XCTestCase {
         }
     }
 
+    func testRejectsUnknownKeyAfterCommentedItemHeaderWithSourceLine() {
+        let toml = """
+        [item.clock] # valid TOML trailing comment
+        type = "command"
+        run = "date"
+        intervall = "5s"
+        """
+
+        XCTAssertThrowsError(try ConfigParser.parse(toml)) { error in
+            let parseError = error as? ConfigParseError
+            XCTAssertTrue(parseError?.message.contains("item.clock.intervall: unknown key") == true)
+            XCTAssertTrue(parseError?.message.contains("did you mean 'interval'") == true)
+            XCTAssertEqual(parseError?.line, 4)
+        }
+    }
+
+    func testPreservesHashInQuotedItemHeaderBeforeTrailingComment() throws {
+        let toml = """
+        [item."quoted#name"] # valid TOML trailing comment
+        type = "command"
+        run = "date"
+        """
+
+        let config = try ConfigParser.parse(toml)
+
+        XCTAssertEqual(config.items.map(\.name), ["quoted#name"])
+    }
+
     func testRejectsUnknownActionKeysWithIndexAndActionSourceLine() {
         let toml = """
         [item.clock]
@@ -128,6 +156,25 @@ final class ConfigParserTests: XCTestCase {
             let parseError = error as? ConfigParseError
             XCTAssertTrue(parseError?.message.contains("item.clock.action[0].unknown") == true)
             XCTAssertTrue(parseError?.message.contains("unknown key") == true)
+            XCTAssertEqual(parseError?.line, 8)
+        }
+    }
+
+    func testRejectsUnknownActionKeyAfterCommentedArrayHeaderWithIndexedSourceLine() {
+        let toml = """
+        [item."quoted.dot"]
+        type = "command"
+        run = "date"
+
+        [[item."quoted.dot".action]] # valid TOML trailing comment
+        title = "Run"
+        run = "echo hi"
+        unknown = true
+        """
+
+        XCTAssertThrowsError(try ConfigParser.parse(toml)) { error in
+            let parseError = error as? ConfigParseError
+            XCTAssertTrue(parseError?.message.contains("item.quoted.dot.action[0].unknown: unknown key") == true)
             XCTAssertEqual(parseError?.line, 8)
         }
     }

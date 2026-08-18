@@ -138,6 +138,7 @@ public enum ConfigParser {
     }
 
     private static func headerComponents(in line: String) -> [String]? {
+        let line = withoutInlineComment(from: line)
         guard line.first == "[", line.last == "]" else { return nil }
         guard !line.hasPrefix("[["),
               !line.hasSuffix("]]") else { return nil }
@@ -146,9 +147,37 @@ public enum ConfigParser {
     }
 
     private static func arrayHeaderComponents(in line: String) -> [String]? {
+        let line = withoutInlineComment(from: line)
         guard line.hasPrefix("[["),
               line.hasSuffix("]]") else { return nil }
         return components(in: line, openingLength: 2, closingLength: 2)
+    }
+
+    private static func withoutInlineComment(from line: String) -> String {
+        var quote: Character?
+        var escaped = false
+
+        for index in line.indices {
+            let character = line[index]
+            if let activeQuote = quote {
+                if activeQuote == "\"", escaped {
+                    escaped = false
+                } else if activeQuote == "\"", character == "\\" {
+                    escaped = true
+                } else if character == activeQuote {
+                    quote = nil
+                }
+                continue
+            }
+
+            if character == "\"" || character == "'" {
+                quote = character
+            } else if character == "#" {
+                return String(line[..<index]).trimmingCharacters(in: .whitespaces)
+            }
+        }
+
+        return line
     }
 
     private static func components(
