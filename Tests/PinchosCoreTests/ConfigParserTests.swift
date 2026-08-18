@@ -237,6 +237,47 @@ final class ConfigParserTests: XCTestCase {
         }
     }
 
+    func testDottedUnknownAssignmentUsesItsSourceLine() {
+        let toml = """
+        [item.clock]
+        type = "command"
+        run = "date"
+        unknown.nested = "value"
+        """
+
+        XCTAssertThrowsError(try ConfigParser.parse(toml)) { error in
+            let parseError = error as? ConfigParseError
+            XCTAssertTrue(parseError?.message.contains("item.clock.unknown: unknown key") == true)
+            XCTAssertEqual(parseError?.line, 4)
+        }
+    }
+
+    func testRejectsPresentNonTableRootItemWithSourceLine() {
+        let toml = "item = \"not-a-table\""
+
+        XCTAssertThrowsError(try ConfigParser.parse(toml)) { error in
+            let parseError = error as? ConfigParseError
+            XCTAssertTrue(parseError?.message.contains("item: type error, must be a table") == true)
+            XCTAssertEqual(parseError?.line, 1)
+        }
+    }
+
+    func testRejectsUnknownRootKeysWithSourceLine() {
+        let toml = """
+        unrelated = 1
+
+        [item.clock]
+        type = "command"
+        run = "date"
+        """
+
+        XCTAssertThrowsError(try ConfigParser.parse(toml)) { error in
+            let parseError = error as? ConfigParseError
+            XCTAssertTrue(parseError?.message.contains("root.unrelated: unknown key") == true)
+            XCTAssertEqual(parseError?.line, 1)
+        }
+    }
+
     func testRejectsUnknownActionKeysWithIndexAndActionSourceLine() {
         let toml = """
         [item.clock]
@@ -434,6 +475,7 @@ final class ConfigParserTests: XCTestCase {
     }
 
     func testSupportedSchemaEnumeratesEveryCurrentItemAndActionKey() {
+        XCTAssertEqual(ConfigParser.supportedRootKeys, ["item"])
         XCTAssertEqual(ConfigParser.supportedItemKeys, [
             "type",
             "run",

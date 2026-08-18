@@ -156,6 +156,35 @@ final class PinchosCLITests: XCTestCase {
         XCTAssertTrue(capture.stderr.contains("line 4"))
     }
 
+    func testIssue45RootSchemaErrorIsSharedAcrossValidateDoctorAndRun() async throws {
+        let root = try makeRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let configURL = root.appendingPathComponent("pinchos/pinchos.toml")
+        try FileManager.default.createDirectory(at: configURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try "item = \"not-a-table\"\n".write(to: configURL, atomically: true, encoding: .utf8)
+        let capture = CLIOutputCapture()
+        let cli = PinchosCLI(configPath: configURL.path, output: capture.output)
+
+        let validateCode = await cli.run(arguments: ["validate"])
+        XCTAssertEqual(validateCode, 3)
+        XCTAssertTrue(capture.stderr.contains("item: type error, must be a table"))
+        XCTAssertTrue(capture.stderr.contains("line 1"))
+
+        capture.stdout = ""
+        capture.stderr = ""
+        let doctorCode = await cli.run(arguments: ["doctor"])
+        XCTAssertEqual(doctorCode, 4)
+        XCTAssertTrue(capture.stdout.contains("item: type error, must be a table"))
+        XCTAssertTrue(capture.stdout.contains("line 1"))
+
+        capture.stdout = ""
+        capture.stderr = ""
+        let runCode = await cli.run(arguments: ["run", "clock"])
+        XCTAssertEqual(runCode, 3)
+        XCTAssertTrue(capture.stderr.contains("item: type error, must be a table"))
+        XCTAssertTrue(capture.stderr.contains("line 1"))
+    }
+
     func testValidateReportsShellWorkingDirectoryAndEnvironmentFailures() async throws {
         let root = try makeRoot()
         defer { try? FileManager.default.removeItem(at: root) }

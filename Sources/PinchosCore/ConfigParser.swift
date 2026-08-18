@@ -23,8 +23,10 @@ public enum ConfigParser {
     ]
 
     static let supportedActionKeys: Set<String> = ["title", "run", "refresh"]
+    static let supportedRootKeys: Set<String> = ["item"]
 
     private enum SourceLineKey: Hashable {
+        case rootField(String)
         case item(String)
         case section(item: String, path: String)
         case action(item: String, index: Int)
@@ -44,8 +46,23 @@ public enum ConfigParser {
             throw ConfigParseError(message: error.description, line: error.source.begin.line)
         }
 
-        guard let itemSection = table["item"]?.table else {
+        try validateUnknownKeys(
+            in: table,
+            allowedKeys: supportedRootKeys,
+            context: "root",
+            lineForKey: { sourceLines[.rootField($0)] }
+        )
+
+        guard let itemValue = table["item"] else {
             return PinchosConfig(items: [])
+        }
+        guard let itemSection = itemValue.table else {
+            throw typeError(
+                path: "item",
+                expected: "table",
+                value: itemValue,
+                line: sourceLines[.rootField("item")]
+            )
         }
 
         let items = try order.compactMap { name -> ItemConfig? in
@@ -114,6 +131,14 @@ public enum ConfigParser {
                 continue
             }
 
+            if let components = arrayHeaderComponents(in: line), let rootKey = components.first {
+                lines[.rootField(rootKey)] = lines[.rootField(rootKey)] ?? lineNumber
+                currentItem = nil
+                currentSection = nil
+                currentActionIndex = nil
+                continue
+            }
+
             if let components = headerComponents(in: line), components.count >= 2,
                components[0] == "item" {
                 let name = components[1]
@@ -127,22 +152,54 @@ public enum ConfigParser {
                 continue
             }
 
-            guard let currentItem, let equals = assignmentSeparator(in: line) else { continue }
+            if let components = headerComponents(in: line), let rootKey = components.first {
+                lines[.rootField(rootKey)] = lines[.rootField(rootKey)] ?? lineNumber
+                currentItem = nil
+                currentSection = nil
+                currentActionIndex = nil
+                continue
+            }
+
+            guard let equals = assignmentSeparator(in: line) else { continue }
             let rawKey = line[..<equals].trimmingCharacters(in: .whitespaces)
             let key = decodeAssignmentKey(String(rawKey))
             guard !key.isEmpty else { continue }
-            if currentSection == "action", let currentActionIndex {
-                lines[.field(item: currentItem, path: key, actionIndex: currentActionIndex)] = lineNumber
-            } else {
+            if let currentItem, currentSection == "action", let currentActionIndex {
+                for path in fieldPathPrefixes(key) {
+                    let sourceKey = SourceLineKey.field(
+                        item: currentItem,
+                        path: path,
+                        actionIndex: currentActionIndex
+                    )
+                    lines[sourceKey] = lines[sourceKey] ?? lineNumber
+                }
+            } else if let currentItem {
                 let path = [currentSection, key]
                     .compactMap { $0 }
                     .joined(separator: ".")
-                lines[.field(item: currentItem, path: path, actionIndex: nil)] = lineNumber
+                for path in fieldPathPrefixes(path) {
+                    let sourceKey = SourceLineKey.field(item: currentItem, path: path, actionIndex: nil)
+                    lines[sourceKey] = lines[sourceKey] ?? lineNumber
+                }
+            } else {
+                for path in fieldPathPrefixes(key) {
+                    lines[.rootField(path)] = lines[.rootField(path)] ?? lineNumber
+                }
             }
             multilineDelimiter = openMultilineDelimiter(in: String(line[line.index(after: equals)...]))
         }
 
         return lines
+    }
+
+    private static func fieldPathPrefixes(_ path: String) -> [String] {
+        var prefixes: [String] = []
+        var prefix = ""
+        for component in path.split(separator: ".", omittingEmptySubsequences: true) {
+            prefix = prefix.isEmpty ? String(component) : "\(prefix).\(component)"
+            prefixes.append(prefix)
+        }
+        return prefixes
     }
 
     private static func headerComponents(in line: String) -> [String]? {
