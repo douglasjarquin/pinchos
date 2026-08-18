@@ -222,6 +222,21 @@ final class ConfigParserTests: XCTestCase {
         }
     }
 
+    func testInlineActionArrayElementUsesParentAssignmentSourceLine() {
+        let toml = """
+        [item.clock]
+        type = "command"
+        run = "date"
+        action = ["not a table"]
+        """
+
+        XCTAssertThrowsError(try ConfigParser.parse(toml)) { error in
+            let parseError = error as? ConfigParseError
+            XCTAssertTrue(parseError?.message.contains("item.clock.action[0]: type error") == true)
+            XCTAssertEqual(parseError?.line, 4)
+        }
+    }
+
     func testRejectsUnknownActionKeysWithIndexAndActionSourceLine() {
         let toml = """
         [item.clock]

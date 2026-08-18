@@ -366,6 +366,7 @@ public enum ConfigParser {
     ) -> Int? {
         if let index {
             return sourceLines[.field(item: name, path: key, actionIndex: index)]
+                ?? sourceLines[.field(item: name, path: key, actionIndex: nil)]
                 ?? sourceLines[.action(item: name, index: index)]
                 ?? sourceLines[.section(item: name, path: "action")]
                 ?? sourceLines[.item(name)]
