@@ -298,7 +298,7 @@ public enum ConfigParser {
         )
         guard type == "command" else {
             throw ConfigParseError(
-                message: "item.\(name): unsupported type '\(type)' (only 'command' is supported)",
+                message: "item.\(name).type: unsupported value '\(type)' (only 'command' is supported)",
                 line: sourceLine(item: name, key: "type", sourceLines: sourceLines)
             )
         }
