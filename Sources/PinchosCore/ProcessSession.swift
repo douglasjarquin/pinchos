@@ -111,9 +111,13 @@ final class SupervisorProcessSession: ProcessSessionIdentity, @unchecked Sendabl
         let lifecycleLock = NSLock()
         self.lifecycleLock = lifecycleLock
         self.supervisorWaitTask = Task.detached {
-            var status: Int32 = 0
-            while waitpid(processGroupID, &status, 0) == -1, errno == EINTR {}
-            Self.publishSupervisorExit(state: state, lifecycleLock: lifecycleLock)
+            while !Self.reapSupervisorIfExited(
+                processGroupID: processGroupID,
+                state: state,
+                lifecycleLock: lifecycleLock
+            ) {
+                try? await Task.sleep(nanoseconds: 1_000_000)
+            }
         }
     }
 
@@ -224,10 +228,21 @@ final class SupervisorProcessSession: ProcessSessionIdentity, @unchecked Sendabl
         if fileDescriptor >= 0 { close(fileDescriptor) }
     }
 
-    private static func publishSupervisorExit(state: State, lifecycleLock: NSLock) {
+    private static func reapSupervisorIfExited(
+        processGroupID: pid_t,
+        state: State,
+        lifecycleLock: NSLock
+    ) -> Bool {
+        var status: Int32 = 0
         lifecycleLock.lock()
         defer { lifecycleLock.unlock() }
+        let result = waitpid(processGroupID, &status, WNOHANG)
+        let errorCode = errno
+        guard result == processGroupID || (result == -1 && errorCode != EINTR) else {
+            return false
+        }
         state.markExited()
+        return true
     }
 
 }
