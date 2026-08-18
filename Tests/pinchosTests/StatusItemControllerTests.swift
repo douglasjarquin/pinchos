@@ -381,4 +381,30 @@ final class StatusItemControllerTests: XCTestCase {
             "activate:alpha"
         ])
     }
+
+    func testInvalidReloadRetainsLastGoodItemsAndCorrectedReloadApplies() async {
+        let factory = FakeManagedItemFactory()
+        let controller = makeController(factory: factory)
+        addTeardownBlock { @MainActor in
+            await controller.shutdown()
+        }
+
+        await controller.apply(config: PinchosConfig(items: [item("alpha")]))
+        let lastGoodItem = factory.created[0]
+        factory.eventLog.clear()
+
+        await controller.showParseError(ConfigParseError(message: "item.alpha.intervall: unknown key", line: 4))
+
+        XCTAssertTrue(factory.created[0] === lastGoodItem)
+        XCTAssertTrue(factory.eventLog.events.isEmpty)
+
+        await controller.apply(config: PinchosConfig(items: [item("beta")]))
+
+        XCTAssertEqual(factory.created.map(\.config.name), ["alpha", "beta"])
+        XCTAssertEqual(factory.eventLog.events, [
+            "prepare-removal:alpha",
+            "commit-removal:alpha",
+            "activate:beta"
+        ])
+    }
 }

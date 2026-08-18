@@ -122,6 +122,40 @@ final class PinchosCLITests: XCTestCase {
         XCTAssertTrue(capture.stderr.contains("line 4"))
     }
 
+    func testIssue45SchemaErrorIsSharedAcrossValidateDoctorAndRun() async throws {
+        let root = try makeRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let configURL = root.appendingPathComponent("pinchos/pinchos.toml")
+        try FileManager.default.createDirectory(at: configURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try """
+        [item.clock]
+        type = "command"
+        run = "date"
+        intervall = "5s"
+        """.write(to: configURL, atomically: true, encoding: .utf8)
+        let capture = CLIOutputCapture()
+        let cli = PinchosCLI(configPath: configURL.path, output: capture.output)
+
+        let validateCode = await cli.run(arguments: ["validate"])
+        XCTAssertEqual(validateCode, 3)
+        XCTAssertTrue(capture.stderr.contains("item.clock.intervall"))
+        XCTAssertTrue(capture.stderr.contains("line 4"))
+
+        capture.stdout = ""
+        capture.stderr = ""
+        let doctorCode = await cli.run(arguments: ["doctor"])
+        XCTAssertEqual(doctorCode, 4)
+        XCTAssertTrue(capture.stdout.contains("item.clock.intervall"))
+        XCTAssertTrue(capture.stdout.contains("line 4"))
+
+        capture.stdout = ""
+        capture.stderr = ""
+        let runCode = await cli.run(arguments: ["run", "clock"])
+        XCTAssertEqual(runCode, 3)
+        XCTAssertTrue(capture.stderr.contains("item.clock.intervall"))
+        XCTAssertTrue(capture.stderr.contains("line 4"))
+    }
+
     func testValidateReportsShellWorkingDirectoryAndEnvironmentFailures() async throws {
         let root = try makeRoot()
         defer { try? FileManager.default.removeItem(at: root) }
