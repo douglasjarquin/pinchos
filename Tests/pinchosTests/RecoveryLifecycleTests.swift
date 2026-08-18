@@ -371,6 +371,56 @@ final class RecoveryLifecycleTests: XCTestCase {
     }
 
     @MainActor
+    func testItemShutdownCancelsMainClickAndDeclarativeActionRunners() async throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("pinchos-shutdown-runners-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let mainPIDURL = root.appendingPathComponent("main.pid")
+        let clickPIDURL = root.appendingPathComponent("click.pid")
+        let actionPIDURL = root.appendingPathComponent("action.pid")
+        let command: (URL) -> String = { marker in
+            "(trap '' TERM INT; while :; do sleep 1; done) & child=$!; printf '%s' \"$child\" > '\(marker.path)'; wait \"$child\""
+        }
+        let item = makeHeadlessItem(
+            config: ItemConfig(
+                name: "shutdown-runners",
+                run: command(mainPIDURL),
+                interval: .manual,
+                click: command(clickPIDURL),
+                actions: [ItemAction(title: "Run action", kind: .command(command(actionPIDURL)))]
+            ),
+            initiallyVisible: false
+        )
+        addTeardownBlock { @MainActor in
+            await item.tearDown()
+            try? FileManager.default.removeItem(at: root)
+        }
+
+        item.refreshNow()
+        item.processClick(eventType: .leftMouseUp)
+        item.invokeAction(at: 0)
+
+        let mainPID = try await waitForPID(at: mainPIDURL)
+        let clickPID = try await waitForPID(at: clickPIDURL)
+        let actionPID = try await waitForPID(at: actionPIDURL)
+        try await waitForRunning(item)
+        try await waitForActionRunning(item, at: 0)
+
+        await item.tearDown()
+
+        let mainGone = await waitUntilGone(mainPID)
+        let clickGone = await waitUntilGone(clickPID)
+        let actionGone = await waitUntilGone(actionPID)
+        let runnerSnapshot = await item.runnerSnapshot()
+        let actionSnapshot = await item.actionSnapshot(at: 0)
+        XCTAssertTrue(mainGone, "item shutdown left main descendant \(mainPID) alive")
+        XCTAssertTrue(clickGone, "item shutdown left click descendant \(clickPID) alive")
+        XCTAssertTrue(actionGone, "item shutdown left action descendant \(actionPID) alive")
+        XCTAssertFalse(runnerSnapshot.isRunning)
+        XCTAssertFalse(actionSnapshot?.isRunning ?? true)
+    }
+
+    @MainActor
     func testStaleScheduleAfterConfigReloadUsesLastSuccessfulUpdate() async throws {
         let item = makeHeadlessItem(
             config: ItemConfig(

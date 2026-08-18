@@ -1,4 +1,6 @@
 import AppKit
+import Darwin
+import Dispatch
 import PinchosCore
 
 @MainActor
@@ -11,8 +13,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var watcher: ConfigWatcher?
     private let configPath = ConfigLocation.resolve()
     private var isTerminating = false
+    private lazy var shutdownCoordinator = ShutdownCoordinator(
+        signalNumbers: [SIGTERM, SIGINT],
+        cleanup: { [weak self] in
+            guard let self else { return }
+            self.watcher?.stop()
+            self.watcher = nil
+            await self.controller.shutdown()
+        },
+        forcedExit: { code in Darwin.exit(code) },
+        autoFinishOnCleanup: true,
+        onFinished: { reason in
+            switch reason {
+            case .normalQuit:
+                NSApp.reply(toApplicationShouldTerminate: true)
+            case .signal, .cliCompletion:
+                NSApp.terminate(nil)
+            }
+        }
+    )
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        shutdownCoordinator.start()
         NSApp.setActivationPolicy(.accessory)
         Task { @MainActor [weak self] in
             await self?.loadAndApply()
@@ -29,7 +51,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     @MainActor
     private func loadAndApply() async {
-        guard !isTerminating else { return }
+        guard !isTerminating, !shutdownCoordinator.isShutdownRequested else { return }
         do {
             let text = try String(contentsOfFile: configPath, encoding: .utf8)
             let config = try ConfigParser.parse(text, relativeTo: URL(fileURLWithPath: configPath))
@@ -44,15 +66,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        if shutdownCoordinator.isFinished {
+            return .terminateNow
+        }
         guard !isTerminating else { return .terminateLater }
         isTerminating = true
-        watcher?.stop()
-        watcher = nil
-        Task { @MainActor [weak self] in
-            guard let self else { return }
-            await controller.shutdown()
-            NSApp.reply(toApplicationShouldTerminate: true)
-        }
+        shutdownCoordinator.requestShutdown(reason: .normalQuit)
         return .terminateLater
     }
 }

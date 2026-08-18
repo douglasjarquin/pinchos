@@ -57,17 +57,20 @@ struct PinchosCLI {
     private let fileManager: FileManager
     private let output: CLIOutput
     private let opener: (URL) -> Bool
+    private let shutdownCoordinator: ShutdownCoordinator?
 
     init(
         configPath: String = ConfigLocation.resolve(),
         fileManager: FileManager = .default,
         output: CLIOutput = CLIOutput(),
-        opener: @escaping (URL) -> Bool = { NSWorkspace.shared.open($0) }
+        opener: @escaping (URL) -> Bool = { NSWorkspace.shared.open($0) },
+        shutdownCoordinator: ShutdownCoordinator? = nil
     ) {
         self.configPath = configPath
         self.fileManager = fileManager
         self.output = output
         self.opener = opener
+        self.shutdownCoordinator = shutdownCoordinator
     }
 
     func run(arguments: [String]) async -> Int32 {
@@ -208,6 +211,10 @@ struct PinchosCLI {
             throw CLIError.config("item '\(name)' is not configured in \(configPath)")
         }
 
+        guard shutdownCoordinator?.isShutdownRequested != true else {
+            return shutdownCoordinator?.terminationExitCode ?? CLIExitCode.execution
+        }
+
         let runner = CommandRunner(
             command: item.run,
             timeout: item.timeout,
@@ -216,7 +223,14 @@ struct PinchosCLI {
             workingDirectory: item.workingDirectory,
             environment: item.environment
         )
-        guard case .completed(let execution) = await runner.runIfIdle() else {
+        shutdownCoordinator?.setCleanup {
+            await runner.cancelActive()
+        }
+        let outcome = await runner.runIfIdle()
+        if let terminationExitCode = shutdownCoordinator?.terminationExitCode {
+            return terminationExitCode
+        }
+        guard case .completed(let execution) = outcome else {
             output.stderr("pinchos run \(name): command was skipped because another execution is active\n")
             return CLIExitCode.execution
         }
