@@ -386,28 +386,12 @@ struct PinchosCLI {
                 }
 
                 if let command = commandName(from: item.run) {
-                    let commandRunner = CommandRunner(
-                        command: "command -v \(shellQuote(command))",
-                        timeout: min(item.timeout, 2),
-                        maxOutputBytes: 4096,
-                        shell: item.shell,
-                        workingDirectory: item.workingDirectory,
-                        environment: item.environment
-                    )
-                    guard runnerRegistry.register(commandRunner) else {
-                        return shutdownCoordinator?.terminationExitCode ?? CLIExitCode.execution
-                    }
-                    let outcome = await commandRunner.runIfIdle()
-                    await commandRunner.cancelActive()
-                    runnerRegistry.unregister(commandRunner)
-                    if let terminationExitCode = shutdownCoordinator?.terminationExitCode {
-                        return terminationExitCode
-                    }
-                    if case .completed(let execution) = outcome,
-                        execution.terminalReason == .exited(code: 0),
-                        !lastTrimmedLine(of: execution.stdout).isEmpty
-                    {
-                        reportSuccess("item.\(item.name).run", "command '\(command)' is available")
+                    if let executablePath = executablePath(
+                        for: command,
+                        item: item,
+                        processEnvironment: processEnvironment
+                    ) {
+                        reportSuccess("item.\(item.name).run", executablePath)
                     } else {
                         reportFailure("item.\(item.name).run", "command '\(command)' is unavailable in the configured shell environment")
                         problemCount += 1
@@ -450,6 +434,35 @@ struct PinchosCLI {
         }
         output.stdout("Doctor found \(problemCount) problem\(problemCount == 1 ? "" : "s").\n")
         return CLIExitCode.diagnostics
+    }
+
+    private func executablePath(
+        for command: String,
+        item: ItemConfig,
+        processEnvironment: [String: String]
+    ) -> String? {
+        if command.contains("/") {
+            let path: String
+            if command.hasPrefix("/") {
+                path = command
+            } else {
+                let base = item.workingDirectory ?? fileManager.currentDirectoryPath
+                path = URL(fileURLWithPath: base).appendingPathComponent(command).path
+            }
+            return fileManager.isExecutableFile(atPath: path) ? path : nil
+        }
+
+        let pathValue = item.environment["PATH"] ?? processEnvironment["PATH"] ?? ""
+        for directory in pathValue.split(separator: ":", omittingEmptySubsequences: false) {
+            let directoryPath = directory.isEmpty
+                ? fileManager.currentDirectoryPath
+                : String(directory)
+            let path = URL(fileURLWithPath: directoryPath).appendingPathComponent(command).path
+            if fileManager.isExecutableFile(atPath: path) {
+                return path
+            }
+        }
+        return nil
     }
 
     private var configURL: URL {
@@ -588,10 +601,6 @@ struct PinchosCLI {
         return name.dropFirst().allSatisfy { byte in
             byte == 95 || byte >= 48 && byte <= 57 || byte >= 65 && byte <= 90 || byte >= 97 && byte <= 122
         }
-    }
-
-    private func shellQuote(_ value: String) -> String {
-        "'" + value.replacingOccurrences(of: "'", with: "'\\''") + "'"
     }
 
     private func normalizedExitCode(_ code: Int32) -> Int32 {

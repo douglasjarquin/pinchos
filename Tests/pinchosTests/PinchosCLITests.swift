@@ -224,6 +224,38 @@ final class PinchosCLITests: XCTestCase {
         XCTAssertTrue(capture.stdout.contains("launch at login"))
     }
 
+    func testDoctorDoesNotExecuteConfiguredShellOrEnvironment() async throws {
+        let root = try makeRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let configURL = root.appendingPathComponent("pinchos/pinchos.toml")
+        let shellURL = root.appendingPathComponent("doctor-shell")
+        let markerURL = root.appendingPathComponent("doctor-shell-ran")
+        try FileManager.default.createDirectory(at: configURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try """
+        #!/bin/sh
+        touch '\(markerURL.path)'
+        exec /bin/sh "$@"
+        """.write(to: shellURL, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: shellURL.path)
+        try """
+        [item.safe]
+        type = "command"
+        run = "true"
+        shell = ["\(shellURL.path)", "-lc"]
+
+        [item.safe.env]
+        PINCHOS_DOCTOR_PROBE = "configured"
+        """.write(to: configURL, atomically: true, encoding: .utf8)
+        let capture = CLIOutputCapture()
+        let cli = PinchosCLI(configPath: configURL.path, output: capture.output)
+
+        let doctorCode = await cli.run(arguments: ["doctor"])
+
+        XCTAssertEqual(doctorCode, 0)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: markerURL.path))
+        XCTAssertTrue(capture.stdout.contains("[PASS] item.safe.run"))
+    }
+
     func testDoctorDoesNotClaimCompoundRunIsAvailable() async throws {
         let root = try makeRoot()
         defer { try? FileManager.default.removeItem(at: root) }
