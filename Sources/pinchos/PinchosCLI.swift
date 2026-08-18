@@ -20,6 +20,30 @@ struct CLIOutput {
     }
 }
 
+@MainActor
+final class CLICommandRunnerRegistry {
+    private var runners: [ObjectIdentifier: CommandRunner] = [:]
+    private var shutdownRequested = false
+
+    func register(_ runner: CommandRunner) -> Bool {
+        guard !shutdownRequested else { return false }
+        runners[ObjectIdentifier(runner)] = runner
+        return true
+    }
+
+    func unregister(_ runner: CommandRunner) {
+        runners.removeValue(forKey: ObjectIdentifier(runner))
+    }
+
+    func cancelAll() async {
+        shutdownRequested = true
+        let runners = Array(runners.values)
+        for runner in runners {
+            await runner.cancelForShutdown()
+        }
+    }
+}
+
 private enum CLIExitCode {
     static let usage: Int32 = 2
     static let config: Int32 = 3
@@ -57,17 +81,23 @@ struct PinchosCLI {
     private let fileManager: FileManager
     private let output: CLIOutput
     private let opener: (URL) -> Bool
+    private let shutdownCoordinator: ShutdownCoordinator?
+    private let runnerRegistry: CLICommandRunnerRegistry
 
     init(
         configPath: String = ConfigLocation.resolve(),
         fileManager: FileManager = .default,
         output: CLIOutput = CLIOutput(),
-        opener: @escaping (URL) -> Bool = { NSWorkspace.shared.open($0) }
+        opener: @escaping (URL) -> Bool = { NSWorkspace.shared.open($0) },
+        shutdownCoordinator: ShutdownCoordinator? = nil,
+        runnerRegistry: CLICommandRunnerRegistry? = nil
     ) {
         self.configPath = configPath
         self.fileManager = fileManager
         self.output = output
         self.opener = opener
+        self.shutdownCoordinator = shutdownCoordinator
+        self.runnerRegistry = runnerRegistry ?? CLICommandRunnerRegistry()
     }
 
     func run(arguments: [String]) async -> Int32 {
@@ -208,6 +238,10 @@ struct PinchosCLI {
             throw CLIError.config("item '\(name)' is not configured in \(configPath)")
         }
 
+        guard shutdownCoordinator?.isShutdownRequested != true else {
+            return shutdownCoordinator?.terminationExitCode ?? CLIExitCode.execution
+        }
+
         let runner = CommandRunner(
             command: item.run,
             timeout: item.timeout,
@@ -216,7 +250,16 @@ struct PinchosCLI {
             workingDirectory: item.workingDirectory,
             environment: item.environment
         )
-        guard case .completed(let execution) = await runner.runIfIdle() else {
+        guard runnerRegistry.register(runner) else {
+            return shutdownCoordinator?.terminationExitCode ?? CLIExitCode.execution
+        }
+        defer { runnerRegistry.unregister(runner) }
+        let outcome = await runner.runIfIdle()
+        await runner.cancelActive()
+        if let terminationExitCode = shutdownCoordinator?.terminationExitCode {
+            return terminationExitCode
+        }
+        guard case .completed(let execution) = outcome else {
             output.stderr("pinchos run \(name): command was skipped because another execution is active\n")
             return CLIExitCode.execution
         }
@@ -351,7 +394,16 @@ struct PinchosCLI {
                         workingDirectory: item.workingDirectory,
                         environment: item.environment
                     )
-                    if case .completed(let execution) = await commandRunner.runIfIdle(),
+                    guard runnerRegistry.register(commandRunner) else {
+                        return shutdownCoordinator?.terminationExitCode ?? CLIExitCode.execution
+                    }
+                    let outcome = await commandRunner.runIfIdle()
+                    await commandRunner.cancelActive()
+                    runnerRegistry.unregister(commandRunner)
+                    if let terminationExitCode = shutdownCoordinator?.terminationExitCode {
+                        return terminationExitCode
+                    }
+                    if case .completed(let execution) = outcome,
                         execution.terminalReason == .exited(code: 0),
                         !lastTrimmedLine(of: execution.stdout).isEmpty
                     {

@@ -1,11 +1,33 @@
 import AppKit
 import Darwin
+import Dispatch
+import PinchosCore
 
 let arguments = Array(CommandLine.arguments.dropFirst())
 if !arguments.isEmpty {
-    Task {
-        let exitCode = await PinchosCLI().run(arguments: arguments)
-        Darwin.exit(exitCode)
+    let runnerRegistry = MainActor.assumeIsolated {
+        CLICommandRunnerRegistry()
+    }
+    let shutdownCoordinator = MainActor.assumeIsolated {
+        let coordinator = ShutdownCoordinator(
+            signalNumbers: [SIGTERM, SIGINT],
+            cleanup: {
+                await runnerRegistry.cancelAll()
+            },
+            forcedExit: { code in Darwin.exit(code) },
+            autoFinishOnCleanup: false
+        )
+        coordinator.start()
+        return coordinator
+    }
+    Task { @MainActor in
+        let exitCode = await PinchosCLI(
+            shutdownCoordinator: shutdownCoordinator,
+            runnerRegistry: runnerRegistry
+        ).run(arguments: arguments)
+        let finalExitCode = await shutdownCoordinator.finish(exitCode: exitCode)
+        shutdownCoordinator.stop()
+        Darwin.exit(finalExitCode)
     }
     dispatchMain()
 } else {

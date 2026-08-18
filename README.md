@@ -35,6 +35,26 @@ The binary lands at `.build/release/pinchos`. Run it directly:
 
 It has no Dock icon and no main window (`NSApp.setActivationPolicy(.accessory)`) — it lives entirely in the menu bar.
 Quit it from any item's right-click menu, or `killall pinchos`.
+`killall pinchos` sends SIGTERM to each matching Pinchos process, and each process runs the same bounded cleanup used by the native Quit action.
+
+### Shutdown and interruption
+
+Pinchos uses one single-flight shutdown coordinator for native Quit, SIGTERM, SIGINT, and CLI completion.
+The first termination request wins, and repeated or mixed requests do not start a second cleanup sequence.
+
+SIGTERM is handled in both GUI and CLI modes.
+SIGINT is handled by `pinchos run <item>` and by a GUI process launched directly from a terminal; pressing Control-C in that terminal requests the same graceful GUI cleanup as SIGTERM.
+A GUI process launched with `open` has no controlling terminal, so Control-C in the launching shell does not target it.
+
+For `pinchos run <item>`, Control-C returns 130 and SIGTERM returns 143 after the active runner and every owned same-group descendant have been cleaned up.
+Without a termination signal, ordinary command exit codes remain unchanged.
+Managed process groups apply the existing SIGTERM-then-SIGKILL cancellation policy, so a command that ignores SIGTERM cannot outlive its Pinchos owner.
+
+Cleanup has a finite five-second bound.
+If cleanup cannot settle within that bound, Pinchos uses its deliberate forced-exit escape hatch with status 125; this escape hatch is owned by the coordinator and cannot overlap another shutdown sequence.
+
+The signal integration uses `DispatchSourceSignal` for safe handoff.
+The raw POSIX signal disposition does no async work, actor calls, locking, or allocation; the DispatchSource event handler only posts the signal number to the main actor, where the bounded cleanup state machine runs.
 
 ### Launch at login
 
@@ -190,7 +210,7 @@ See [`example/pinchos.toml`](example/pinchos.toml) for a full working config wit
 - `Sources/PinchosCore` — UI-free library: TOML parsing (via TOMLKit), duration and byte-size parsing, `{output}` templating, the config-diff engine, and bounded process-group command execution with concurrent stdout/stderr draining.
 - Each command session has a supervisor process as its process-group leader.
   The supervisor remains alive until its descendants have exited or cancellation terminates the group, so every signal is made through the live session owner rather than a reusable numeric process-group ID.
-- `Sources/pinchos` — the AppKit executable: one `NSStatusItem` and one per-item scheduled `DispatchSourceTimer` when configured, plus manual refresh actions, declarative per-item menu actions, menu and lifecycle projection of `PinchosCore` runner snapshots, and a `ConfigWatcher` (`DispatchSourceFileSystemObject`) for live reload.
+- `Sources/pinchos` — the AppKit executable: one `NSStatusItem` and one per-item scheduled `DispatchSourceTimer` when configured, plus manual refresh actions, declarative per-item menu actions, menu and lifecycle projection of `PinchosCore` runner snapshots, a shared `ShutdownCoordinator` for GUI and CLI lifecycle convergence, and a `ConfigWatcher` (`DispatchSourceFileSystemObject`) for live reload.
 
 ### Why TOMLKit
 

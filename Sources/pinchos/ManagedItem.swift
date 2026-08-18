@@ -524,7 +524,14 @@ final class ManagedItem: ManagedItemLifecycle {
             pendingClickInvocations += 1
             Task { @MainActor [weak self, clickRunner] in
                 defer { self?.finishClickInvocation() }
-                guard let self, self.isActive else { return }
+                guard let self,
+                    self.isActive,
+                    !self.isPreparingUpdate,
+                    !self.isPreparingRemoval,
+                    self.clickRunner === clickRunner
+                else {
+                    return
+                }
                 _ = await clickRunner.runIfIdle()
             }
         } else if config.refreshOnClick {
