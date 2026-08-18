@@ -191,12 +191,14 @@ public enum ConfigParser {
         var component = ""
         var quote: Character?
         var escaped = false
+        var basicQuotedComponent = false
 
         func appendComponent() {
             let value = component.trimmingCharacters(in: .whitespaces)
             guard !value.isEmpty else { return }
-            components.append(value)
+            components.append(basicQuotedComponent ? decodeBasicKey(value) : value)
             component.removeAll(keepingCapacity: true)
+            basicQuotedComponent = false
         }
 
         let start = line.index(line.startIndex, offsetBy: openingLength)
@@ -204,6 +206,7 @@ public enum ConfigParser {
         for character in line[start..<end] {
             if let activeQuote = quote {
                 if activeQuote == "\"", escaped {
+                    component.append("\\")
                     component.append(character)
                     escaped = false
                 } else if activeQuote == "\"", character == "\\" {
@@ -218,6 +221,7 @@ public enum ConfigParser {
 
             if character == "\"" || character == "'" {
                 quote = character
+                basicQuotedComponent = character == "\""
             } else if character == "." {
                 appendComponent()
             } else {
@@ -228,6 +232,49 @@ public enum ConfigParser {
         guard quote == nil, !escaped else { return nil }
         appendComponent()
         return components
+    }
+
+    private static func decodeBasicKey(_ value: String) -> String {
+        let characters = Array(value)
+        var decoded = String()
+        var index = 0
+
+        while index < characters.count {
+            let character = characters[index]
+            guard character == "\\" else {
+                decoded.append(character)
+                index += 1
+                continue
+            }
+
+            guard index + 1 < characters.count else { return value }
+            let escape = characters[index + 1]
+            switch escape {
+            case "b": decoded.append("\u{8}")
+            case "t": decoded.append("\t")
+            case "n": decoded.append("\n")
+            case "f": decoded.append("\u{C}")
+            case "r": decoded.append("\r")
+            case "\"": decoded.append("\"")
+            case "\\": decoded.append("\\")
+            case "u", "U":
+                let digitCount = escape == "u" ? 4 : 8
+                let firstDigit = index + 2
+                let lastDigit = firstDigit + digitCount
+                guard lastDigit <= characters.count else { return value }
+                let hex = String(characters[firstDigit..<lastDigit])
+                guard let scalarValue = UInt32(hex, radix: 16),
+                      let scalar = UnicodeScalar(scalarValue) else { return value }
+                decoded.unicodeScalars.append(scalar)
+                index = lastDigit
+                continue
+            default:
+                return value
+            }
+            index += 2
+        }
+
+        return decoded
     }
 
     private static func assignmentSeparator(in line: String) -> String.Index? {

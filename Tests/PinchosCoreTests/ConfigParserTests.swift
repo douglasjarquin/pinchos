@@ -140,6 +140,37 @@ final class ConfigParserTests: XCTestCase {
         XCTAssertEqual(config.items.map(\.name), ["quoted#name"])
     }
 
+    func testPreservesEscapedQuotedItemHeaderName() throws {
+        let toml = #"""
+        [item."quoted\u002Ename"]
+        type = "command"
+        run = "date"
+        """#
+
+        let config = try ConfigParser.parse(toml)
+
+        XCTAssertEqual(config.items.map(\.name), ["quoted.name"])
+    }
+
+    func testPreservesEscapedQuotedItemHeaderNameForActionDiagnostics() {
+        let toml = #"""
+        [item."quoted\u002Ename"]
+        type = "command"
+        run = "date"
+
+        [[item."quoted\u002Ename".action]]
+        title = "Run"
+        run = "echo hi"
+        unknown = true
+        """#
+
+        XCTAssertThrowsError(try ConfigParser.parse(toml)) { error in
+            let parseError = error as? ConfigParseError
+            XCTAssertTrue(parseError?.message.contains("item.quoted.name.action[0].unknown: unknown key") == true)
+            XCTAssertEqual(parseError?.line, 8)
+        }
+    }
+
     func testRejectsUnknownActionKeysWithIndexAndActionSourceLine() {
         let toml = """
         [item.clock]
