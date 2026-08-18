@@ -237,6 +237,21 @@ final class ConfigParserTests: XCTestCase {
         }
     }
 
+    func testInlineActionTableWrongRunUsesParentAssignmentSourceLine() {
+        let toml = """
+        [item.clock]
+        type = "command"
+        run = "date"
+        action = [{ title = "Bad", run = 42 }]
+        """
+
+        XCTAssertThrowsError(try ConfigParser.parse(toml)) { error in
+            let parseError = error as? ConfigParseError
+            XCTAssertTrue(parseError?.message.contains("item.clock.action[0].run: type error") == true)
+            XCTAssertEqual(parseError?.line, 4)
+        }
+    }
+
     func testDottedUnknownAssignmentUsesItsSourceLine() {
         let toml = """
         [item.clock]
