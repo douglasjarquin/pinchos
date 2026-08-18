@@ -3,6 +3,14 @@ import Foundation
 import XCTest
 
 final class SignalIntegrationTests: XCTestCase {
+    private struct OwnedProcess: Hashable {
+        let pid: pid_t
+        let parentPID: pid_t
+        let groupID: pid_t
+        let startTime: String
+        let command: String
+    }
+
     func testSIGINTCancelsRunAndRemovesOwnedDescendants() throws {
         try runSignalScenario(signal: SIGINT, expectedExitCode: 130)
     }
@@ -19,13 +27,14 @@ final class SignalIntegrationTests: XCTestCase {
         let markerURL = root.appendingPathComponent("child.pid")
         try FileManager.default.createDirectory(at: configDirectory, withIntermediateDirectories: true)
         var process: Process?
+        var ownedProcesses = Set<OwnedProcess>()
         var ownedPIDs = Set<pid_t>()
         defer {
             if let process, process.isRunning {
                 process.terminate()
                 process.waitUntilExit()
             }
-            cleanupProcesses(pids: ownedPIDs)
+            cleanupProcesses(processes: ownedProcesses)
             try? FileManager.default.removeItem(at: root)
         }
 
@@ -51,8 +60,15 @@ final class SignalIntegrationTests: XCTestCase {
         let childPID = try waitForPID(at: markerURL)
         XCTAssertEqual(kill(childPID, 0), 0, "GUI marker child must exist before signal delivery")
         ownedPIDs.insert(childPID)
+        if let childProcess = processIdentity(for: childPID) {
+            ownedProcesses.insert(childProcess)
+        }
         let groupID = processGroupID(for: childPID)
-        ownedPIDs.formUnion(groupID.map(processIDs(in:)) ?? [])
+        if let groupID {
+            let groupProcesses = processIdentities(in: groupID)
+            ownedProcesses.formUnion(groupProcesses)
+            ownedPIDs.formUnion(groupProcesses.map(\.pid))
+        }
         XCTAssertTrue(ownedPIDs.contains(childPID), "GUI marker child must be in the owned process group")
         XCTAssertEqual(kill(launchedProcess.processIdentifier, SIGTERM), 0)
         launchedProcess.waitUntilExit()
@@ -121,13 +137,14 @@ final class SignalIntegrationTests: XCTestCase {
         let markerURL = root.appendingPathComponent("child.pid")
         try FileManager.default.createDirectory(at: configDirectory, withIntermediateDirectories: true)
         var process: Process?
+        var ownedProcesses = Set<OwnedProcess>()
         var ownedPIDs = Set<pid_t>()
         defer {
             if let process, process.isRunning {
                 process.terminate()
                 process.waitUntilExit()
             }
-            cleanupProcesses(pids: ownedPIDs)
+            cleanupProcesses(processes: ownedProcesses)
             try? FileManager.default.removeItem(at: root)
         }
 
@@ -152,8 +169,15 @@ final class SignalIntegrationTests: XCTestCase {
         let childPID = try waitForPID(at: markerURL)
         XCTAssertEqual(kill(childPID, 0), 0, "marker child must exist before signal delivery")
         ownedPIDs.insert(childPID)
+        if let childProcess = processIdentity(for: childPID) {
+            ownedProcesses.insert(childProcess)
+        }
         let groupID = processGroupID(for: childPID)
-        ownedPIDs.formUnion(groupID.map(processIDs(in:)) ?? [])
+        if let groupID {
+            let groupProcesses = processIdentities(in: groupID)
+            ownedProcesses.formUnion(groupProcesses)
+            ownedPIDs.formUnion(groupProcesses.map(\.pid))
+        }
         XCTAssertTrue(ownedPIDs.contains(childPID), "marker child must be in the owned process group")
         let signalStartedAt = Date()
         XCTAssertEqual(kill(launchedProcess.processIdentifier, signal), 0)
@@ -230,12 +254,13 @@ final class SignalIntegrationTests: XCTestCase {
         return processIDs(in: group).isEmpty
     }
 
-    private func cleanupProcesses(pids: Set<pid_t>) {
-        for pid in pids {
-            _ = kill(pid, SIGKILL)
+    private func cleanupProcesses(processes: Set<OwnedProcess>) {
+        let killableProcesses = processes.filter { processIdentity(for: $0.pid) == $0 }
+        for process in killableProcesses {
+            _ = kill(process.pid, SIGKILL)
         }
-        for pid in pids {
-            _ = waitUntilGone(pid)
+        for process in killableProcesses {
+            _ = waitUntilGone(process.pid)
         }
     }
 
@@ -245,12 +270,39 @@ final class SignalIntegrationTests: XCTestCase {
     }
 
     private func processIDs(in group: pid_t) -> [pid_t] {
-        let output = runProcess(arguments: ["-axo", "pid=,pgid="]) ?? ""
-        return output.split(whereSeparator: \.isNewline).compactMap { line in
-            let fields = line.split(whereSeparator: \.isWhitespace)
-            guard fields.count == 2, fields[1] == Substring(String(group)) else { return nil }
-            return pid_t(fields[0])
+        processIdentities(in: group).map(\.pid)
+    }
+
+    private func processIdentity(for pid: pid_t) -> OwnedProcess? {
+        guard let output = runProcess(arguments: ["-p", String(pid), "-o", "pid=,ppid=,pgid=,lstart=,comm="]) else {
+            return nil
         }
+        return output.split(whereSeparator: \.isNewline).compactMap(parseProcessIdentity).first
+    }
+
+    private func processIdentities(in group: pid_t) -> [OwnedProcess] {
+        let output = runProcess(arguments: ["-axo", "pid=,ppid=,pgid=,lstart=,comm="]) ?? ""
+        return output.split(whereSeparator: \.isNewline).compactMap(parseProcessIdentity).filter {
+            $0.groupID == group
+        }
+    }
+
+    private func parseProcessIdentity(_ line: Substring) -> OwnedProcess? {
+        let fields = line.split(whereSeparator: \.isWhitespace)
+        guard fields.count >= 9,
+            let pid = pid_t(fields[0]),
+            let parentPID = pid_t(fields[1]),
+            let groupID = pid_t(fields[2])
+        else {
+            return nil
+        }
+        return OwnedProcess(
+            pid: pid,
+            parentPID: parentPID,
+            groupID: groupID,
+            startTime: fields[3...7].joined(separator: " "),
+            command: fields.dropFirst(8).joined(separator: " ")
+        )
     }
 
     private func runProcess(arguments: [String]) -> String? {
@@ -262,8 +314,9 @@ final class SignalIntegrationTests: XCTestCase {
         process.standardError = FileHandle.nullDevice
         do {
             try process.run()
+            let data = output.fileHandleForReading.readDataToEndOfFile()
             process.waitUntilExit()
-            return String(data: output.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8)
+            return String(data: data, encoding: .utf8)
         } catch {
             return nil
         }
