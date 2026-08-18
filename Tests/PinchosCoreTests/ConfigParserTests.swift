@@ -267,6 +267,38 @@ final class ConfigParserTests: XCTestCase {
         }
     }
 
+    func testQuotedDottedEnvironmentAssignmentUsesItsSourceLine() {
+        let toml = """
+        [item.clock]
+        type = "command"
+        run = "date"
+        env."BAD.NAME" = "value"
+        """
+
+        XCTAssertThrowsError(try ConfigParser.parse(toml)) { error in
+            let parseError = error as? ConfigParseError
+            XCTAssertTrue(parseError?.message.contains("item.clock.env.BAD.NAME: invalid environment key") == true)
+            XCTAssertEqual(parseError?.line, 4)
+        }
+    }
+
+    func testQuotedDottedEnvironmentTableKeyUsesItsSourceLine() {
+        let toml = """
+        [item.clock]
+        type = "command"
+        run = "date"
+
+        [item.clock.env]
+        "BAD.NAME" = "value"
+        """
+
+        XCTAssertThrowsError(try ConfigParser.parse(toml)) { error in
+            let parseError = error as? ConfigParseError
+            XCTAssertTrue(parseError?.message.contains("item.clock.env.BAD.NAME: invalid environment key") == true)
+            XCTAssertEqual(parseError?.line, 6)
+        }
+    }
+
     func testRejectsPresentNonTableRootItemWithSourceLine() {
         let toml = "item = \"not-a-table\""
 

@@ -162,10 +162,10 @@ public enum ConfigParser {
 
             guard let equals = assignmentSeparator(in: line) else { continue }
             let rawKey = line[..<equals].trimmingCharacters(in: .whitespaces)
-            let key = decodeAssignmentKey(String(rawKey))
-            guard !key.isEmpty else { continue }
+            let keyComponents = assignmentKeyComponents(String(rawKey))
+            guard !keyComponents.isEmpty else { continue }
             if let currentItem, currentSection == "action", let currentActionIndex {
-                for path in fieldPathPrefixes(key) {
+                for path in fieldPathPrefixes(keyComponents) {
                     let sourceKey = SourceLineKey.field(
                         item: currentItem,
                         path: path,
@@ -174,15 +174,13 @@ public enum ConfigParser {
                     lines[sourceKey] = lines[sourceKey] ?? lineNumber
                 }
             } else if let currentItem {
-                let path = [currentSection, key]
-                    .compactMap { $0 }
-                    .joined(separator: ".")
-                for path in fieldPathPrefixes(path) {
+                let pathComponents = (currentSection?.split(separator: ".").map(String.init) ?? []) + keyComponents
+                for path in fieldPathPrefixes(pathComponents) {
                     let sourceKey = SourceLineKey.field(item: currentItem, path: path, actionIndex: nil)
                     lines[sourceKey] = lines[sourceKey] ?? lineNumber
                 }
             } else {
-                for path in fieldPathPrefixes(key) {
+                for path in fieldPathPrefixes(keyComponents) {
                     lines[.rootField(path)] = lines[.rootField(path)] ?? lineNumber
                 }
             }
@@ -192,11 +190,11 @@ public enum ConfigParser {
         return lines
     }
 
-    private static func fieldPathPrefixes(_ path: String) -> [String] {
+    private static func fieldPathPrefixes(_ components: [String]) -> [String] {
         var prefixes: [String] = []
         var prefix = ""
-        for component in path.split(separator: ".", omittingEmptySubsequences: true) {
-            prefix = prefix.isEmpty ? String(component) : "\(prefix).\(component)"
+        for component in components where !component.isEmpty {
+            prefix = prefix.isEmpty ? component : "\(prefix).\(component)"
             prefixes.append(prefix)
         }
         return prefixes
@@ -342,16 +340,9 @@ public enum ConfigParser {
         return decoded
     }
 
-    private static func decodeAssignmentKey(_ rawKey: String) -> String {
+    private static func assignmentKeyComponents(_ rawKey: String) -> [String] {
         let key = rawKey.trimmingCharacters(in: .whitespaces)
-        guard key.count >= 2,
-              let first = key.first,
-              let last = key.last,
-              (first == "\"" && last == "\"") || (first == "'" && last == "'") else {
-            return key
-        }
-        let content = String(key.dropFirst().dropLast())
-        return first == "\"" ? decodeBasicKey(content) : content
+        return components(in: key, openingLength: 0, closingLength: 0) ?? [key]
     }
 
     private static func assignmentSeparator(in line: String) -> String.Index? {
