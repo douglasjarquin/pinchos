@@ -186,6 +186,96 @@ final class CommandExecutionTests: XCTestCase {
         XCTAssertFalse(snapshot.isRunning)
     }
 
+    func testCancellationKillsForegroundCommandBeforeItsTimeout() async throws {
+        let pidURL = temporaryURL("cancel-foreground-pid")
+        defer { try? FileManager.default.removeItem(at: pidURL) }
+        let runner = CommandRunner(
+            command: "printf '%s' \"$$\" > '\(pidURL.path)'; exec sleep 30",
+            timeout: 30,
+            maxOutputBytes: 64
+        )
+        let startedAt = Date()
+        let task = Task { await runner.runIfIdle() }
+        let processID = try await waitForPID(at: pidURL)
+        XCTAssertEqual(kill(processID, 0), 0)
+
+        await runner.cancelActive()
+        let outcome = await task.value
+
+        guard case .completed(let execution) = outcome else {
+            return XCTFail("expected a completed cancellation, got \(outcome)")
+        }
+        XCTAssertEqual(execution.terminalReason, .cancelled)
+        XCTAssertLessThan(Date().timeIntervalSince(startedAt), 2)
+        let snapshot = await runner.snapshot()
+        XCTAssertFalse(snapshot.isRunning)
+    }
+
+    func testRapidGroupReuseDuringCancellationLeavesNoLingeringRuns() async throws {
+        let childPIDURL = temporaryURL("stress-cancel-child")
+        defer { try? FileManager.default.removeItem(at: childPIDURL) }
+        let command = "trap '' TERM; (trap '' TERM; while :; do sleep 1; done) & child=$!; printf '%s' \"$child\" > '\(childPIDURL.path)'; wait \"$child\""
+        let lingeringRunner = CommandRunner(command: command, timeout: 30, maxOutputBytes: 64)
+        let lingeringTask = Task { await lingeringRunner.runIfIdle() }
+        let childPID = try await waitForPID(at: childPIDURL)
+        let fastRunners = (0..<12).map { _ in
+            CommandRunner(command: "printf ok", timeout: 2, maxOutputBytes: 64)
+        }
+        let fastRuns = Task {
+            await withTaskGroup(of: CommandRunOutcome.self, returning: [CommandRunOutcome].self) { group in
+                for runner in fastRunners {
+                    group.addTask { await runner.runIfIdle() }
+                }
+                var outcomes = [CommandRunOutcome]()
+                for await outcome in group {
+                    outcomes.append(outcome)
+                }
+                return outcomes
+            }
+        }
+
+        await lingeringRunner.cancelActive()
+        let lingeringOutcome = await lingeringTask.value
+        let fastOutcomes = await fastRuns.value
+
+        guard case .completed(let execution) = lingeringOutcome else {
+            return XCTFail("expected a completed cancellation, got \(lingeringOutcome)")
+        }
+        XCTAssertEqual(execution.terminalReason, .cancelled)
+        XCTAssertEqual(fastOutcomes.count, fastRunners.count)
+        for outcome in fastOutcomes {
+            guard case .completed(let execution) = outcome else {
+                return XCTFail("expected every stress run to complete, got \(outcome)")
+            }
+            XCTAssertEqual(execution.terminalReason, .exited(code: 0))
+            XCTAssertEqual(execution.stdout, "ok")
+        }
+        XCTAssertTrue(waitUntilGone(childPID), "stress cancellation left child process \(childPID) alive")
+        let snapshot = await lingeringRunner.snapshot()
+        XCTAssertFalse(snapshot.isRunning)
+    }
+
+    func testCancelActiveCompletesWhenFinishActiveRunRacesTeardown() async throws {
+        let childPIDURL = temporaryURL("cancel-race-child")
+        defer { try? FileManager.default.removeItem(at: childPIDURL) }
+        let command = "trap '' TERM; (trap '' TERM; while :; do sleep 1; done) & child=$!; printf '%s' \"$child\" > '\(childPIDURL.path)'; wait \"$child\""
+        let runner = CommandRunner(command: command, timeout: 30, maxOutputBytes: 64)
+
+        let runTask = Task { await runner.runIfIdle() }
+        let childPID = try await waitForPID(at: childPIDURL)
+        let cancellationTask = Task { await runner.cancelActive() }
+        let outcome = await runTask.value
+        await cancellationTask.value
+
+        guard case .completed(let execution) = outcome else {
+            return XCTFail("expected a completed cancellation, got \(outcome)")
+        }
+        XCTAssertEqual(execution.terminalReason, .cancelled)
+        XCTAssertTrue(waitUntilGone(childPID), "teardown left child process \(childPID) alive")
+        let snapshot = await runner.snapshot()
+        XCTAssertFalse(snapshot.isRunning)
+    }
+
     func testTimeoutDoesNotWaitForDetachedPipeHolder() async throws {
         try XCTSkipUnless(FileManager.default.isExecutableFile(atPath: "/usr/bin/perl"))
         let childPIDURL = temporaryURL("detached-child")
@@ -320,6 +410,49 @@ final class CommandExecutionTests: XCTestCase {
         XCTAssertEqual(snapshot.lastExecution?.stderr, "late-diagnostic\n")
     }
 
+    func testCancellationDoesNotSignalARecycledProcessGroupAfterSessionOwnershipEnds() {
+        let signalBackend = FakeSignalBackend()
+        let originalTarget = FakeSignalTarget()
+        let original = FakeProcessSession(
+            numericGroupID: 71,
+            signalBackend: signalBackend,
+            signalTarget: originalTarget,
+            isOwned: true,
+            hasDescendants: true
+        )
+        original.release()
+
+        let unrelatedTarget = FakeSignalTarget()
+        let unrelated = FakeProcessSession(
+            numericGroupID: original.numericGroupID,
+            signalBackend: signalBackend,
+            signalTarget: unrelatedTarget,
+            isOwned: true,
+            hasDescendants: true
+        )
+        let controller = ProcessGroupController(session: original)
+
+        _ = controller.beginTermination(.cancelled)
+
+        XCTAssertEqual(original.numericGroupID, unrelated.numericGroupID)
+        XCTAssertTrue(signalBackend.target(for: original.numericGroupID) === unrelatedTarget)
+        XCTAssertEqual(original.terminationRequestCount, 0)
+        XCTAssertEqual(unrelated.terminationRequestCount, 0)
+        XCTAssertEqual(originalTarget.signalCount, 0)
+        XCTAssertEqual(unrelatedTarget.signalCount, 0)
+    }
+
+    func testOwnedProcessSessionReceivesOneTerminationSequenceForRepeatedClaims() {
+        let session = FakeProcessSession(isOwned: true, hasDescendants: true)
+        let controller = ProcessGroupController(session: session)
+
+        _ = controller.beginTermination(.cancelled)
+        _ = controller.beginTermination(.timedOut)
+        controller.requestGroupTermination()
+
+        XCTAssertEqual(session.terminationRequestCount, 1)
+    }
+
     private func temporaryURL(_ prefix: String) -> URL {
         FileManager.default.temporaryDirectory.appendingPathComponent("pinchos-\(prefix)-\(UUID().uuidString)")
     }
@@ -345,4 +478,89 @@ final class CommandExecutionTests: XCTestCase {
         } while Date() < deadline
         return false
     }
+}
+
+private final class FakeSignalTarget: @unchecked Sendable {
+    private let lock = NSLock()
+    private var signalCountStorage = 0
+
+    var signalCount: Int {
+        lock.lock()
+        defer { lock.unlock() }
+        return signalCountStorage
+    }
+
+    func receiveSignal() {
+        lock.lock()
+        signalCountStorage += 1
+        lock.unlock()
+    }
+}
+
+private final class FakeSignalBackend: @unchecked Sendable {
+    private let lock = NSLock()
+    private var targets = [pid_t: FakeSignalTarget]()
+
+    func register(groupID: pid_t, target: FakeSignalTarget) {
+        lock.lock()
+        targets[groupID] = target
+        lock.unlock()
+    }
+
+    func unregister(groupID: pid_t, target: FakeSignalTarget) {
+        lock.lock()
+        if targets[groupID] === target {
+            targets[groupID] = nil
+        }
+        lock.unlock()
+    }
+
+    func target(for groupID: pid_t) -> FakeSignalTarget? {
+        lock.lock()
+        defer { lock.unlock() }
+        return targets[groupID]
+    }
+
+    func signal(groupID: pid_t) {
+        target(for: groupID)?.receiveSignal()
+    }
+}
+
+private final class FakeProcessSession: ProcessSessionIdentity, @unchecked Sendable {
+    let numericGroupID: pid_t
+    private let signalBackend: FakeSignalBackend
+    private let signalTarget: FakeSignalTarget
+    var isOwned: Bool
+    var hasDescendants: Bool
+    private(set) var terminationRequestCount = 0
+
+    init(
+        numericGroupID: pid_t = 0,
+        signalBackend: FakeSignalBackend = FakeSignalBackend(),
+        signalTarget: FakeSignalTarget = FakeSignalTarget(),
+        isOwned: Bool,
+        hasDescendants: Bool
+    ) {
+        self.numericGroupID = numericGroupID
+        self.signalBackend = signalBackend
+        self.signalTarget = signalTarget
+        self.isOwned = isOwned
+        self.hasDescendants = hasDescendants
+        signalBackend.register(groupID: numericGroupID, target: signalTarget)
+    }
+
+    func requestTermination() {
+        terminationRequestCount += 1
+        signalBackend.signal(groupID: numericGroupID)
+    }
+
+    func commandDidExit() {}
+
+    func release() {
+        isOwned = false
+        hasDescendants = false
+        signalBackend.unregister(groupID: numericGroupID, target: signalTarget)
+    }
+
+    func waitForExit() async {}
 }

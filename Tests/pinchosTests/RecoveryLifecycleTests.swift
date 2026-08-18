@@ -1,3 +1,4 @@
+import Darwin
 import XCTest
 @testable import pinchos
 @testable import PinchosCore
@@ -302,6 +303,71 @@ final class RecoveryLifecycleTests: XCTestCase {
         _ = try await waitForRuntimeSnapshot(item) { snapshot in
             snapshot.status == .fresh && snapshot.fullOutput == "running"
         }
+    }
+
+    @MainActor
+    func testConfigReloadTerminatesLingeringDescendantBeforeReplacingRunner() async throws {
+        let childPIDURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("pinchos-reload-child-\(UUID().uuidString)")
+        let item = makeHeadlessItem(
+            config: ItemConfig(
+                name: "reload",
+                run: "(trap '' TERM; while :; do sleep 1; done) & child=$!; printf '%s' \"$child\" > '\(childPIDURL.path)'; exit 0",
+                interval: .manual
+            ),
+            initiallyVisible: false
+        )
+        addTeardownBlock { @MainActor in
+            await item.tearDown()
+            try? FileManager.default.removeItem(at: childPIDURL)
+        }
+
+        item.refreshNow()
+        let childPID = try await waitForPID(at: childPIDURL)
+        try await waitForRunning(item)
+
+        await item.prepareUpdate(config: ItemConfig(
+            name: "reload",
+            run: "printf reloaded",
+            interval: .manual
+        ))
+        let reloadChildGone = await waitUntilGone(childPID)
+        XCTAssertTrue(reloadChildGone, "config reload left child process \(childPID) alive")
+        item.commitPreparedUpdate()
+
+        item.refreshNow()
+        _ = try await waitForRuntimeSnapshot(item) { snapshot in
+            snapshot.status == .fresh && snapshot.fullOutput == "reloaded"
+        }
+    }
+
+    @MainActor
+    func testItemShutdownTerminatesLingeringDescendant() async throws {
+        let childPIDURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("pinchos-shutdown-child-\(UUID().uuidString)")
+        let item = makeHeadlessItem(
+            config: ItemConfig(
+                name: "shutdown",
+                run: "(trap '' TERM; while :; do sleep 1; done) & child=$!; printf '%s' \"$child\" > '\(childPIDURL.path)'; exit 0",
+                interval: .manual
+            ),
+            initiallyVisible: false
+        )
+        addTeardownBlock { @MainActor in
+            await item.tearDown()
+            try? FileManager.default.removeItem(at: childPIDURL)
+        }
+
+        item.refreshNow()
+        let childPID = try await waitForPID(at: childPIDURL)
+        try await waitForRunning(item)
+
+        await item.tearDown()
+
+        let shutdownChildGone = await waitUntilGone(childPID)
+        XCTAssertTrue(shutdownChildGone, "item shutdown left child process \(childPID) alive")
+        let snapshot = await item.runnerSnapshot()
+        XCTAssertFalse(snapshot.isRunning)
     }
 
     @MainActor
@@ -636,6 +702,36 @@ final class RecoveryLifecycleTests: XCTestCase {
             code: 3,
             userInfo: [NSLocalizedDescriptionKey: "manual item did not perform its initial run"]
         )
+    }
+
+    @MainActor
+    private func waitForPID(at url: URL) async throws -> Int32 {
+        let deadline = Date().addingTimeInterval(2)
+        while Date() < deadline {
+            if let value = try? String(contentsOf: url),
+                let pid = Int32(value.trimmingCharacters(in: .whitespacesAndNewlines))
+            {
+                return pid
+            }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        throw NSError(
+            domain: "RecoveryLifecycleTests",
+            code: 13,
+            userInfo: [NSLocalizedDescriptionKey: "timed out waiting for \(url.path)"]
+        )
+    }
+
+    @MainActor
+    private func waitUntilGone(_ pid: Int32) async -> Bool {
+        let deadline = Date().addingTimeInterval(2)
+        while Date() < deadline {
+            if kill(pid, 0) == -1, errno == ESRCH {
+                return true
+            }
+            try? await Task.sleep(for: .milliseconds(10))
+        }
+        return kill(pid, 0) == -1 && errno == ESRCH
     }
 
     @MainActor

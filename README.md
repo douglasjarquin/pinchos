@@ -188,6 +188,8 @@ See [`example/pinchos.toml`](example/pinchos.toml) for a full working config wit
 ## Architecture
 
 - `Sources/PinchosCore` — UI-free library: TOML parsing (via TOMLKit), duration and byte-size parsing, `{output}` templating, the config-diff engine, and bounded process-group command execution with concurrent stdout/stderr draining.
+- Each command session has a supervisor process as its process-group leader.
+  The supervisor remains alive until its descendants have exited or cancellation terminates the group, so every signal is made through the live session owner rather than a reusable numeric process-group ID.
 - `Sources/pinchos` — the AppKit executable: one `NSStatusItem` and one per-item scheduled `DispatchSourceTimer` when configured, plus manual refresh actions, declarative per-item menu actions, menu and lifecycle projection of `PinchosCore` runner snapshots, and a `ConfigWatcher` (`DispatchSourceFileSystemObject`) for live reload.
 
 ### Why TOMLKit
