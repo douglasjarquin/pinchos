@@ -2,6 +2,28 @@ import Foundation
 import TOMLKit
 
 public enum ConfigParser {
+    static let supportedItemKeys: Set<String> = [
+        "type",
+        "run",
+        "shell",
+        "working_directory",
+        "env",
+        "interval",
+        "timeout",
+        "max_output",
+        "format",
+        "click",
+        "refresh_on_click",
+        "error_text",
+        "on_error",
+        "stale_after",
+        "tooltip",
+        "action",
+        "icon"
+    ]
+
+    static let supportedActionKeys: Set<String> = ["title", "run", "refresh"]
+
     public static func parse(_ text: String, relativeTo configURL: URL? = nil) throws -> PinchosConfig {
         let order = declaredItemOrder(in: text)
         let sourceLines = sourceLineMap(in: text)
@@ -50,6 +72,9 @@ public enum ConfigParser {
         var currentSection: String?
         var multilineDelimiter: String?
 
+        var actionIndices: [String: Int] = [:]
+        var currentActionIndex: Int?
+
         for (offset, rawLine) in text.split(separator: "\n", omittingEmptySubsequences: false).enumerated() {
             let lineNumber = offset + 1
             let line = rawLine.trimmingCharacters(in: .whitespaces)
@@ -68,6 +93,14 @@ public enum ConfigParser {
                 currentItem = name
                 let section = components.dropFirst(2).joined(separator: ".")
                 currentSection = section
+                if section == "action" {
+                    let index = actionIndices[name, default: 0]
+                    actionIndices[name] = index + 1
+                    currentActionIndex = index
+                    lines["\(name).action[\(index)]"] = lineNumber
+                } else {
+                    currentActionIndex = nil
+                }
                 lines["\(name).\(section)"] = lineNumber
                 continue
             }
@@ -77,6 +110,7 @@ public enum ConfigParser {
                 let name = components[1]
                 currentItem = name
                 currentSection = components.count == 2 ? nil : components.dropFirst(2).joined(separator: ".")
+                currentActionIndex = nil
                 lines[name] = lines[name] ?? lineNumber
                 if let currentSection {
                     lines["\(name).\(currentSection)"] = lineNumber
@@ -88,9 +122,14 @@ public enum ConfigParser {
             let rawKey = line[..<equals].trimmingCharacters(in: .whitespaces)
             let key = rawKey.trimmingCharacters(in: CharacterSet(charactersIn: "\"'"))
             guard !key.isEmpty else { continue }
-            let path = [currentItem, currentSection, key]
-                .compactMap { $0 }
-                .joined(separator: ".")
+            let path: String
+            if currentSection == "action", let currentActionIndex {
+                path = "\(currentItem).action[\(currentActionIndex)].\(key)"
+            } else {
+                path = [currentItem, currentSection, key]
+                    .compactMap { $0 }
+                    .joined(separator: ".")
+            }
             lines[path] = lineNumber
             multilineDelimiter = openMultilineDelimiter(in: String(line[line.index(after: equals)...]))
         }
@@ -226,9 +265,16 @@ public enum ConfigParser {
     private static func sourceLine(
         item name: String,
         key: String,
+        index: Int? = nil,
         sourceLines: [String: Int]
     ) -> Int? {
-        sourceLines["\(name).\(key)"] ?? sourceLines[name]
+        if let index {
+            return sourceLines["\(name).action[\(index)].\(key)"]
+                ?? sourceLines["\(name).action[\(index)]"]
+                ?? sourceLines["\(name).action"]
+                ?? sourceLines[name]
+        }
+        return sourceLines["\(name).\(key)"] ?? sourceLines[name]
     }
 
     private static func parseItem(
@@ -237,24 +283,32 @@ public enum ConfigParser {
         relativeTo configURL: URL?,
         sourceLines: [String: Int]
     ) throws -> ItemConfig {
-        guard let type = table["type"]?.string else {
-            throw ConfigParseError(
-                message: "item.\(name): missing required field 'type'",
-                line: sourceLine(item: name, key: "type", sourceLines: sourceLines)
-            )
-        }
+        try validateUnknownKeys(
+            in: table,
+            allowedKeys: supportedItemKeys,
+            context: "item.\(name)",
+            lineForKey: { sourceLine(item: name, key: $0, sourceLines: sourceLines) }
+        )
+
+        let type = try requiredString(
+            name: name,
+            key: "type",
+            table: table,
+            sourceLines: sourceLines
+        )
         guard type == "command" else {
             throw ConfigParseError(
                 message: "item.\(name): unsupported type '\(type)' (only 'command' is supported)",
                 line: sourceLine(item: name, key: "type", sourceLines: sourceLines)
             )
         }
-        guard let run = table["run"]?.string else {
-            throw ConfigParseError(
-                message: "item.\(name): missing required field 'run'",
-                line: sourceLine(item: name, key: "run", sourceLines: sourceLines)
-            )
-        }
+        let run = try requiredString(
+            name: name,
+            key: "run",
+            table: table,
+            sourceLines: sourceLines,
+            requireNonEmpty: true
+        )
 
         let shell = try parseShell(
             name: name,
@@ -270,7 +324,12 @@ public enum ConfigParser {
         )
         let environment = try parseEnvironment(name: name, value: table["env"], sourceLines: sourceLines)
 
-        let intervalString = table["interval"]?.string ?? "60s"
+        let intervalString = try optionalString(
+            name: name,
+            key: "interval",
+            table: table,
+            sourceLines: sourceLines
+        ) ?? "60s"
         let refreshInterval: RefreshInterval
         if intervalString == "manual" {
             refreshInterval = .manual
@@ -290,8 +349,10 @@ public enum ConfigParser {
         let refreshOnClick: Bool
         if let refreshOnClickValue = table["refresh_on_click"] {
             guard let value = refreshOnClickValue.bool else {
-                throw ConfigParseError(
-                    message: "item.\(name): refresh_on_click must be a boolean",
+                throw typeError(
+                    path: "item.\(name).refresh_on_click",
+                    expected: "boolean",
+                    value: refreshOnClickValue,
                     line: sourceLine(item: name, key: "refresh_on_click", sourceLines: sourceLines)
                 )
             }
@@ -302,9 +363,13 @@ public enum ConfigParser {
 
         let onError: ItemErrorPolicy
         if let onErrorValue = table["on_error"] {
-            guard let rawValue = onErrorValue.string,
-                  let parsedValue = ItemErrorPolicy(rawValue: rawValue)
-            else {
+            let rawValue = try stringValue(
+                name: name,
+                key: "on_error",
+                value: onErrorValue,
+                sourceLines: sourceLines
+            )
+            guard let parsedValue = ItemErrorPolicy(rawValue: rawValue) else {
                 throw ConfigParseError(
                     message: "item.\(name): on_error must be 'replace' or 'keep_last'",
                     line: sourceLine(item: name, key: "on_error", sourceLines: sourceLines)
@@ -317,12 +382,12 @@ public enum ConfigParser {
 
         let staleAfter: TimeInterval?
         if let staleAfterValue = table["stale_after"] {
-            guard let rawValue = staleAfterValue.string else {
-                throw ConfigParseError(
-                    message: "item.\(name): stale_after must be a duration string",
-                    line: sourceLine(item: name, key: "stale_after", sourceLines: sourceLines)
-                )
-            }
+            let rawValue = try stringValue(
+                name: name,
+                key: "stale_after",
+                value: staleAfterValue,
+                sourceLines: sourceLines
+            )
             do {
                 staleAfter = try parseDuration(rawValue)
             } catch {
@@ -337,12 +402,12 @@ public enum ConfigParser {
 
         let tooltip: String?
         if let tooltipValue = table["tooltip"] {
-            guard let value = tooltipValue.string else {
-                throw ConfigParseError(
-                    message: "item.\(name): tooltip must be a string",
-                    line: sourceLine(item: name, key: "tooltip", sourceLines: sourceLines)
-                )
-            }
+            let value = try stringValue(
+                name: name,
+                key: "tooltip",
+                value: tooltipValue,
+                sourceLines: sourceLines
+            )
             do {
                 try validateTooltipTemplate(value)
             } catch let error as TooltipTemplateError {
@@ -364,13 +429,12 @@ public enum ConfigParser {
 
         let timeoutString: String
         if let timeoutValue = table["timeout"] {
-            guard let value = timeoutValue.string else {
-                throw ConfigParseError(
-                    message: "item.\(name): invalid timeout value",
-                    line: sourceLine(item: name, key: "timeout", sourceLines: sourceLines)
-                )
-            }
-            timeoutString = value
+            timeoutString = try stringValue(
+                name: name,
+                key: "timeout",
+                value: timeoutValue,
+                sourceLines: sourceLines
+            )
         } else {
             timeoutString = "15s"
         }
@@ -386,13 +450,12 @@ public enum ConfigParser {
 
         let maxOutputString: String
         if let maxOutputValue = table["max_output"] {
-            guard let value = maxOutputValue.string else {
-                throw ConfigParseError(
-                    message: "item.\(name): invalid max_output value",
-                    line: sourceLine(item: name, key: "max_output", sourceLines: sourceLines)
-                )
-            }
-            maxOutputString = value
+            maxOutputString = try stringValue(
+                name: name,
+                key: "max_output",
+                value: maxOutputValue,
+                sourceLines: sourceLines
+            )
         } else {
             maxOutputString = "64KiB"
         }
@@ -408,12 +471,12 @@ public enum ConfigParser {
 
         let icon: String?
         if let iconValue = table["icon"] {
-            guard let rawIcon = iconValue.string else {
-                throw ConfigParseError(
-                    message: "item.\(name): invalid icon value",
-                    line: sourceLine(item: name, key: "icon", sourceLines: sourceLines)
-                )
-            }
+            let rawIcon = try stringValue(
+                name: name,
+                key: "icon",
+                value: iconValue,
+                sourceLines: sourceLines
+            )
             icon = resolvePath(rawIcon, relativeTo: configURL)
         } else {
             icon = nil
@@ -428,10 +491,26 @@ public enum ConfigParser {
             shell: shell,
             workingDirectory: workingDirectory,
             environment: environment,
-            format: table["format"]?.string,
-            click: table["click"]?.string,
+            format: try optionalString(
+                name: name,
+                key: "format",
+                table: table,
+                sourceLines: sourceLines
+            ),
+            click: try optionalString(
+                name: name,
+                key: "click",
+                table: table,
+                sourceLines: sourceLines,
+                requireNonEmpty: true
+            ),
             refreshOnClick: refreshOnClick,
-            errorText: table["error_text"]?.string ?? "\u{2013}",
+            errorText: try optionalString(
+                name: name,
+                key: "error_text",
+                table: table,
+                sourceLines: sourceLines
+            ) ?? "\u{2013}",
             onError: onError,
             staleAfter: staleAfter,
             tooltip: tooltip,
@@ -447,40 +526,61 @@ public enum ConfigParser {
     ) throws -> [ItemAction] {
         guard let value else { return [] }
         guard let array = value.array else {
-            throw ConfigParseError(
-                message: "item.\(name).action must be an array of tables",
+            throw typeError(
+                path: "item.\(name).action",
+                expected: "array",
+                value: value,
                 line: sourceLine(item: name, key: "action", sourceLines: sourceLines)
             )
         }
 
         return try array.enumerated().map { index, element in
             guard let table = element.table else {
-                throw ConfigParseError(
-                    message: "item.\(name).action[\(index)] must be a table",
-                    line: sourceLine(item: name, key: "action", sourceLines: sourceLines)
-                )
-            }
-            guard let title = table["title"]?.string, !title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-                throw ConfigParseError(
-                    message: "item.\(name).action[\(index)]: title must be a non-empty string",
-                    line: sourceLine(item: name, key: "action", sourceLines: sourceLines)
+                throw typeError(
+                    path: "item.\(name).action[\(index)]",
+                    expected: "table",
+                    value: element,
+                    line: sourceLine(item: name, key: "action", index: index, sourceLines: sourceLines)
                 )
             }
 
-            let runValue = table["run"]
-            if let runValue, runValue.string == nil {
+            try validateUnknownKeys(
+                in: table,
+                allowedKeys: supportedActionKeys,
+                context: "item.\(name).action[\(index)]",
+                lineForKey: { sourceLine(item: name, key: $0, index: index, sourceLines: sourceLines) }
+            )
+
+            guard let titleValue = table["title"] else {
                 throw ConfigParseError(
-                    message: "item.\(name).action[\(index)]: run must be a non-empty string",
-                    line: sourceLine(item: name, key: "action", sourceLines: sourceLines)
+                    message: "item.\(name).action[\(index)].title: missing required field",
+                    line: sourceLine(item: name, key: "action", index: index, sourceLines: sourceLines)
                 )
             }
-            let run = runValue?.string
+            let title = try stringValue(
+                path: "item.\(name).action[\(index)].title",
+                value: titleValue,
+                requireNonEmpty: true,
+                line: sourceLine(item: name, key: "title", index: index, sourceLines: sourceLines)
+            )
+
+            let runValue = table["run"]
+            let run = try runValue.map {
+                try stringValue(
+                    path: "item.\(name).action[\(index)].run",
+                    value: $0,
+                    requireNonEmpty: true,
+                    line: sourceLine(item: name, key: "run", index: index, sourceLines: sourceLines)
+                )
+            }
             let refresh: Bool?
             if let refreshValue = table["refresh"] {
                 guard let parsedRefresh = refreshValue.bool else {
-                    throw ConfigParseError(
-                        message: "item.\(name).action[\(index)]: refresh must be a boolean",
-                        line: sourceLine(item: name, key: "action", sourceLines: sourceLines)
+                    throw typeError(
+                        path: "item.\(name).action[\(index)].refresh",
+                        expected: "boolean",
+                        value: refreshValue,
+                        line: sourceLine(item: name, key: "refresh", index: index, sourceLines: sourceLines)
                     )
                 }
                 refresh = parsedRefresh
@@ -491,22 +591,16 @@ public enum ConfigParser {
             if run != nil, refresh != nil {
                 throw ConfigParseError(
                     message: "item.\(name).action[\(index)]: specify either run or refresh = true, not both",
-                    line: sourceLine(item: name, key: "action", sourceLines: sourceLines)
+                    line: sourceLine(item: name, key: "action", index: index, sourceLines: sourceLines)
                 )
             }
             if let run {
-                guard !run.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-                    throw ConfigParseError(
-                        message: "item.\(name).action[\(index)]: run must be a non-empty string",
-                        line: sourceLine(item: name, key: "action", sourceLines: sourceLines)
-                    )
-                }
                 return ItemAction(title: title, kind: .command(run))
             }
             guard refresh == true else {
                 throw ConfigParseError(
                     message: "item.\(name).action[\(index)]: specify run or refresh = true",
-                    line: sourceLine(item: name, key: "action", sourceLines: sourceLines)
+                    line: sourceLine(item: name, key: "action", index: index, sourceLines: sourceLines)
                 )
             }
             return ItemAction(title: title, kind: .refresh)
@@ -521,20 +615,22 @@ public enum ConfigParser {
     ) throws -> [String] {
         guard let value else { return ItemConfig.defaultShell }
         guard let array = value.array else {
-            throw ConfigParseError(
-                message: "item.\(name): shell must be an array of strings",
+            throw typeError(
+                path: "item.\(name).shell",
+                expected: "array",
+                value: value,
                 line: sourceLine(item: name, key: "shell", sourceLines: sourceLines)
             )
         }
 
         var shell = [String]()
         for (index, element) in array.enumerated() {
-            guard let argument = element.string, !argument.isEmpty else {
-                throw ConfigParseError(
-                    message: "item.\(name): shell[\(index)] must be a non-empty string",
-                    line: sourceLine(item: name, key: "shell", sourceLines: sourceLines)
-                )
-            }
+            let argument = try stringValue(
+                path: "item.\(name).shell[\(index)]",
+                value: element,
+                requireNonEmpty: true,
+                line: sourceLine(item: name, key: "shell", sourceLines: sourceLines)
+            )
             shell.append(argument)
         }
         guard let executable = shell.first else {
@@ -562,8 +658,10 @@ public enum ConfigParser {
     ) throws -> String? {
         guard let value else { return nil }
         guard let rawPath = value.string else {
-            throw ConfigParseError(
-                message: "item.\(name): working_directory must be a string",
+            throw typeError(
+                path: "item.\(name).working_directory",
+                expected: "string",
+                value: value,
                 line: sourceLine(item: name, key: "working_directory", sourceLines: sourceLines)
             )
         }
@@ -586,8 +684,10 @@ public enum ConfigParser {
     ) throws -> [String: String] {
         guard let value else { return [:] }
         guard let table = value.table else {
-            throw ConfigParseError(
-                message: "item.\(name).env must be a table of strings",
+            throw typeError(
+                path: "item.\(name).env",
+                expected: "table",
+                value: value,
                 line: sourceLines["\(name).env"] ?? sourceLines[name]
             )
         }
@@ -596,11 +696,19 @@ public enum ConfigParser {
         for (key, value) in table {
             guard isValidEnvironmentName(key) else {
                 throw ConfigParseError(
-                    message: "item.\(name).env.\(key) is not a valid environment name",
+                    message: "item.\(name).env.\(key): invalid environment key; not a valid environment name",
                     line: sourceLine(item: name, key: "env.\(key)", sourceLines: sourceLines)
                 )
             }
-            guard let string = value.string, !string.unicodeScalars.contains(where: { $0.value == 0 }) else {
+            guard let string = value.string else {
+                throw typeError(
+                    path: "item.\(name).env.\(key)",
+                    expected: "string",
+                    value: value,
+                    line: sourceLine(item: name, key: "env.\(key)", sourceLines: sourceLines)
+                )
+            }
+            guard !string.unicodeScalars.contains(where: { $0.value == 0 }) else {
                 throw ConfigParseError(
                     message: "item.\(name).env.\(key) must be a string without NUL bytes",
                     line: sourceLine(item: name, key: "env.\(key)", sourceLines: sourceLines)
@@ -620,6 +728,135 @@ public enum ConfigParser {
         return bytes.dropFirst().allSatisfy { byte in
             byte == 95 || byte >= 48 && byte <= 57 || byte >= 65 && byte <= 90 || byte >= 97 && byte <= 122
         }
+    }
+
+    private static func validateUnknownKeys(
+        in table: TOMLTable,
+        allowedKeys: Set<String>,
+        context: String,
+        lineForKey: (String) -> Int?
+    ) throws {
+        for key in table.keys.sorted() where !allowedKeys.contains(key) {
+            let suggestion = nearestKey(to: key, among: allowedKeys)
+                .map { "; did you mean '\($0)'?" } ?? ""
+            throw ConfigParseError(
+                message: "\(context).\(key): unknown key\(suggestion)",
+                line: lineForKey(key)
+            )
+        }
+    }
+
+    private static func requiredString(
+        name: String,
+        key: String,
+        table: TOMLTable,
+        sourceLines: [String: Int],
+        requireNonEmpty: Bool = false
+    ) throws -> String {
+        guard let value = table[key] else {
+            throw ConfigParseError(
+                message: "item.\(name): missing required field '\(key)'",
+                line: sourceLine(item: name, key: key, sourceLines: sourceLines)
+            )
+        }
+        return try stringValue(
+            path: "item.\(name).\(key)",
+            value: value,
+            requireNonEmpty: requireNonEmpty,
+            line: sourceLine(item: name, key: key, sourceLines: sourceLines)
+        )
+    }
+
+    private static func optionalString(
+        name: String,
+        key: String,
+        table: TOMLTable,
+        sourceLines: [String: Int],
+        requireNonEmpty: Bool = false
+    ) throws -> String? {
+        guard let value = table[key] else { return nil }
+        return try stringValue(
+            path: "item.\(name).\(key)",
+            value: value,
+            requireNonEmpty: requireNonEmpty,
+            line: sourceLine(item: name, key: key, sourceLines: sourceLines)
+        )
+    }
+
+    private static func stringValue(
+        name: String,
+        key: String,
+        value: TOMLValueConvertible,
+        sourceLines: [String: Int],
+        requireNonEmpty: Bool = false
+    ) throws -> String {
+        try stringValue(
+            path: "item.\(name).\(key)",
+            value: value,
+            requireNonEmpty: requireNonEmpty,
+            line: sourceLine(item: name, key: key, sourceLines: sourceLines)
+        )
+    }
+
+    private static func stringValue(
+        path: String,
+        value: TOMLValueConvertible,
+        requireNonEmpty: Bool,
+        line: Int?
+    ) throws -> String {
+        guard let string = value.string else {
+            throw typeError(path: path, expected: "string", value: value, line: line)
+        }
+        guard !requireNonEmpty || !string.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            throw ConfigParseError(
+                message: "\(path) must be a non-empty string",
+                line: line
+            )
+        }
+        return string
+    }
+
+    private static func typeError(
+        path: String,
+        expected: String,
+        value: TOMLValueConvertible,
+        line: Int?
+    ) -> ConfigParseError {
+        let article = ["array", "integer", "floating-point number"].contains(expected) ? "an" : "a"
+        return ConfigParseError(
+            message: "\(path): type error, must be \(article) \(expected) (got \(value.type.description))",
+            line: line
+        )
+    }
+
+    private static func nearestKey(to key: String, among allowedKeys: Set<String>) -> String? {
+        let candidates = allowedKeys.compactMap { candidate -> (String, Int)? in
+            let distance = editDistance(key, candidate)
+            return distance <= 2 ? (candidate, distance) : nil
+        }
+        guard let bestDistance = candidates.map(\.1).min() else { return nil }
+        let best = candidates.filter { $0.1 == bestDistance }.map(\.0).sorted()
+        guard best.count == 1 else { return nil }
+        return best[0]
+    }
+
+    private static func editDistance(_ lhs: String, _ rhs: String) -> Int {
+        let lhsCharacters = Array(lhs)
+        let rhsCharacters = Array(rhs)
+        var previous = Array(0...rhsCharacters.count)
+
+        for (lhsIndex, lhsCharacter) in lhsCharacters.enumerated() {
+            var current = [lhsIndex + 1]
+            for (rhsIndex, rhsCharacter) in rhsCharacters.enumerated() {
+                let substitution = previous[rhsIndex] + (lhsCharacter == rhsCharacter ? 0 : 1)
+                let insertion = current[rhsIndex] + 1
+                let deletion = previous[rhsIndex + 1] + 1
+                current.append(min(substitution, insertion, deletion))
+            }
+            previous = current
+        }
+
+        return previous[rhsCharacters.count]
     }
 
     private static func resolvePath(_ rawPath: String, relativeTo configURL: URL?) -> String {
