@@ -64,8 +64,14 @@ final class SignalIntegrationTests: XCTestCase {
         let configURL = configDirectory.appendingPathComponent("pinchos.toml")
         let markerURL = root.appendingPathComponent("child.pid")
         try FileManager.default.createDirectory(at: configDirectory, withIntermediateDirectories: true)
+        var process: Process?
+        var ownedPIDs = Set<pid_t>()
         defer {
-            cleanupProcesses(markerURL: markerURL)
+            if let process, process.isRunning {
+                process.terminate()
+                process.waitUntilExit()
+            }
+            cleanupProcesses(pids: ownedPIDs)
             try? FileManager.default.removeItem(at: root)
         }
 
@@ -75,28 +81,30 @@ final class SignalIntegrationTests: XCTestCase {
         run = "(trap '' TERM INT; while :; do sleep 1; done) & child_pid=$!; printf '%s' \"$child_pid\" > \"$PINCHOS_MARKER\"; wait \"$child_pid\""
         """#.write(to: configURL, atomically: true, encoding: .utf8)
 
-        let process = Process()
-        process.executableURL = try pinchosExecutable()
-        process.arguments = ["run", "long"]
+        let launchedProcess = Process()
+        process = launchedProcess
+        launchedProcess.executableURL = try pinchosExecutable()
+        launchedProcess.arguments = ["run", "long"]
         var environment = ProcessInfo.processInfo.environment
         environment["XDG_CONFIG_HOME"] = root.path
         environment["PINCHOS_MARKER"] = markerURL.path
-        process.environment = environment
-        process.standardOutput = Pipe()
-        process.standardError = Pipe()
-        try process.run()
+        launchedProcess.environment = environment
+        launchedProcess.standardOutput = Pipe()
+        launchedProcess.standardError = Pipe()
+        try launchedProcess.run()
 
         let childPID = try waitForPID(at: markerURL)
         XCTAssertEqual(kill(childPID, 0), 0, "marker child must exist before signal delivery")
+        ownedPIDs.insert(childPID)
         let groupID = processGroupID(for: childPID)
-        let ownedPIDs = groupID.map(processIDs(in:)) ?? []
+        ownedPIDs.formUnion(groupID.map(processIDs(in:)) ?? [])
         XCTAssertTrue(ownedPIDs.contains(childPID), "marker child must be in the owned process group")
         let signalStartedAt = Date()
-        XCTAssertEqual(kill(process.processIdentifier, signal), 0)
+        XCTAssertEqual(kill(launchedProcess.processIdentifier, signal), 0)
         for followupSignal in followupSignals {
-            _ = kill(process.processIdentifier, followupSignal)
+            _ = kill(launchedProcess.processIdentifier, followupSignal)
         }
-        process.waitUntilExit()
+        launchedProcess.waitUntilExit()
 
         XCTAssertTrue(
             waitUntilGone(childPID),
@@ -109,8 +117,8 @@ final class SignalIntegrationTests: XCTestCase {
         if let groupID {
             XCTAssertTrue(waitUntilGroupGone(groupID), "owned process group \(groupID) survived signal cleanup")
         }
-        XCTAssertEqual(process.terminationReason, .exit)
-        XCTAssertEqual(process.terminationStatus, expectedExitCode)
+        XCTAssertEqual(launchedProcess.terminationReason, .exit)
+        XCTAssertEqual(launchedProcess.terminationStatus, expectedExitCode)
     }
 
     private func pinchosExecutable() throws -> URL {
@@ -166,18 +174,13 @@ final class SignalIntegrationTests: XCTestCase {
         return processIDs(in: group).isEmpty
     }
 
-    private func cleanupProcesses(markerURL: URL) {
-        guard let marker = try? String(contentsOf: markerURL, encoding: .utf8),
-            let markerPID = pid_t(marker.trimmingCharacters(in: .whitespacesAndNewlines))
-        else {
-            return
-        }
-        let processGroup = processGroupID(for: markerPID)
-        let pids = processGroup.map(processIDs(in:)) ?? [markerPID]
-        for pid in Set(pids) {
+    private func cleanupProcesses(pids: Set<pid_t>) {
+        for pid in pids {
             _ = kill(pid, SIGKILL)
         }
-        _ = waitUntilGone(markerPID)
+        for pid in pids {
+            _ = waitUntilGone(pid)
+        }
     }
 
     private func processGroupID(for pid: pid_t) -> pid_t? {
