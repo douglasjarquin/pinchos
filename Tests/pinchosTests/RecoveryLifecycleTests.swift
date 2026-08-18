@@ -421,6 +421,28 @@ final class RecoveryLifecycleTests: XCTestCase {
     }
 
     @MainActor
+    func testQueuedClickDoesNotStartAfterRemovalBegins() async throws {
+        let marker = FileManager.default.temporaryDirectory
+            .appendingPathComponent("pinchos-queued-click-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: marker) }
+        let item = makeHeadlessItem(
+            config: ItemConfig(
+                name: "queued-click",
+                run: "printf unused",
+                interval: .manual,
+                click: "printf '%s' \"$$\" > '\(marker.path)'"
+            ),
+            initiallyVisible: false
+        )
+
+        item.processClick(eventType: .leftMouseUp)
+        await item.tearDown()
+        try await Task.sleep(for: .milliseconds(50))
+
+        XCTAssertFalse(FileManager.default.fileExists(atPath: marker.path))
+    }
+
+    @MainActor
     func testStaleScheduleAfterConfigReloadUsesLastSuccessfulUpdate() async throws {
         let item = makeHeadlessItem(
             config: ItemConfig(

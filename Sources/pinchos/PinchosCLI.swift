@@ -255,6 +255,7 @@ struct PinchosCLI {
         }
         defer { runnerRegistry.unregister(runner) }
         let outcome = await runner.runIfIdle()
+        await runner.cancelActive()
         if let terminationExitCode = shutdownCoordinator?.terminationExitCode {
             return terminationExitCode
         }
@@ -397,6 +398,7 @@ struct PinchosCLI {
                         return shutdownCoordinator?.terminationExitCode ?? CLIExitCode.execution
                     }
                     let outcome = await commandRunner.runIfIdle()
+                    await commandRunner.cancelActive()
                     runnerRegistry.unregister(commandRunner)
                     if let terminationExitCode = shutdownCoordinator?.terminationExitCode {
                         return terminationExitCode
