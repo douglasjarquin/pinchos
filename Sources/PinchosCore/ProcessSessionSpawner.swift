@@ -8,12 +8,15 @@ extension SupervisorProcessSession {
     private static let supervisorScript = """
     IFS= read -r command <&3 || command=
     if [ "$command" = start ]; then
-        while /bin/ps -axo pid=,ppid=,pgid=,comm= | /usr/bin/awk -v group="$$" -v supervisor="$$" '$3 == group && $1 != group && $2 != supervisor { found=1 } END { exit found ? 0 : 1 }'; do
-            /bin/sleep 0.01
-        done
-        printf 'empty\\n' >&4
         IFS= read -r command <&3 || command=
-        [ "$command" = release ]
+        if [ "$command" = finish ]; then
+            while /bin/ps -axo pid=,ppid=,pgid=,comm= | /usr/bin/awk -v group="$$" -v supervisor="$$" '$3 == group && $1 != group && $2 != supervisor { found=1 } END { exit found ? 0 : 1 }'; do
+                /bin/sleep 0.01
+            done
+            printf 'empty\\n' >&4
+            IFS= read -r command <&3 || command=
+            [ "$command" = release ]
+        fi
     fi
     """
 

@@ -316,6 +316,13 @@ final class ProcessGroupController: @unchecked Sendable {
         return session.hasDescendants
     }
 
+    func commandDidExit() {
+        lock.lock()
+        let session = self.session
+        lock.unlock()
+        session?.commandDidExit()
+    }
+
     func release() {
         lock.lock()
         let session = self.session
@@ -648,10 +655,14 @@ private enum CommandExecutionEngine {
             _ = await waitTask.value
             keepProcessGroup = controller.hasDescendants()
         case .process(let waitResult):
-            if controller.claimNatural() {
+            let naturalExit = controller.claimNatural()
+            if naturalExit {
                 reason = terminalReason(for: waitResult)
             } else {
                 reason = controller.claimDescription() ?? terminalReason(for: waitResult)
+            }
+            if naturalExit {
+                controller.commandDidExit()
             }
             keepProcessGroup = controller.hasDescendants()
             if !keepProcessGroup {

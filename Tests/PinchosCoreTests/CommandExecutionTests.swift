@@ -186,6 +186,24 @@ final class CommandExecutionTests: XCTestCase {
         XCTAssertFalse(snapshot.isRunning)
     }
 
+    func testCancellationKillsForegroundCommandBeforeItsTimeout() async throws {
+        let runner = CommandRunner(command: "sleep 30", timeout: 30, maxOutputBytes: 64)
+        let startedAt = Date()
+        let task = Task { await runner.runIfIdle() }
+        try await Task.sleep(for: .milliseconds(100))
+
+        await runner.cancelActive()
+        let outcome = await task.value
+
+        guard case .completed(let execution) = outcome else {
+            return XCTFail("expected a completed cancellation, got \(outcome)")
+        }
+        XCTAssertEqual(execution.terminalReason, .cancelled)
+        XCTAssertLessThan(Date().timeIntervalSince(startedAt), 2)
+        let snapshot = await runner.snapshot()
+        XCTAssertFalse(snapshot.isRunning)
+    }
+
     func testCancelActiveCompletesWhenFinishActiveRunRacesTeardown() async throws {
         let childPIDURL = temporaryURL("cancel-race-child")
         defer { try? FileManager.default.removeItem(at: childPIDURL) }
@@ -342,12 +360,17 @@ final class CommandExecutionTests: XCTestCase {
     }
 
     func testCancellationDoesNotSignalARecycledProcessGroupAfterSessionOwnershipEnds() {
-        let session = FakeProcessSession(isOwned: false, hasDescendants: true)
-        let controller = ProcessGroupController(session: session)
+        let original = FakeProcessSession(numericGroupID: 71, isOwned: true, hasDescendants: true)
+        let unrelated = FakeProcessSession(numericGroupID: 71, isOwned: true, hasDescendants: true)
+        let controller = ProcessGroupController(session: original)
+
+        original.release()
 
         _ = controller.beginTermination(.cancelled)
 
-        XCTAssertEqual(session.terminationRequestCount, 0)
+        XCTAssertEqual(original.numericGroupID, unrelated.numericGroupID)
+        XCTAssertEqual(original.terminationRequestCount, 0)
+        XCTAssertEqual(unrelated.terminationRequestCount, 0)
     }
 
     func testOwnedProcessSessionReceivesOneTerminationSequenceForRepeatedClaims() {
@@ -389,11 +412,13 @@ final class CommandExecutionTests: XCTestCase {
 }
 
 private final class FakeProcessSession: ProcessSessionIdentity, @unchecked Sendable {
+    let numericGroupID: pid_t
     var isOwned: Bool
     var hasDescendants: Bool
     private(set) var terminationRequestCount = 0
 
-    init(isOwned: Bool, hasDescendants: Bool) {
+    init(numericGroupID: pid_t = 0, isOwned: Bool, hasDescendants: Bool) {
+        self.numericGroupID = numericGroupID
         self.isOwned = isOwned
         self.hasDescendants = hasDescendants
     }
@@ -401,6 +426,8 @@ private final class FakeProcessSession: ProcessSessionIdentity, @unchecked Senda
     func requestTermination() {
         terminationRequestCount += 1
     }
+
+    func commandDidExit() {}
 
     func release() {
         isOwned = false
