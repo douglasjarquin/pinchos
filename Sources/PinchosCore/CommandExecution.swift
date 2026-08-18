@@ -1017,6 +1017,7 @@ public actor CommandRunner {
     private var lastExecution: CommandExecution?
     private var skippedRefreshes = 0
     private var cancellationInProgress = false
+    private var shutdownRequested = false
     private var runGeneration: UInt64 = 0
 
     public init(
@@ -1051,7 +1052,8 @@ public actor CommandRunner {
         guard generation == runGeneration,
             activeTask == nil,
             lingeringProcesses.isEmpty,
-            !cancellationInProgress
+            !cancellationInProgress,
+            !shutdownRequested
         else {
             skippedRefreshes += 1
             return false
@@ -1115,6 +1117,11 @@ public actor CommandRunner {
     public func runIfIdle() async -> CommandRunOutcome {
         guard await beginIfIdle() else { return .skipped }
         return await finishActiveRun()
+    }
+
+    public func cancelForShutdown() async {
+        shutdownRequested = true
+        await cancelActive()
     }
 
     public func cancelActive() async {

@@ -1,6 +1,7 @@
 import Darwin
 import XCTest
 @testable import pinchos
+@testable import PinchosCore
 
 @MainActor
 final class ShutdownCoordinatorTests: XCTestCase {
@@ -38,6 +39,31 @@ final class ShutdownCoordinatorTests: XCTestCase {
 
         XCTAssertEqual(cleanupCount, 1)
         XCTAssertEqual(exitCode, 7)
+    }
+
+    func testSignalBetweenRunnerRegistrationAndStartLeavesRunnerStopped() async {
+        let registry = CLICommandRunnerRegistry()
+        let coordinator = ShutdownCoordinator(
+            signalNumbers: [],
+            cleanup: {
+                await registry.cancelAll()
+            },
+            forcedExit: { _ in XCTFail("runner cleanup should not force exit") },
+            autoFinishOnCleanup: false
+        )
+        let runner = CommandRunner(
+            command: "sleep 30",
+            timeout: 60,
+            maxOutputBytes: 4096
+        )
+
+        XCTAssertTrue(registry.register(runner))
+        coordinator.requestShutdown(reason: .signal(SIGINT))
+        let exitCode = await coordinator.finish(exitCode: 0)
+        let outcome = await runner.runIfIdle()
+        XCTAssertEqual(exitCode, 130)
+        XCTAssertEqual(outcome, .skipped)
+        registry.unregister(runner)
     }
 
     func testCleanupTimeoutForcesDeterministicExitAndUnblocksCompletion() async {

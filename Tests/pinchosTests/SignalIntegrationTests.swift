@@ -7,8 +7,8 @@ final class SignalIntegrationTests: XCTestCase {
         let pid: pid_t
         let parentPID: pid_t
         let groupID: pid_t
-        let startTime: String
-        let command: String
+        let startSeconds: UInt64
+        let startMicroseconds: UInt64
     }
 
     func testSIGINTCancelsRunAndRemovesOwnedDescendants() throws {
@@ -19,6 +19,86 @@ final class SignalIntegrationTests: XCTestCase {
         try runSignalScenario(signal: SIGTERM, expectedExitCode: 143)
     }
 
+    func testSIGTERMCancelsDoctorRunnerAndRemovesOwnedDescendants() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("pinchos-issue44-doctor-signal-\(UUID().uuidString)", isDirectory: true)
+        let configDirectory = root.appendingPathComponent("pinchos", isDirectory: true)
+        let configURL = configDirectory.appendingPathComponent("pinchos.toml")
+        let shellURL = root.appendingPathComponent("slow-shell")
+        let markerURL = root.appendingPathComponent("doctor-shell.pid")
+        try FileManager.default.createDirectory(at: configDirectory, withIntermediateDirectories: true)
+        var process: Process?
+        var parentIdentity: OwnedProcess?
+        var supervisorIdentity: OwnedProcess?
+        var ownedProcesses = Set<OwnedProcess>()
+        var ownedPIDs = Set<pid_t>()
+        defer {
+            if let process, process.isRunning {
+                process.terminate()
+                process.waitUntilExit()
+            }
+            cleanupProcesses(
+                processes: ownedProcesses,
+                owner: supervisorIdentity,
+                parent: parentIdentity
+            )
+            try? FileManager.default.removeItem(at: root)
+        }
+
+        try #"""
+        #!/bin/sh
+        printf '%s' "$$" > "$PINCHOS_MARKER"
+        sleep 30
+        exec /bin/sh "$@"
+        """#.write(to: shellURL, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: NSNumber(value: 0o755)], ofItemAtPath: shellURL.path)
+        try #"""
+        [item.slow]
+        type = "command"
+        timeout = "1m"
+        shell = ["\#(shellURL.path)", "-c"]
+        run = "true"
+
+        [item.slow.env]
+        PINCHOS_MARKER = "\#(markerURL.path)"
+        """#.write(to: configURL, atomically: true, encoding: .utf8)
+
+        let launchedProcess = Process()
+        process = launchedProcess
+        launchedProcess.executableURL = try pinchosExecutable()
+        launchedProcess.arguments = ["doctor"]
+        var environment = ProcessInfo.processInfo.environment
+        environment["XDG_CONFIG_HOME"] = root.path
+        launchedProcess.environment = environment
+        launchedProcess.standardOutput = FileHandle.nullDevice
+        launchedProcess.standardError = FileHandle.nullDevice
+        try launchedProcess.run()
+
+        parentIdentity = try XCTUnwrap(processIdentity(for: launchedProcess.processIdentifier))
+        let childPID = try waitForPID(at: markerURL)
+        XCTAssertEqual(kill(childPID, 0), 0, "doctor marker child must exist before signal delivery")
+        let childProcess = try XCTUnwrap(processIdentity(for: childPID))
+        let groupID = try XCTUnwrap(processGroupID(for: childPID))
+        let groupLeader = try XCTUnwrap(processIdentity(for: groupID))
+        supervisorIdentity = groupLeader
+        let groupProcesses = processIdentities(in: groupID)
+        XCTAssertEqual(groupLeader.parentPID, parentIdentity?.pid)
+        XCTAssertTrue(groupProcesses.contains(childProcess))
+        XCTAssertTrue(groupProcesses.allSatisfy { isDescendant($0, of: parentIdentity!) })
+        ownedProcesses.formUnion(groupProcesses)
+        ownedPIDs.formUnion(groupProcesses.map(\.pid))
+        XCTAssertEqual(kill(launchedProcess.processIdentifier, SIGTERM), 0)
+        launchedProcess.waitUntilExit()
+
+        XCTAssertTrue(waitUntilGone(childPID), "doctor SIGTERM left owned descendant \(childPID) alive")
+        for pid in ownedPIDs {
+            XCTAssertTrue(waitUntilGone(pid), "doctor SIGTERM left owned process \(pid) alive")
+        }
+        XCTAssertTrue(waitUntilGroupGone(groupID), "doctor SIGTERM left owned process group \(groupID) alive")
+        XCTAssertEqual(launchedProcess.terminationReason, .exit)
+        XCTAssertEqual(launchedProcess.terminationStatus, 143)
+    }
+
     func testGUISIGTERMCancelsMainRunnerAndRemovesOwnedDescendants() throws {
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent("pinchos-issue44-gui-signal-\(UUID().uuidString)", isDirectory: true)
@@ -27,6 +107,8 @@ final class SignalIntegrationTests: XCTestCase {
         let markerURL = root.appendingPathComponent("child.pid")
         try FileManager.default.createDirectory(at: configDirectory, withIntermediateDirectories: true)
         var process: Process?
+        var parentIdentity: OwnedProcess?
+        var supervisorIdentity: OwnedProcess?
         var ownedProcesses = Set<OwnedProcess>()
         var ownedPIDs = Set<pid_t>()
         defer {
@@ -34,7 +116,11 @@ final class SignalIntegrationTests: XCTestCase {
                 process.terminate()
                 process.waitUntilExit()
             }
-            cleanupProcesses(processes: ownedProcesses)
+            cleanupProcesses(
+                processes: ownedProcesses,
+                owner: supervisorIdentity,
+                parent: parentIdentity
+            )
             try? FileManager.default.removeItem(at: root)
         }
 
@@ -53,22 +139,23 @@ final class SignalIntegrationTests: XCTestCase {
         environment["XDG_CONFIG_HOME"] = root.path
         environment["PINCHOS_MARKER"] = markerURL.path
         launchedProcess.environment = environment
-        launchedProcess.standardOutput = Pipe()
-        launchedProcess.standardError = Pipe()
+        launchedProcess.standardOutput = FileHandle.nullDevice
+        launchedProcess.standardError = FileHandle.nullDevice
         try launchedProcess.run()
 
+        parentIdentity = try XCTUnwrap(processIdentity(for: launchedProcess.processIdentifier))
         let childPID = try waitForPID(at: markerURL)
         XCTAssertEqual(kill(childPID, 0), 0, "GUI marker child must exist before signal delivery")
-        ownedPIDs.insert(childPID)
-        if let childProcess = processIdentity(for: childPID) {
-            ownedProcesses.insert(childProcess)
-        }
-        let groupID = processGroupID(for: childPID)
-        if let groupID {
-            let groupProcesses = processIdentities(in: groupID)
-            ownedProcesses.formUnion(groupProcesses)
-            ownedPIDs.formUnion(groupProcesses.map(\.pid))
-        }
+        let childProcess = try XCTUnwrap(processIdentity(for: childPID))
+        let groupID = try XCTUnwrap(processGroupID(for: childPID))
+        let groupLeader = try XCTUnwrap(processIdentity(for: groupID))
+        supervisorIdentity = groupLeader
+        let groupProcesses = processIdentities(in: groupID)
+        XCTAssertEqual(groupLeader.parentPID, parentIdentity?.pid)
+        XCTAssertTrue(groupProcesses.contains(childProcess))
+        XCTAssertTrue(groupProcesses.allSatisfy { isDescendant($0, of: parentIdentity!) })
+        ownedProcesses.formUnion(groupProcesses)
+        ownedPIDs.formUnion(groupProcesses.map(\.pid))
         XCTAssertTrue(ownedPIDs.contains(childPID), "GUI marker child must be in the owned process group")
         XCTAssertEqual(kill(launchedProcess.processIdentifier, SIGTERM), 0)
         launchedProcess.waitUntilExit()
@@ -77,9 +164,7 @@ final class SignalIntegrationTests: XCTestCase {
         for pid in ownedPIDs {
             XCTAssertTrue(waitUntilGone(pid), "GUI SIGTERM left owned process \(pid) alive")
         }
-        if let groupID {
-            XCTAssertTrue(waitUntilGroupGone(groupID), "GUI SIGTERM left owned process group \(groupID) alive")
-        }
+        XCTAssertTrue(waitUntilGroupGone(groupID), "GUI SIGTERM left owned process group \(groupID) alive")
         XCTAssertEqual(launchedProcess.terminationReason, .exit)
     }
 
@@ -116,8 +201,8 @@ final class SignalIntegrationTests: XCTestCase {
         var environment = ProcessInfo.processInfo.environment
         environment["XDG_CONFIG_HOME"] = root.path
         process.environment = environment
-        process.standardOutput = Pipe()
-        process.standardError = Pipe()
+        process.standardOutput = FileHandle.nullDevice
+        process.standardError = FileHandle.nullDevice
         try process.run()
         process.waitUntilExit()
 
@@ -137,6 +222,8 @@ final class SignalIntegrationTests: XCTestCase {
         let markerURL = root.appendingPathComponent("child.pid")
         try FileManager.default.createDirectory(at: configDirectory, withIntermediateDirectories: true)
         var process: Process?
+        var parentIdentity: OwnedProcess?
+        var supervisorIdentity: OwnedProcess?
         var ownedProcesses = Set<OwnedProcess>()
         var ownedPIDs = Set<pid_t>()
         defer {
@@ -144,7 +231,11 @@ final class SignalIntegrationTests: XCTestCase {
                 process.terminate()
                 process.waitUntilExit()
             }
-            cleanupProcesses(processes: ownedProcesses)
+            cleanupProcesses(
+                processes: ownedProcesses,
+                owner: supervisorIdentity,
+                parent: parentIdentity
+            )
             try? FileManager.default.removeItem(at: root)
         }
 
@@ -162,22 +253,23 @@ final class SignalIntegrationTests: XCTestCase {
         environment["XDG_CONFIG_HOME"] = root.path
         environment["PINCHOS_MARKER"] = markerURL.path
         launchedProcess.environment = environment
-        launchedProcess.standardOutput = Pipe()
-        launchedProcess.standardError = Pipe()
+        launchedProcess.standardOutput = FileHandle.nullDevice
+        launchedProcess.standardError = FileHandle.nullDevice
         try launchedProcess.run()
 
+        parentIdentity = try XCTUnwrap(processIdentity(for: launchedProcess.processIdentifier))
         let childPID = try waitForPID(at: markerURL)
         XCTAssertEqual(kill(childPID, 0), 0, "marker child must exist before signal delivery")
-        ownedPIDs.insert(childPID)
-        if let childProcess = processIdentity(for: childPID) {
-            ownedProcesses.insert(childProcess)
-        }
-        let groupID = processGroupID(for: childPID)
-        if let groupID {
-            let groupProcesses = processIdentities(in: groupID)
-            ownedProcesses.formUnion(groupProcesses)
-            ownedPIDs.formUnion(groupProcesses.map(\.pid))
-        }
+        let childProcess = try XCTUnwrap(processIdentity(for: childPID))
+        let groupID = try XCTUnwrap(processGroupID(for: childPID))
+        let groupLeader = try XCTUnwrap(processIdentity(for: groupID))
+        supervisorIdentity = groupLeader
+        let groupProcesses = processIdentities(in: groupID)
+        XCTAssertEqual(groupLeader.parentPID, parentIdentity?.pid)
+        XCTAssertTrue(groupProcesses.contains(childProcess))
+        XCTAssertTrue(groupProcesses.allSatisfy { isDescendant($0, of: parentIdentity!) })
+        ownedProcesses.formUnion(groupProcesses)
+        ownedPIDs.formUnion(groupProcesses.map(\.pid))
         XCTAssertTrue(ownedPIDs.contains(childPID), "marker child must be in the owned process group")
         let signalStartedAt = Date()
         XCTAssertEqual(kill(launchedProcess.processIdentifier, signal), 0)
@@ -194,9 +286,7 @@ final class SignalIntegrationTests: XCTestCase {
         for pid in ownedPIDs {
             XCTAssertTrue(waitUntilGone(pid), "owned process \(pid) survived signal cleanup")
         }
-        if let groupID {
-            XCTAssertTrue(waitUntilGroupGone(groupID), "owned process group \(groupID) survived signal cleanup")
-        }
+        XCTAssertTrue(waitUntilGroupGone(groupID), "owned process group \(groupID) survived signal cleanup")
         XCTAssertEqual(launchedProcess.terminationReason, .exit)
         XCTAssertEqual(launchedProcess.terminationStatus, expectedExitCode)
     }
@@ -254,8 +344,24 @@ final class SignalIntegrationTests: XCTestCase {
         return processIDs(in: group).isEmpty
     }
 
-    private func cleanupProcesses(processes: Set<OwnedProcess>) {
-        let killableProcesses = processes.filter { processIdentity(for: $0.pid) == $0 }
+    private func cleanupProcesses(
+        processes: Set<OwnedProcess>,
+        owner: OwnedProcess?,
+        parent: OwnedProcess?
+    ) {
+        guard let owner, let parent,
+            owner.parentPID == parent.pid,
+            processIdentity(for: owner.pid) == owner,
+            processIdentity(for: parent.pid) == parent
+        else {
+            return
+        }
+
+        let killableProcesses = processes.filter {
+            processIdentity(for: $0.pid) == $0
+                && $0.groupID == owner.groupID
+                && isDescendant($0, of: parent)
+        }
         for process in killableProcesses {
             _ = kill(process.pid, SIGKILL)
         }
@@ -265,8 +371,7 @@ final class SignalIntegrationTests: XCTestCase {
     }
 
     private func processGroupID(for pid: pid_t) -> pid_t? {
-        let output = runProcess(arguments: ["-p", String(pid), "-o", "pgid="])
-        return output.flatMap { pid_t($0.trimmingCharacters(in: .whitespacesAndNewlines)) }
+        processIdentity(for: pid)?.groupID
     }
 
     private func processIDs(in group: pid_t) -> [pid_t] {
@@ -274,35 +379,44 @@ final class SignalIntegrationTests: XCTestCase {
     }
 
     private func processIdentity(for pid: pid_t) -> OwnedProcess? {
-        guard let output = runProcess(arguments: ["-p", String(pid), "-o", "pid=,ppid=,pgid=,lstart=,comm="]) else {
-            return nil
-        }
-        return output.split(whereSeparator: \.isNewline).compactMap(parseProcessIdentity).first
-    }
-
-    private func processIdentities(in group: pid_t) -> [OwnedProcess] {
-        let output = runProcess(arguments: ["-axo", "pid=,ppid=,pgid=,lstart=,comm="]) ?? ""
-        return output.split(whereSeparator: \.isNewline).compactMap(parseProcessIdentity).filter {
-            $0.groupID == group
-        }
-    }
-
-    private func parseProcessIdentity(_ line: Substring) -> OwnedProcess? {
-        let fields = line.split(whereSeparator: \.isWhitespace)
-        guard fields.count >= 9,
-            let pid = pid_t(fields[0]),
-            let parentPID = pid_t(fields[1]),
-            let groupID = pid_t(fields[2])
-        else {
+        var info = proc_bsdinfo()
+        let expectedSize = Int32(MemoryLayout<proc_bsdinfo>.size)
+        guard proc_pidinfo(pid, PROC_PIDTBSDINFO, 0, &info, expectedSize) == expectedSize else {
             return nil
         }
         return OwnedProcess(
-            pid: pid,
-            parentPID: parentPID,
-            groupID: groupID,
-            startTime: fields[3...7].joined(separator: " "),
-            command: fields.dropFirst(8).joined(separator: " ")
+            pid: pid_t(info.pbi_pid),
+            parentPID: pid_t(info.pbi_ppid),
+            groupID: pid_t(info.pbi_pgid),
+            startSeconds: info.pbi_start_tvsec,
+            startMicroseconds: info.pbi_start_tvusec
         )
+    }
+
+    private func processIdentities(in group: pid_t) -> [OwnedProcess] {
+        processTablePIDs().compactMap { processIdentity(for: $0) }.filter { $0.groupID == group }
+    }
+
+    private func processTablePIDs() -> [pid_t] {
+        let output = runProcess(arguments: ["-axo", "pid="]) ?? ""
+        return output.split(whereSeparator: \.isWhitespace).compactMap(parseProcessID)
+    }
+
+    private func isDescendant(_ process: OwnedProcess, of ancestor: OwnedProcess) -> Bool {
+        if process == ancestor { return true }
+        var currentPID = process.parentPID
+        var visited = Set<pid_t>()
+        while currentPID > 0, visited.insert(currentPID).inserted {
+            guard let current = processIdentity(for: currentPID) else { return false }
+            if current == ancestor { return true }
+            currentPID = current.parentPID
+        }
+        return false
+    }
+
+    private func parseProcessID(_ line: Substring) -> pid_t? {
+        let fields = line.split(whereSeparator: \.isWhitespace)
+        return fields.first.flatMap { pid_t(String($0)) }
     }
 
     private func runProcess(arguments: [String]) -> String? {

@@ -5,10 +5,15 @@ import PinchosCore
 
 let arguments = Array(CommandLine.arguments.dropFirst())
 if !arguments.isEmpty {
+    let runnerRegistry = MainActor.assumeIsolated {
+        CLICommandRunnerRegistry()
+    }
     let shutdownCoordinator = MainActor.assumeIsolated {
         let coordinator = ShutdownCoordinator(
             signalNumbers: [SIGTERM, SIGINT],
-            cleanup: {},
+            cleanup: {
+                await runnerRegistry.cancelAll()
+            },
             forcedExit: { code in Darwin.exit(code) },
             autoFinishOnCleanup: false
         )
@@ -16,7 +21,10 @@ if !arguments.isEmpty {
         return coordinator
     }
     Task { @MainActor in
-        let exitCode = await PinchosCLI(shutdownCoordinator: shutdownCoordinator).run(arguments: arguments)
+        let exitCode = await PinchosCLI(
+            shutdownCoordinator: shutdownCoordinator,
+            runnerRegistry: runnerRegistry
+        ).run(arguments: arguments)
         let finalExitCode = await shutdownCoordinator.finish(exitCode: exitCode)
         shutdownCoordinator.stop()
         Darwin.exit(finalExitCode)
