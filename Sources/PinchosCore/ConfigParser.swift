@@ -784,7 +784,9 @@ public enum ConfigParser {
                 path: "item.\(name).env",
                 expected: "table",
                 value: value,
-                line: sourceLines[.section(item: name, path: "env")] ?? sourceLines[.item(name)]
+                line: sourceLines[.field(item: name, path: "env", actionIndex: nil)]
+                    ?? sourceLines[.section(item: name, path: "env")]
+                    ?? sourceLines[.item(name)]
             )
         }
 
