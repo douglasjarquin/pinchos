@@ -11,6 +11,62 @@ final class SignalIntegrationTests: XCTestCase {
         try runSignalScenario(signal: SIGTERM, expectedExitCode: 143)
     }
 
+    func testGUISIGTERMCancelsMainRunnerAndRemovesOwnedDescendants() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("pinchos-issue44-gui-signal-\(UUID().uuidString)", isDirectory: true)
+        let configDirectory = root.appendingPathComponent("pinchos", isDirectory: true)
+        let configURL = configDirectory.appendingPathComponent("pinchos.toml")
+        let markerURL = root.appendingPathComponent("child.pid")
+        try FileManager.default.createDirectory(at: configDirectory, withIntermediateDirectories: true)
+        var process: Process?
+        var ownedPIDs = Set<pid_t>()
+        defer {
+            if let process, process.isRunning {
+                process.terminate()
+                process.waitUntilExit()
+            }
+            cleanupProcesses(pids: ownedPIDs)
+            try? FileManager.default.removeItem(at: root)
+        }
+
+        try #"""
+        [item.gui]
+        type = "command"
+        interval = "manual"
+        timeout = "1h"
+        run = "(trap '' TERM INT; while :; do sleep 1; done) & child_pid=$!; printf '%s' \"$child_pid\" > \"$PINCHOS_MARKER\"; wait \"$child_pid\""
+        """#.write(to: configURL, atomically: true, encoding: .utf8)
+
+        let launchedProcess = Process()
+        process = launchedProcess
+        launchedProcess.executableURL = try pinchosExecutable()
+        var environment = ProcessInfo.processInfo.environment
+        environment["XDG_CONFIG_HOME"] = root.path
+        environment["PINCHOS_MARKER"] = markerURL.path
+        launchedProcess.environment = environment
+        launchedProcess.standardOutput = Pipe()
+        launchedProcess.standardError = Pipe()
+        try launchedProcess.run()
+
+        let childPID = try waitForPID(at: markerURL)
+        XCTAssertEqual(kill(childPID, 0), 0, "GUI marker child must exist before signal delivery")
+        ownedPIDs.insert(childPID)
+        let groupID = processGroupID(for: childPID)
+        ownedPIDs.formUnion(groupID.map(processIDs(in:)) ?? [])
+        XCTAssertTrue(ownedPIDs.contains(childPID), "GUI marker child must be in the owned process group")
+        XCTAssertEqual(kill(launchedProcess.processIdentifier, SIGTERM), 0)
+        launchedProcess.waitUntilExit()
+
+        XCTAssertTrue(waitUntilGone(childPID), "GUI SIGTERM left owned descendant \(childPID) alive")
+        for pid in ownedPIDs {
+            XCTAssertTrue(waitUntilGone(pid), "GUI SIGTERM left owned process \(pid) alive")
+        }
+        if let groupID {
+            XCTAssertTrue(waitUntilGroupGone(groupID), "GUI SIGTERM left owned process group \(groupID) alive")
+        }
+        XCTAssertEqual(launchedProcess.terminationReason, .exit)
+    }
+
     func testRepeatedAndMixedSignalsUseFirstTerminationRequest() throws {
         try runSignalScenario(
             signal: SIGINT,
@@ -124,8 +180,8 @@ final class SignalIntegrationTests: XCTestCase {
     private func pinchosExecutable() throws -> URL {
         let root = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
         let candidates = [
-            root.appendingPathComponent(".build/arm64-apple-macosx/debug/pinchos"),
-            root.appendingPathComponent(".build/arm64-apple-macosx/release/pinchos")
+            root.appendingPathComponent(".build/arm64-apple-macosx/release/pinchos"),
+            root.appendingPathComponent(".build/arm64-apple-macosx/debug/pinchos")
         ]
         if let executable = candidates.first(where: { FileManager.default.isExecutableFile(atPath: $0.path) }) {
             return executable
