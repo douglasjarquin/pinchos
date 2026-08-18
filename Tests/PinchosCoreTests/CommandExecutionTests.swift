@@ -411,19 +411,35 @@ final class CommandExecutionTests: XCTestCase {
     }
 
     func testCancellationDoesNotSignalARecycledProcessGroupAfterSessionOwnershipEnds() {
-        let signalProbe = FakeSignalProbe()
-        let original = FakeProcessSession(numericGroupID: 71, signalProbe: signalProbe, isOwned: true, hasDescendants: true)
-        let unrelated = FakeProcessSession(numericGroupID: 71, signalProbe: signalProbe, isOwned: true, hasDescendants: true)
-        let controller = ProcessGroupController(session: original)
-
+        let signalBackend = FakeSignalBackend()
+        let originalTarget = FakeSignalTarget()
+        let original = FakeProcessSession(
+            numericGroupID: 71,
+            signalBackend: signalBackend,
+            signalTarget: originalTarget,
+            isOwned: true,
+            hasDescendants: true
+        )
         original.release()
+
+        let unrelatedTarget = FakeSignalTarget()
+        let unrelated = FakeProcessSession(
+            numericGroupID: original.numericGroupID,
+            signalBackend: signalBackend,
+            signalTarget: unrelatedTarget,
+            isOwned: true,
+            hasDescendants: true
+        )
+        let controller = ProcessGroupController(session: original)
 
         _ = controller.beginTermination(.cancelled)
 
         XCTAssertEqual(original.numericGroupID, unrelated.numericGroupID)
+        XCTAssertTrue(signalBackend.target(for: original.numericGroupID) === unrelatedTarget)
         XCTAssertEqual(original.terminationRequestCount, 0)
         XCTAssertEqual(unrelated.terminationRequestCount, 0)
-        XCTAssertEqual(signalProbe.signaledGroupIDs, [])
+        XCTAssertEqual(originalTarget.signalCount, 0)
+        XCTAssertEqual(unrelatedTarget.signalCount, 0)
     }
 
     func testOwnedProcessSessionReceivesOneTerminationSequenceForRepeatedClaims() {
@@ -464,45 +480,78 @@ final class CommandExecutionTests: XCTestCase {
     }
 }
 
-private final class FakeSignalProbe: @unchecked Sendable {
+private final class FakeSignalTarget: @unchecked Sendable {
     private let lock = NSLock()
-    private var signaledGroupIDsStorage = [pid_t]()
+    private var signalCountStorage = 0
 
-    var signaledGroupIDs: [pid_t] {
+    var signalCount: Int {
         lock.lock()
         defer { lock.unlock() }
-        return signaledGroupIDsStorage
+        return signalCountStorage
     }
 
-    func record(groupID: pid_t) {
+    func receiveSignal() {
         lock.lock()
-        signaledGroupIDsStorage.append(groupID)
+        signalCountStorage += 1
         lock.unlock()
+    }
+}
+
+private final class FakeSignalBackend: @unchecked Sendable {
+    private let lock = NSLock()
+    private var targets = [pid_t: FakeSignalTarget]()
+
+    func register(groupID: pid_t, target: FakeSignalTarget) {
+        lock.lock()
+        targets[groupID] = target
+        lock.unlock()
+    }
+
+    func unregister(groupID: pid_t, target: FakeSignalTarget) {
+        lock.lock()
+        if targets[groupID] === target {
+            targets[groupID] = nil
+        }
+        lock.unlock()
+    }
+
+    func target(for groupID: pid_t) -> FakeSignalTarget? {
+        lock.lock()
+        defer { lock.unlock() }
+        return targets[groupID]
+    }
+
+    func signal(groupID: pid_t) {
+        target(for: groupID)?.receiveSignal()
     }
 }
 
 private final class FakeProcessSession: ProcessSessionIdentity, @unchecked Sendable {
     let numericGroupID: pid_t
-    private let signalProbe: FakeSignalProbe
+    private let signalBackend: FakeSignalBackend
+    private let signalTarget: FakeSignalTarget
     var isOwned: Bool
     var hasDescendants: Bool
     private(set) var terminationRequestCount = 0
 
     init(
         numericGroupID: pid_t = 0,
-        signalProbe: FakeSignalProbe = FakeSignalProbe(),
+        signalBackend: FakeSignalBackend = FakeSignalBackend(),
+        signalTarget: FakeSignalTarget = FakeSignalTarget(),
         isOwned: Bool,
         hasDescendants: Bool
     ) {
         self.numericGroupID = numericGroupID
-        self.signalProbe = signalProbe
+        self.signalBackend = signalBackend
+        self.signalTarget = signalTarget
         self.isOwned = isOwned
         self.hasDescendants = hasDescendants
+        signalBackend.register(groupID: numericGroupID, target: signalTarget)
     }
 
     func requestTermination() {
         terminationRequestCount += 1
-        signalProbe.record(groupID: numericGroupID)
+        signalBackend.signal(groupID: numericGroupID)
     }
 
     func commandDidExit() {}
@@ -510,6 +559,7 @@ private final class FakeProcessSession: ProcessSessionIdentity, @unchecked Senda
     func release() {
         isOwned = false
         hasDescendants = false
+        signalBackend.unregister(groupID: numericGroupID, target: signalTarget)
     }
 
     func waitForExit() async {}

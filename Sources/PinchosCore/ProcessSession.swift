@@ -91,7 +91,7 @@ final class SupervisorProcessSession: ProcessSessionIdentity, @unchecked Sendabl
     let processGroupID: pid_t
     private let state: State
     private let supervisorWaitTask: Task<Void, Never>
-    private let lifecycleLock = NSLock()
+    private let lifecycleLock: NSLock
     private let descriptorLock = NSLock()
     private let statusReadLock = NSLock()
     private var controlWrite: Int32
@@ -108,10 +108,12 @@ final class SupervisorProcessSession: ProcessSessionIdentity, @unchecked Sendabl
         self.statusRead = statusRead
         let state = State()
         self.state = state
+        let lifecycleLock = NSLock()
+        self.lifecycleLock = lifecycleLock
         self.supervisorWaitTask = Task.detached {
             var status: Int32 = 0
             while waitpid(processGroupID, &status, 0) == -1, errno == EINTR {}
-            state.markExited()
+            Self.publishSupervisorExit(state: state, lifecycleLock: lifecycleLock)
         }
     }
 
@@ -162,7 +164,6 @@ final class SupervisorProcessSession: ProcessSessionIdentity, @unchecked Sendabl
 
     func waitForExit() async {
         await supervisorWaitTask.value
-        state.markExited()
         closeControlDescriptor()
         closeStatusDescriptor()
     }
@@ -221,6 +222,12 @@ final class SupervisorProcessSession: ProcessSessionIdentity, @unchecked Sendabl
         statusRead = -1
         descriptorLock.unlock()
         if fileDescriptor >= 0 { close(fileDescriptor) }
+    }
+
+    private static func publishSupervisorExit(state: State, lifecycleLock: NSLock) {
+        lifecycleLock.lock()
+        defer { lifecycleLock.unlock() }
+        state.markExited()
     }
 
 }
