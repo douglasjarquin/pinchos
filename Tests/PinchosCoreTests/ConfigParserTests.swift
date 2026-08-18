@@ -171,6 +171,57 @@ final class ConfigParserTests: XCTestCase {
         }
     }
 
+    func testQuotedItemNameDoesNotCollideWithNestedActionSourceLines() {
+        let toml = """
+        [item.a]
+        type = "command"
+        run = "date"
+
+        [[item.a.action]]
+        title = "Run"
+        run = "echo hi"
+
+        [item."a.action[0]"]
+        type = "command"
+        """
+
+        XCTAssertThrowsError(try ConfigParser.parse(toml)) { error in
+            let parseError = error as? ConfigParseError
+            XCTAssertTrue(parseError?.message.contains("item.a.action[0]: missing required field 'run'") == true)
+            XCTAssertEqual(parseError?.line, 9)
+        }
+    }
+
+    func testEscapedQuotedKeyUsesAssignmentSourceLine() {
+        let toml = #"""
+        [item.clock]
+        type = "command"
+        run = "date"
+        "inter\u0076al" = 5
+        """#
+
+        XCTAssertThrowsError(try ConfigParser.parse(toml)) { error in
+            let parseError = error as? ConfigParseError
+            XCTAssertTrue(parseError?.message.contains("item.clock.interval: type error") == true)
+            XCTAssertEqual(parseError?.line, 4)
+        }
+    }
+
+    func testEscapedControlInQuotedItemNameCannotEnterDiagnostics() {
+        let toml = #"""
+        [item."bad\u001Bname"]
+        type = "command"
+        run = "date"
+        unknown = true
+        """#
+
+        XCTAssertThrowsError(try ConfigParser.parse(toml)) { error in
+            let parseError = error as? ConfigParseError
+            XCTAssertFalse(parseError?.message.unicodeScalars.contains { $0.value == 0x1B } == true)
+            XCTAssertTrue(parseError?.message.contains("\\u{1B}") == true)
+        }
+    }
+
     func testRejectsUnknownActionKeysWithIndexAndActionSourceLine() {
         let toml = """
         [item.clock]

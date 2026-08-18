@@ -24,6 +24,15 @@ public enum ConfigParser {
 
     static let supportedActionKeys: Set<String> = ["title", "run", "refresh"]
 
+    private enum SourceLineKey: Hashable {
+        case item(String)
+        case section(item: String, path: String)
+        case action(item: String, index: Int)
+        case field(item: String, path: String, actionIndex: Int?)
+    }
+
+    private typealias SourceLineMap = [SourceLineKey: Int]
+
     public static func parse(_ text: String, relativeTo configURL: URL? = nil) throws -> PinchosConfig {
         let order = declaredItemOrder(in: text)
         let sourceLines = sourceLineMap(in: text)
@@ -66,8 +75,8 @@ public enum ConfigParser {
         return order
     }
 
-    private static func sourceLineMap(in text: String) -> [String: Int] {
-        var lines: [String: Int] = [:]
+    private static func sourceLineMap(in text: String) -> SourceLineMap {
+        var lines: SourceLineMap = [:]
         var currentItem: String?
         var currentSection: String?
         var multilineDelimiter: String?
@@ -97,11 +106,11 @@ public enum ConfigParser {
                     let index = actionIndices[name, default: 0]
                     actionIndices[name] = index + 1
                     currentActionIndex = index
-                    lines["\(name).action[\(index)]"] = lineNumber
+                    lines[.action(item: name, index: index)] = lineNumber
                 } else {
                     currentActionIndex = nil
                 }
-                lines["\(name).\(section)"] = lineNumber
+                lines[.section(item: name, path: section)] = lineNumber
                 continue
             }
 
@@ -111,26 +120,25 @@ public enum ConfigParser {
                 currentItem = name
                 currentSection = components.count == 2 ? nil : components.dropFirst(2).joined(separator: ".")
                 currentActionIndex = nil
-                lines[name] = lines[name] ?? lineNumber
+                lines[.item(name)] = lines[.item(name)] ?? lineNumber
                 if let currentSection {
-                    lines["\(name).\(currentSection)"] = lineNumber
+                    lines[.section(item: name, path: currentSection)] = lineNumber
                 }
                 continue
             }
 
             guard let currentItem, let equals = assignmentSeparator(in: line) else { continue }
             let rawKey = line[..<equals].trimmingCharacters(in: .whitespaces)
-            let key = rawKey.trimmingCharacters(in: CharacterSet(charactersIn: "\"'"))
+            let key = decodeAssignmentKey(String(rawKey))
             guard !key.isEmpty else { continue }
-            let path: String
             if currentSection == "action", let currentActionIndex {
-                path = "\(currentItem).action[\(currentActionIndex)].\(key)"
+                lines[.field(item: currentItem, path: key, actionIndex: currentActionIndex)] = lineNumber
             } else {
-                path = [currentItem, currentSection, key]
+                let path = [currentSection, key]
                     .compactMap { $0 }
                     .joined(separator: ".")
+                lines[.field(item: currentItem, path: path, actionIndex: nil)] = lineNumber
             }
-            lines[path] = lineNumber
             multilineDelimiter = openMultilineDelimiter(in: String(line[line.index(after: equals)...]))
         }
 
@@ -277,6 +285,18 @@ public enum ConfigParser {
         return decoded
     }
 
+    private static func decodeAssignmentKey(_ rawKey: String) -> String {
+        let key = rawKey.trimmingCharacters(in: .whitespaces)
+        guard key.count >= 2,
+              let first = key.first,
+              let last = key.last,
+              (first == "\"" && last == "\"") || (first == "'" && last == "'") else {
+            return key
+        }
+        let content = String(key.dropFirst().dropLast())
+        return first == "\"" ? decodeBasicKey(content) : content
+    }
+
     private static func assignmentSeparator(in line: String) -> String.Index? {
         var quote: Character?
         var escaped = false
@@ -342,22 +362,22 @@ public enum ConfigParser {
         item name: String,
         key: String,
         index: Int? = nil,
-        sourceLines: [String: Int]
+        sourceLines: SourceLineMap
     ) -> Int? {
         if let index {
-            return sourceLines["\(name).action[\(index)].\(key)"]
-                ?? sourceLines["\(name).action[\(index)]"]
-                ?? sourceLines["\(name).action"]
-                ?? sourceLines[name]
+            return sourceLines[.field(item: name, path: key, actionIndex: index)]
+                ?? sourceLines[.action(item: name, index: index)]
+                ?? sourceLines[.section(item: name, path: "action")]
+                ?? sourceLines[.item(name)]
         }
-        return sourceLines["\(name).\(key)"] ?? sourceLines[name]
+        return sourceLines[.field(item: name, path: key, actionIndex: nil)] ?? sourceLines[.item(name)]
     }
 
     private static func parseItem(
         name: String,
         table: TOMLTable,
         relativeTo configURL: URL?,
-        sourceLines: [String: Int]
+        sourceLines: SourceLineMap
     ) throws -> ItemConfig {
         try validateUnknownKeys(
             in: table,
@@ -598,7 +618,7 @@ public enum ConfigParser {
     private static func parseActions(
         name: String,
         value: TOMLValueConvertible?,
-        sourceLines: [String: Int]
+        sourceLines: SourceLineMap
     ) throws -> [ItemAction] {
         guard let value else { return [] }
         guard let array = value.array else {
@@ -687,7 +707,7 @@ public enum ConfigParser {
         name: String,
         value: TOMLValueConvertible?,
         relativeTo configURL: URL?,
-        sourceLines: [String: Int]
+        sourceLines: SourceLineMap
     ) throws -> [String] {
         guard let value else { return ItemConfig.defaultShell }
         guard let array = value.array else {
@@ -730,7 +750,7 @@ public enum ConfigParser {
         name: String,
         value: TOMLValueConvertible?,
         relativeTo configURL: URL?,
-        sourceLines: [String: Int]
+        sourceLines: SourceLineMap
     ) throws -> String? {
         guard let value else { return nil }
         guard let rawPath = value.string else {
@@ -756,7 +776,7 @@ public enum ConfigParser {
     private static func parseEnvironment(
         name: String,
         value: TOMLValueConvertible?,
-        sourceLines: [String: Int]
+        sourceLines: SourceLineMap
     ) throws -> [String: String] {
         guard let value else { return [:] }
         guard let table = value.table else {
@@ -764,7 +784,7 @@ public enum ConfigParser {
                 path: "item.\(name).env",
                 expected: "table",
                 value: value,
-                line: sourceLines["\(name).env"] ?? sourceLines[name]
+                line: sourceLines[.section(item: name, path: "env")] ?? sourceLines[.item(name)]
             )
         }
 
@@ -826,7 +846,7 @@ public enum ConfigParser {
         name: String,
         key: String,
         table: TOMLTable,
-        sourceLines: [String: Int],
+        sourceLines: SourceLineMap,
         requireNonEmpty: Bool = false
     ) throws -> String {
         guard let value = table[key] else {
@@ -847,7 +867,7 @@ public enum ConfigParser {
         name: String,
         key: String,
         table: TOMLTable,
-        sourceLines: [String: Int],
+        sourceLines: SourceLineMap,
         requireNonEmpty: Bool = false
     ) throws -> String? {
         guard let value = table[key] else { return nil }
@@ -863,7 +883,7 @@ public enum ConfigParser {
         name: String,
         key: String,
         value: TOMLValueConvertible,
-        sourceLines: [String: Int],
+        sourceLines: SourceLineMap,
         requireNonEmpty: Bool = false
     ) throws -> String {
         try stringValue(
