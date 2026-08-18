@@ -103,6 +103,17 @@ CLI exit codes are suitable for scripts.
 `0` means success, `2` means invalid command usage, `3` means config or open failure, and `4` means `doctor` found a problem.
 `run` preserves a configured command's exit code, uses `124` for timeouts, and uses `127` for launch failures.
 
+### Strict schema compatibility
+
+Pinchos validates the current TOML schema strictly at every entry point.
+Unknown keys under `item.*`, including action keys, are configuration errors with the item path and source line.
+Present values must use the documented TOML type; integers, booleans, arrays, and tables are not silently coerced to strings or treated as absent.
+`run`, `click`, and action `run` commands must contain non-whitespace text.
+Environment variable names remain an explicitly dynamic set, but each name must be valid for the configured shell and each value must be a string without NUL bytes.
+This strict behavior applies to `pinchos validate`, `doctor`, `run`, and live GUI reloads.
+Configurations that relied on ignored typos or wrong types must be corrected before upgrading to this schema behavior.
+When a new model field is added, its supported-key enumeration and parser validation must be updated together.
+
 ### Schema (v1)
 
 Every item is a `[item.<name>]` table. Items render left-to-right in the order their tables appear in the file.
