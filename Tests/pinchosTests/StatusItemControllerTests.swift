@@ -393,7 +393,7 @@ final class StatusItemControllerTests: XCTestCase {
         let lastGoodItem = factory.created[0]
         factory.eventLog.clear()
 
-        await controller.showParseError(ConfigParseError(message: "item.alpha.intervall: unknown key", line: 4))
+        await controller.showParseError(String(describing: ConfigParseError(message: "item.alpha.intervall: unknown key", line: 4)))
 
         XCTAssertTrue(factory.created[0] === lastGoodItem)
         XCTAssertTrue(factory.eventLog.events.isEmpty)

@@ -118,6 +118,8 @@ When a new model field is added, its supported-key enumeration and parser valida
 
 Every item is a `[item.<name>]` table. Items render left-to-right in the order their tables appear in the file.
 
+Items may also be declared with top-level dotted keys (`item.<name>.<key> = value`), which is standard TOML and produces the same result; declaration order is still left-to-right, but dotted-key items must come before the first `[item.*]` header in the file (TOML has no syntax to return to root scope once a header has opened a table). Inline-table item declarations (`item = { <name> = { ... } }` or `item.<name> = { ... }`) parse under the TOML spec but are not a supported Pinchos declaration form and are rejected with an explicit configuration error; use `[item.<name>]` or dotted keys instead.
+
 ```toml
 [item.<name>]
 type = "command"        # required, the only v1 module type
@@ -234,7 +236,9 @@ See [`example/pinchos.toml`](example/pinchos.toml) for a full working config wit
 
 [TOMLKit](https://github.com/LebJe/TOMLKit) is a maintained Swift wrapper around `toml++`, a mature C++17 TOML parser — full spec compliance (escaping, nested tables, arrays, dotted keys) without hand-rolling a parser, which is exactly the kind of correctness-critical, already-solved problem worth depending on rather than reimplementing.
 
-One wrinkle: TOMLKit's underlying store is a `std::map`, so iterating a `TOMLTable` returns keys in **alphabetical**, not declaration, order — a known, currently-unresolved limitation upstream ([marzer/tomlplusplus#62](https://github.com/marzer/tomlplusplus/issues/62)). Since v1's left-to-right item ordering is a hard requirement, `ConfigParser` does a small line-scan over the raw text to record the order `[item.*]` headers appear in, then uses TOMLKit purely for spec-compliant parsing and per-item value access. This isn't a second TOML parser — it's a thin, separately-tested pass that only looks for top-level `[item.X]` headers.
+One wrinkle: TOMLKit's underlying store is a `std::map`, so iterating a `TOMLTable` returns keys in **alphabetical**, not declaration, order — a known, currently-unresolved limitation upstream ([marzer/tomlplusplus#62](https://github.com/marzer/tomlplusplus/issues/62)). Since v1's left-to-right item ordering is a hard requirement, `ConfigParser` does a small line-scan over the raw text to record the order `[item.*]` headers and top-level `item.<name>.<key>` dotted-key declarations appear in, then uses TOMLKit purely for spec-compliant parsing and per-item value access. This isn't a second TOML parser — it's a thin, separately-tested pass that only recognizes those two item-declaring forms.
+
+TOMLKit's parsed tree is authoritative for whether an item exists at all: `ConfigParser` cross-checks the line-scanned name set against TOMLKit's parsed `item` table and fails explicitly on any mismatch, rather than silently returning a config with fewer items than the file actually declares. This matters because TOMLKit/toml++ accepts strictly more syntax than the line scanner recognizes (for example, single-line inline-table item declarations); those forms are rejected with a clear configuration error rather than parsed and then dropped.
 
 Everything else in the app has no third-party dependency.
 

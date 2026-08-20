@@ -36,8 +36,7 @@ public enum ConfigParser {
     private typealias SourceLineMap = [SourceLineKey: Int]
 
     public static func parse(_ text: String, relativeTo configURL: URL? = nil) throws -> PinchosConfig {
-        let order = declaredItemOrder(in: text)
-        let sourceLines = sourceLineMap(in: text)
+        let (order, sourceLines) = try scanSource(text)
 
         let table: TOMLTable
         do {
@@ -65,8 +64,26 @@ public enum ConfigParser {
             )
         }
 
-        let items = try order.compactMap { name -> ItemConfig? in
-            guard let itemTable = itemSection[name]?.table else { return nil }
+        // The parsed TOML tree is authoritative for item existence: `order` (from the source
+        // scan) and `itemSection.keys` (from TOMLKit) must name exactly the same items, or a
+        // declaration form went unrecognized and would otherwise be silently dropped.
+        try crossCheckDiscoveredItems(order: order, itemSection: itemSection, sourceLines: sourceLines)
+
+        let items = try order.map { name -> ItemConfig in
+            guard let itemValue = itemSection[name] else {
+                throw ConfigParseError(
+                    message: "item.\(name): expected item was not found in the parsed configuration",
+                    line: sourceLines[.item(name)] ?? sourceLines[.rootField("item")]
+                )
+            }
+            guard let itemTable = itemValue.table else {
+                throw typeError(
+                    path: "item.\(name)",
+                    expected: "table",
+                    value: itemValue,
+                    line: sourceLines[.item(name)] ?? sourceLines[.rootField("item")]
+                )
+            }
             return try parseItem(
                 name: name,
                 table: itemTable,
@@ -77,29 +94,61 @@ public enum ConfigParser {
         return PinchosConfig(items: items)
     }
 
-    private static func declaredItemOrder(in text: String) -> [String] {
-        var seen = Set<String>()
-        var order: [String] = []
-        for rawLine in text.split(separator: "\n", omittingEmptySubsequences: false) {
-            let line = rawLine.trimmingCharacters(in: .whitespaces)
-            guard let components = headerComponents(in: line) ?? arrayHeaderComponents(in: line), components.count >= 2,
-                  components[0] == "item" else { continue }
-            let name = components[1]
-            guard !name.isEmpty, !seen.contains(name) else { continue }
-            seen.insert(name)
-            order.append(name)
+    private static func crossCheckDiscoveredItems(
+        order: [String],
+        itemSection: TOMLTable,
+        sourceLines: SourceLineMap
+    ) throws {
+        let parsedNames = Set(itemSection.keys)
+        let orderedNames = Set(order)
+        guard parsedNames != orderedNames else { return }
+
+        if let missing = parsedNames.subtracting(orderedNames).sorted().first {
+            throw ConfigParseError(
+                message: "item.\(missing): item declaration form is not supported; "
+                    + "use [item.\(missing)] tables or item.\(missing).<key> dotted keys",
+                line: sourceLines[.rootField("item")]
+            )
         }
-        return order
+        if let extra = orderedNames.subtracting(parsedNames).sorted().first {
+            throw ConfigParseError(
+                message: "item.\(extra): expected item was not found in the parsed configuration",
+                line: sourceLines[.item(extra)]
+            )
+        }
     }
 
-    private static func sourceLineMap(in text: String) -> SourceLineMap {
+    /// Scans the raw source text for two things in a single left-to-right pass:
+    /// - `order`: the left-to-right declaration order of top-level items, used for deterministic
+    ///   native menu-bar placement (TOMLKit's `TOMLTable` iterates keys alphabetically, not in
+    ///   file order, and its parsed tree carries no distinguishable source-order metadata).
+    /// - `lines`: a map from semantic locations (item fields, actions, root keys) to the 1-based
+    ///   source line that declared them, used for diagnostics.
+    ///
+    /// Supported item-declaring forms are standard `[item.<name>]` / `[[item.<name>.<section>]]`
+    /// table headers and top-level dotted-key assignments (`item.<name>.<key> = value`). Inline
+    /// table declarations of an item or of the whole `item` namespace (`item = { ... }` or
+    /// `item.<name> = { ... }`) are rejected explicitly here rather than silently producing an
+    /// incomplete item list: TOMLKit can parse them, but this scanner cannot recover their source
+    /// order, and `PinchosConfig.parse` must never drop an item TOMLKit considers valid.
+    private static func scanSource(_ text: String) throws -> (order: [String], lines: SourceLineMap) {
         var lines: SourceLineMap = [:]
+        var order: [String] = []
+        var seenItemNames = Set<String>()
         var currentItem: String?
         var currentSection: String?
         var multilineDelimiter: String?
 
         var actionIndices: [String: Int] = [:]
         var currentActionIndex: Int?
+
+        func recordItemName(_ name: String, at lineNumber: Int) {
+            if !seenItemNames.contains(name) {
+                seenItemNames.insert(name)
+                order.append(name)
+            }
+            lines[.item(name)] = lines[.item(name)] ?? lineNumber
+        }
 
         for (offset, rawLine) in text.split(separator: "\n", omittingEmptySubsequences: false).enumerated() {
             let lineNumber = offset + 1
@@ -119,6 +168,7 @@ public enum ConfigParser {
                 currentItem = name
                 let section = components.dropFirst(2).joined(separator: ".")
                 currentSection = section
+                recordItemName(name, at: lineNumber)
                 if section == "action" {
                     let index = actionIndices[name, default: 0]
                     actionIndices[name] = index + 1
@@ -145,7 +195,7 @@ public enum ConfigParser {
                 currentItem = name
                 currentSection = components.count == 2 ? nil : components.dropFirst(2).joined(separator: ".")
                 currentActionIndex = nil
-                lines[.item(name)] = lines[.item(name)] ?? lineNumber
+                recordItemName(name, at: lineNumber)
                 if let currentSection {
                     lines[.section(item: name, path: currentSection)] = lineNumber
                 }
@@ -179,6 +229,37 @@ public enum ConfigParser {
                     let sourceKey = SourceLineKey.field(item: currentItem, path: path, actionIndex: nil)
                     lines[sourceKey] = lines[sourceKey] ?? lineNumber
                 }
+            } else if keyComponents[0] == "item" {
+                let rhs = String(line[line.index(after: equals)...]).trimmingCharacters(in: .whitespaces)
+                let isInlineTable = rhs.hasPrefix("{")
+
+                if keyComponents.count == 1 {
+                    guard !isInlineTable else {
+                        throw ConfigParseError(
+                            message: "item: inline table declarations are not supported; "
+                                + "declare items with [item.<name>] tables or item.<name>.<key> dotted keys",
+                            line: lineNumber
+                        )
+                    }
+                    for path in fieldPathPrefixes(keyComponents) {
+                        lines[.rootField(path)] = lines[.rootField(path)] ?? lineNumber
+                    }
+                } else {
+                    let name = keyComponents[1]
+                    let fieldPath = Array(keyComponents.dropFirst(2))
+                    guard !(fieldPath.isEmpty && isInlineTable) else {
+                        throw ConfigParseError(
+                            message: "item.\(name): inline table item declarations are not supported; "
+                                + "declare this item with [item.\(name)] instead",
+                            line: lineNumber
+                        )
+                    }
+                    recordItemName(name, at: lineNumber)
+                    for path in fieldPathPrefixes(fieldPath) {
+                        let sourceKey = SourceLineKey.field(item: name, path: path, actionIndex: nil)
+                        lines[sourceKey] = lines[sourceKey] ?? lineNumber
+                    }
+                }
             } else {
                 for path in fieldPathPrefixes(keyComponents) {
                     lines[.rootField(path)] = lines[.rootField(path)] ?? lineNumber
@@ -187,7 +268,7 @@ public enum ConfigParser {
             multilineDelimiter = openMultilineDelimiter(in: String(line[line.index(after: equals)...]))
         }
 
-        return lines
+        return (order, lines)
     }
 
     private static func fieldPathPrefixes(_ components: [String]) -> [String] {
