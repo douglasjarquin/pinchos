@@ -410,6 +410,45 @@ final class CommandExecutionTests: XCTestCase {
         XCTAssertEqual(snapshot.lastExecution?.stderr, "late-diagnostic\n")
     }
 
+    func testAwaitSettledExecutionIncludesLateStdoutFromDescendant() async throws {
+        let runner = CommandRunner(
+            command: "(sleep 0.3; printf 'late-value\\n') & exit 0",
+            timeout: 2,
+            maxOutputBytes: 64
+        )
+
+        let outcome = await runner.runIfIdle()
+        guard case .completed(let preliminary) = outcome else {
+            return XCTFail("expected a completed preliminary execution, got \(outcome)")
+        }
+        XCTAssertEqual(preliminary.terminalReason, .exited(code: 0))
+
+        let settled = await runner.awaitSettledExecution()
+        XCTAssertEqual(settled?.terminalReason, .exited(code: 0))
+        XCTAssertEqual(lastTrimmedLine(of: settled?.stdout ?? ""), "late-value")
+        let snapshot = await runner.snapshot()
+        XCTAssertFalse(snapshot.isRunning)
+    }
+
+    func testAwaitSettledExecutionTimesOutLingeringDescendant() async throws {
+        let runner = CommandRunner(
+            command: "(trap '' TERM; sleep 30) & exit 0",
+            timeout: 0.4,
+            maxOutputBytes: 64
+        )
+
+        let outcome = await runner.runIfIdle()
+        guard case .completed(let preliminary) = outcome else {
+            return XCTFail("expected a completed preliminary execution, got \(outcome)")
+        }
+        XCTAssertEqual(preliminary.terminalReason, .exited(code: 0))
+
+        let settled = await runner.awaitSettledExecution()
+        XCTAssertEqual(settled?.terminalReason, .timedOut)
+        let snapshot = await runner.snapshot()
+        XCTAssertFalse(snapshot.isRunning)
+    }
+
     func testCancellationDoesNotSignalARecycledProcessGroupAfterSessionOwnershipEnds() {
         let signalBackend = FakeSignalBackend()
         let originalTarget = FakeSignalTarget()

@@ -335,28 +335,32 @@ final class ManagedItem: ManagedItemLifecycle {
                 now: now()
             )
         )
-        let outcome = await runner.finishActiveRun()
+        let preliminaryOutcome = await runner.finishActiveRun()
+        guard isActive, generation == configurationGeneration else { return }
+        guard case .completed = preliminaryOutcome else { return }
+
+        // The shell may have exited while same-group descendants and output
+        // pipes are still settling. Do not commit success, output, or
+        // timestamps from that preliminary shell-exit result: wait for the
+        // definitive session result so late stdout/stderr and a late
+        // timeout/cancellation are reflected instead of a stale `.exited(0)`.
+        guard let execution = await runner.awaitSettledExecution() else { return }
         guard isActive, generation == configurationGeneration else { return }
         let currentConfig = config
-        switch outcome {
-        case .skipped:
-            return
-        case .completed(let execution):
-            if execution.terminalReason == .exited(code: 0) {
-                lastSuccessfulOutput = execution.stdout
-                lastUpdatedAt = now()
-                lastSuccessfulTitle = applyFormat(
-                    currentConfig.format,
-                    output: lastTrimmedLine(of: execution.stdout)
-                )
-                scheduleStalePresentation()
-            } else if currentConfig.onError == .replace {
-                lastSuccessfulOutput = nil
-                lastUpdatedAt = nil
-                lastSuccessfulTitle = nil
-                stalePresentationTask?.cancel()
-                stalePresentationTask = nil
-            }
+        if execution.terminalReason == .exited(code: 0) {
+            lastSuccessfulOutput = execution.stdout
+            lastUpdatedAt = now()
+            lastSuccessfulTitle = applyFormat(
+                currentConfig.format,
+                output: lastTrimmedLine(of: execution.stdout)
+            )
+            scheduleStalePresentation()
+        } else if currentConfig.onError == .replace {
+            lastSuccessfulOutput = nil
+            lastUpdatedAt = nil
+            lastSuccessfulTitle = nil
+            stalePresentationTask?.cancel()
+            stalePresentationTask = nil
         }
         let runnerSnapshot = await runner.snapshot()
         guard isActive, generation == configurationGeneration else { return }

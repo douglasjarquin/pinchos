@@ -255,11 +255,23 @@ struct PinchosCLI {
         }
         defer { runnerRegistry.unregister(runner) }
         let outcome = await runner.runIfIdle()
-        await runner.cancelActive()
+        guard case .completed = outcome else {
+            if let terminationExitCode = shutdownCoordinator?.terminationExitCode {
+                return terminationExitCode
+            }
+            output.stderr("pinchos run \(name): command was skipped because another execution is active\n")
+            return CLIExitCode.execution
+        }
+        // The shell may exit while same-group descendants and output pipes are
+        // still settling; wait for the definitive session result (bounded by
+        // the item's configured timeout or a shutdown signal, which cancels
+        // this registered runner via `runnerRegistry`) instead of treating the
+        // shell's exit as final and force-killing a still-legitimate child.
+        let settledExecution = await runner.awaitSettledExecution()
         if let terminationExitCode = shutdownCoordinator?.terminationExitCode {
             return terminationExitCode
         }
-        guard case .completed(let execution) = outcome else {
+        guard let execution = settledExecution else {
             output.stderr("pinchos run \(name): command was skipped because another execution is active\n")
             return CLIExitCode.execution
         }
