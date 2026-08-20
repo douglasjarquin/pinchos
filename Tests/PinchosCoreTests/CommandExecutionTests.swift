@@ -149,6 +149,67 @@ final class CommandExecutionTests: XCTestCase {
         XCTAssertFalse(execution.stderr.isEmpty)
     }
 
+    func testAggregateOutputBudgetCapsRetainedBytesAcrossManyRunners() async {
+        // Each runner is individually configured to retain far more than
+        // its fair share of the shared budget; the budget - not the
+        // per-runner `max_output` - is what actually bounds retained
+        // memory once many runners produce output concurrently.
+        let budget = OutputMemoryBudget(totalBytes: 256 * 1024)
+        let perStreamLimit = 256 * 1024
+        let runnerCount = 12
+        let payloadBytes = 300 * 1024
+
+        let runners = (0..<runnerCount).map { _ in
+            CommandRunner(
+                command: "yes A | head -c \(payloadBytes)",
+                timeout: 5,
+                maxOutputBytes: perStreamLimit,
+                outputBudget: budget
+            )
+        }
+
+        let outcomes = await withTaskGroup(of: CommandRunOutcome.self, returning: [CommandRunOutcome].self) { group in
+            for runner in runners {
+                group.addTask { await runner.runIfIdle() }
+            }
+            var results = [CommandRunOutcome]()
+            for await outcome in group {
+                results.append(outcome)
+            }
+            return results
+        }
+
+        XCTAssertEqual(outcomes.count, runnerCount)
+        for outcome in outcomes {
+            guard case .completed(let execution) = outcome else {
+                return XCTFail("expected every stress runner to complete, got \(outcome)")
+            }
+            XCTAssertEqual(execution.terminalReason, .exited(code: 0))
+            XCTAssertGreaterThan(execution.stdoutBytesRead, 0)
+        }
+        XCTAssertLessThanOrEqual(budget.reservedBytesSnapshot, budget.totalBytes)
+    }
+
+    func testCollectorReleasesAggregateBudgetPromptlyAfterCompletion() async {
+        let budget = OutputMemoryBudget(totalBytes: 256 * 1024)
+        let runner = CommandRunner(
+            command: "yes A | head -c 200000",
+            timeout: 2,
+            maxOutputBytes: 128 * 1024,
+            outputBudget: budget
+        )
+
+        let outcome = await runner.runIfIdle()
+        guard case .completed(let execution) = outcome else {
+            return XCTFail("expected a completed execution, got \(outcome)")
+        }
+        XCTAssertEqual(execution.terminalReason, .exited(code: 0))
+        XCTAssertEqual(
+            budget.reservedBytesSnapshot, 0,
+            "collector output buffers should release their aggregate reservation once the run settles"
+        )
+    }
+
     func testTimeoutKillsProcessGroup() async throws {
         let childPIDURL = temporaryURL("timeout-child")
         defer { try? FileManager.default.removeItem(at: childPIDURL) }

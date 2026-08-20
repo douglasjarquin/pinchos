@@ -17,4 +17,19 @@ final class ByteCountTests: XCTestCase {
     func testRejectsOverflow() {
         XCTAssertThrowsError(try parseByteCount("999999999999999999999999MiB"))
     }
+
+    func testAcceptsExactlyTheSafeMaximum() throws {
+        XCTAssertEqual(try parseByteCount("\(maxAllowedOutputBytes)B"), maxAllowedOutputBytes)
+    }
+
+    func testRejectsValuesAboveTheSafeMaximum() {
+        XCTAssertThrowsError(try parseByteCount("\(maxAllowedOutputBytes + 1)B")) { error in
+            XCTAssertEqual(error as? ByteCountParseError, .tooLarge(maxAllowedOutputBytes + 1))
+        }
+        XCTAssertThrowsError(try parseByteCount("9999MiB")) { error in
+            guard case .tooLarge = error as? ByteCountParseError else {
+                return XCTFail("expected .tooLarge, got \(error)")
+            }
+        }
+    }
 }

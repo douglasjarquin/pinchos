@@ -238,6 +238,36 @@ final class ConfigParserTests: XCTestCase {
         XCTAssertThrowsError(try ConfigParser.parse(wrongOutputType))
     }
 
+    func testMaxOutputAboveSafeMaximumFailsValidationWithItemKeyAndLineContext() {
+        let toml = """
+        [item.limits]
+        type = "command"
+        run = "echo 42"
+        interval = "30s"
+        max_output = "9999MiB"
+        """
+        XCTAssertThrowsError(try ConfigParser.parse(toml)) { error in
+            guard let parseError = error as? ConfigParseError else {
+                return XCTFail("expected a ConfigParseError, got \(error)")
+            }
+            XCTAssertTrue(parseError.message.contains("limits"))
+            XCTAssertTrue(parseError.message.contains("max_output"))
+            XCTAssertEqual(parseError.line, 5)
+        }
+    }
+
+    func testMaxOutputAtSafeMaximumParsesSuccessfully() throws {
+        let toml = """
+        [item.limits]
+        type = "command"
+        run = "echo 42"
+        interval = "30s"
+        max_output = "\(maxAllowedOutputBytes / (1024 * 1024))MiB"
+        """
+        let config = try ConfigParser.parse(toml)
+        XCTAssertEqual(config.items[0].maxOutputBytes, maxAllowedOutputBytes)
+    }
+
     func testMalformedTomlSyntaxThrowsWithLineInfo() {
         let toml = """
         [item.limits
