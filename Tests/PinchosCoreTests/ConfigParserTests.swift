@@ -631,6 +631,176 @@ final class ConfigParserTests: XCTestCase {
         XCTAssertEqual(config.items.map(\.name), ["zebra", "apple", "mango"])
     }
 
+    // MARK: - Item discovery (dotted keys, inline tables, silent-loss guards)
+
+    func testDottedKeyItemDeclarationIsDiscoveredWithFields() throws {
+        let toml = """
+        item.clock.type = "command"
+        item.clock.run = "date '+%H:%M'"
+        """
+
+        let config = try ConfigParser.parse(toml)
+
+        XCTAssertEqual(config.items.map(\.name), ["clock"])
+        XCTAssertEqual(config.items[0].run, "date '+%H:%M'")
+    }
+
+    func testDottedKeyItemDeclarationReportsSourceLineForInvalidField() {
+        let toml = """
+        item.clock.type = "command"
+        item.clock.run = "date"
+        item.clock.interval = 5
+        """
+
+        XCTAssertThrowsError(try ConfigParser.parse(toml)) { error in
+            let parseError = error as? ConfigParseError
+            XCTAssertTrue(parseError?.message.contains("item.clock.interval: type error") == true)
+            XCTAssertEqual(parseError?.line, 3)
+        }
+    }
+
+    func testQuotedDottedKeyItemNamePreservesDotsAsOneItem() throws {
+        let toml = #"""
+        item."my.clock".type = "command"
+        item."my.clock".run = "date"
+        """#
+
+        let config = try ConfigParser.parse(toml)
+
+        XCTAssertEqual(config.items.map(\.name), ["my.clock"])
+    }
+
+    func testDottedKeyItemsDeclaredBeforeAnyHeaderPreserveOrderWithSubsequentHeaderItems() throws {
+        // Dotted keys can only add to the implicit root table before the first `[item.*]`
+        // header opens a table; TOML has no syntax to return to root scope afterward.
+        let toml = """
+        item.apple.type = "command"
+        item.apple.run = "echo a"
+
+        [item.banana]
+        type = "command"
+        run = "echo b"
+        """
+
+        let config = try ConfigParser.parse(toml)
+
+        XCTAssertEqual(config.items.map(\.name), ["apple", "banana"])
+    }
+
+    func testSingleLineInlineTableItemDeclarationFailsExplicitlyInsteadOfSilentlyDroppingItems() {
+        // TOMLKit parses this successfully (`item.clock` is a real table in the parsed tree),
+        // but the declaration scanner cannot recover a source order for it. Before this fix,
+        // that mismatch silently produced an empty item list; it must now fail explicitly.
+        let toml = """
+        item = { clock = { type = "command", run = "date '+%H:%M'" } }
+        """
+
+        XCTAssertThrowsError(try ConfigParser.parse(toml)) { error in
+            let parseError = error as? ConfigParseError
+            XCTAssertNotNil(parseError, "expected an explicit ConfigParseError, not a silently empty config")
+            XCTAssertTrue(parseError?.message.contains("item") == true)
+            XCTAssertTrue(parseError?.message.contains("inline table") == true)
+        }
+    }
+
+    func testDottedKeyAssignedInlineTableItemFailsExplicitly() {
+        let toml = """
+        item.clock = { type = "command", run = "date" }
+        """
+
+        XCTAssertThrowsError(try ConfigParser.parse(toml)) { error in
+            let parseError = error as? ConfigParseError
+            XCTAssertTrue(parseError?.message.contains("item.clock") == true)
+            XCTAssertTrue(parseError?.message.contains("inline table") == true)
+            XCTAssertEqual(parseError?.line, 1)
+        }
+    }
+
+    func testMultilineInlineTableItemDeclarationFailsRatherThanSilentlyDroppingItems() {
+        // This is the exact representative form from the issue. The source scanner rejects the
+        // opening `item = {` line before TOMLKit even runs (toml++, as vendored by TOMLKit,
+        // additionally rejects multi-line inline tables on its own since it doesn't enable TOML
+        // 1.1's unreleased preview support) - either way this must never silently produce an
+        // empty item list.
+        let toml = """
+        item = {
+          clock = { type = "command", run = "date '+%H:%M'" }
+        }
+        """
+
+        XCTAssertThrowsError(try ConfigParser.parse(toml)) { error in
+            let parseError = error as? ConfigParseError
+            XCTAssertNotNil(parseError, "expected an explicit ConfigParseError, not a silently empty config")
+            XCTAssertTrue(parseError?.message.contains("inline table") == true)
+            XCTAssertEqual(parseError?.line, 1)
+        }
+    }
+
+    func testArrayOfTablesItemDeclarationFailsExplicitlyInsteadOfSilentlyDroppingItems() {
+        // `[[item.clock]]` is valid TOML (item.clock becomes an array containing one table),
+        // but it is not a supported item declaration form and must not vanish silently.
+        let toml = """
+        [[item.clock]]
+        type = "command"
+        run = "date"
+        """
+
+        XCTAssertThrowsError(try ConfigParser.parse(toml)) { error in
+            let parseError = error as? ConfigParseError
+            XCTAssertTrue(parseError?.message.contains("item.clock") == true)
+            XCTAssertTrue(parseError?.message.contains("not supported") == true)
+        }
+    }
+
+    func testDottedKeyScalarItemAssignmentReportsTypeErrorInsteadOfSilentlyDroppingItems() {
+        let toml = """
+        item.clock = "not a table"
+        """
+
+        XCTAssertThrowsError(try ConfigParser.parse(toml)) { error in
+            let parseError = error as? ConfigParseError
+            XCTAssertTrue(parseError?.message.contains("item.clock: type error") == true)
+            XCTAssertTrue(parseError?.message.contains("must be a table") == true)
+        }
+    }
+
+    func testMultilineStringResemblingItemHeaderDoesNotAffectDiscoveryOrLineMapping() {
+        let toml = #"""
+        [item.real]
+        type = "command"
+        run = """
+        [item.fake]
+        type = "command"
+        run = "echo fake"
+        """
+        interval = 5
+        """#
+
+        XCTAssertThrowsError(try ConfigParser.parse(toml)) { error in
+            let parseError = error as? ConfigParseError
+            XCTAssertTrue(parseError?.message.contains("item.real.interval: type error") == true)
+            XCTAssertEqual(parseError?.line, 8)
+        }
+    }
+
+    func testAllEntryPointsSeeIdenticalItemsForDottedKeyDeclarations() throws {
+        let toml = """
+        item.clock.type = "command"
+        item.clock.run = "date"
+
+        [item.battery]
+        type = "command"
+        run = "pmset -g batt"
+        """
+
+        let first = try ConfigParser.parse(toml)
+        let second = try ConfigParser.parse(toml)
+
+        XCTAssertEqual(first.items.map(\.name), ["clock", "battery"])
+        XCTAssertEqual(first.items.map(\.name), second.items.map(\.name))
+        XCTAssertEqual(first.items.map(\.run), second.items.map(\.run))
+    }
+
     func testEmptyConfigProducesNoItems() throws {
         let config = try ConfigParser.parse("")
         XCTAssertTrue(config.items.isEmpty)
