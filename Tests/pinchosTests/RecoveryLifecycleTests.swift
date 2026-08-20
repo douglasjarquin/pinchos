@@ -455,6 +455,79 @@ final class RecoveryLifecycleTests: XCTestCase {
         XCTAssertFalse(actionSnapshot?.isRunning ?? true)
     }
 
+    /// Issue #54: a single item's primary, click, and action runner
+    /// cancellation must be initiated concurrently rather than one after
+    /// another. Real runner cancellation is normally too fast (SIGKILL
+    /// settles almost immediately) to distinguish concurrent from serial
+    /// execution, so this test uses the item's test-only settlement-delay
+    /// seam to give each of the three roles a controllable, equal settle
+    /// time and asserts the whole teardown completes near that one settle
+    /// time, not the sum of all three.
+    @MainActor
+    func testItemShutdownCancelsPrimaryClickAndActionRunnersConcurrentlyNotSequentially() async throws {
+        let item = makeHeadlessItem(
+            config: ItemConfig(
+                name: "concurrent-cancel",
+                run: "printf primary",
+                interval: .manual,
+                click: "printf clicked",
+                actions: [ItemAction(title: "Run action", kind: .command("printf action"))]
+            ),
+            initiallyVisible: false
+        )
+        let perRoleSettle: Duration = .milliseconds(150)
+        item.cancellationSettlementDelayForTesting = { _ in
+            try? await Task.sleep(for: perRoleSettle)
+        }
+
+        let clock = ContinuousClock()
+        let started = clock.now
+        await item.tearDown()
+        let elapsed = started.duration(to: clock.now)
+
+        XCTAssertLessThan(
+            elapsed, perRoleSettle * 3 / 2,
+            "primary/click/action settling at 150ms each must overlap, not sum to ~450ms"
+        )
+    }
+
+    /// A per-item lifecycle operation must still respect the shared
+    /// operation-level deadline: if settlement cannot complete in time, the
+    /// call returns near the deadline (not near the slower settle time) and
+    /// reports the outstanding runner identities rather than hanging.
+    @MainActor
+    func testPrepareRemovalReturnsNearTheDeadlineWhenARunnerCannotSettleInTime() async throws {
+        let item = makeHeadlessItem(
+            config: ItemConfig(
+                name: "deadline-bound",
+                run: "printf primary",
+                interval: .manual,
+                click: "printf clicked"
+            ),
+            initiallyVisible: false
+        )
+        item.cancellationSettlementDelayForTesting = { role in
+            if role == "click" {
+                try? await Task.sleep(for: .seconds(2))
+            }
+        }
+        var reportedTimeouts: [LifecycleSettlementTimeout] = []
+        item.lifecycleSettlementTimeoutHandlerForTesting = { timeouts in
+            reportedTimeouts = timeouts
+        }
+
+        let clock = ContinuousClock()
+        let started = clock.now
+        await item.prepareRemoval(deadline: clock.now.advanced(by: .milliseconds(150)))
+        let elapsed = started.duration(to: clock.now)
+
+        XCTAssertLessThan(elapsed, .seconds(2), "prepareRemoval must not block past its shared deadline")
+        XCTAssertEqual(reportedTimeouts.map(\.identity), ["deadline-bound:click"])
+
+        item.cancellationSettlementDelayForTesting = nil
+        item.commitRemoval()
+    }
+
     @MainActor
     func testQueuedClickDoesNotStartAfterRemovalBegins() async throws {
         let marker = FileManager.default.temporaryDirectory
