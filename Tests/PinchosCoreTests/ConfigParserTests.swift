@@ -23,6 +23,11 @@ final class ConfigParserTests: XCTestCase {
         XCTAssertNil(item.tooltip)
         XCTAssertEqual(item.timeout, 15)
         XCTAssertEqual(item.maxOutputBytes, 64 * 1024)
+        XCTAssertNil(item.maxLength)
+        XCTAssertFalse(item.hideWhenEmpty)
+        XCTAssertFalse(item.hideOnError)
+        XCTAssertFalse(item.iconOnly)
+        XCTAssertFalse(item.disabled)
     }
 
     func testParsesAllFields() throws {
@@ -37,6 +42,11 @@ final class ConfigParserTests: XCTestCase {
         click = "open https://example.com"
         error_text = "n/a"
         icon = "/path/to/icon.svg"
+        max_length = 24
+        hide_when_empty = true
+        hide_on_error = true
+        icon_only = true
+        disabled = true
         """
         let config = try ConfigParser.parse(toml)
         let item = config.items[0]
@@ -47,6 +57,11 @@ final class ConfigParserTests: XCTestCase {
         XCTAssertEqual(item.click, "open https://example.com")
         XCTAssertEqual(item.errorText, "n/a")
         XCTAssertEqual(item.icon, "/path/to/icon.svg")
+        XCTAssertEqual(item.maxLength, 24)
+        XCTAssertTrue(item.hideWhenEmpty)
+        XCTAssertTrue(item.hideOnError)
+        XCTAssertTrue(item.iconOnly)
+        XCTAssertTrue(item.disabled)
     }
 
     func testRejectsPresentWrongTypesForEverySupportedField() {
@@ -66,7 +81,12 @@ final class ConfigParserTests: XCTestCase {
             (key: "stale_after", value: "5", expectedMessage: "must be a string"),
             (key: "tooltip", value: "42", expectedMessage: "must be a string"),
             (key: "action", value: "\"not an array\"", expectedMessage: "must be an array"),
-            (key: "icon", value: "false", expectedMessage: "must be a string")
+            (key: "icon", value: "false", expectedMessage: "must be a string"),
+            (key: "max_length", value: "\"24\"", expectedMessage: "must be an integer"),
+            (key: "hide_when_empty", value: "\"yes\"", expectedMessage: "must be a boolean"),
+            (key: "hide_on_error", value: "\"yes\"", expectedMessage: "must be a boolean"),
+            (key: "icon_only", value: "\"yes\"", expectedMessage: "must be a boolean"),
+            (key: "disabled", value: "\"yes\"", expectedMessage: "must be a boolean")
         ]
 
         for field in invalidFields {
@@ -540,7 +560,12 @@ final class ConfigParserTests: XCTestCase {
             "stale_after",
             "tooltip",
             "action",
-            "icon"
+            "icon",
+            "max_length",
+            "hide_when_empty",
+            "hide_on_error",
+            "icon_only",
+            "disabled"
         ])
         XCTAssertEqual(ConfigParser.supportedActionKeys, ["title", "run", "refresh"])
     }
@@ -1285,5 +1310,71 @@ final class ConfigParserTests: XCTestCase {
         for toml in invalidConfigurations {
             XCTAssertThrowsError(try ConfigParser.parse(toml))
         }
+    }
+
+    func testMaxLengthRejectsZeroNegativeAndNonIntegerValues() {
+        let invalidValues = ["0", "-1", "3.5"]
+        for value in invalidValues {
+            let toml = """
+            [item.limits]
+            type = "command"
+            run = "echo 42"
+            max_length = \(value)
+            """
+            XCTAssertThrowsError(try ConfigParser.parse(toml), "expected max_length = \(value) to be rejected") { error in
+                guard let parseError = error as? ConfigParseError else {
+                    return XCTFail("expected ConfigParseError, got \(error)")
+                }
+                XCTAssertTrue(parseError.message.contains("item.limits.max_length"))
+            }
+        }
+    }
+
+    func testMaxLengthAcceptsPositiveIntegerAndDefaultsToNil() throws {
+        let toml = """
+        [item.limits]
+        type = "command"
+        run = "echo 42"
+        max_length = 12
+        """
+        let item = try ConfigParser.parse(toml).items[0]
+        XCTAssertEqual(item.maxLength, 12)
+
+        let withoutMaxLength = """
+        [item.limits]
+        type = "command"
+        run = "echo 42"
+        """
+        XCTAssertNil(try ConfigParser.parse(withoutMaxLength).items[0].maxLength)
+    }
+
+    func testVisibilityAndDisabledBooleansDefaultToFalse() throws {
+        let toml = """
+        [item.limits]
+        type = "command"
+        run = "echo 42"
+        """
+        let item = try ConfigParser.parse(toml).items[0]
+        XCTAssertFalse(item.hideWhenEmpty)
+        XCTAssertFalse(item.hideOnError)
+        XCTAssertFalse(item.iconOnly)
+        XCTAssertFalse(item.disabled)
+    }
+
+    func testVisibilityAndDisabledBooleansAcceptExplicitTrue() throws {
+        let toml = """
+        [item.limits]
+        type = "command"
+        run = "echo 42"
+        hide_when_empty = true
+        hide_on_error = true
+        icon_only = true
+        disabled = true
+        """
+        let item = try ConfigParser.parse(toml).items[0]
+        XCTAssertTrue(item.hideWhenEmpty)
+        XCTAssertTrue(item.hideOnError)
+        XCTAssertTrue(item.iconOnly)
+        XCTAssertTrue(item.disabled)
     }
 }

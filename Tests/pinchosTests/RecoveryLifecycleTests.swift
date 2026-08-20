@@ -1,3 +1,4 @@
+import AppKit
 import Darwin
 import XCTest
 @testable import pinchos
@@ -1068,6 +1069,329 @@ final class RecoveryLifecycleTests: XCTestCase {
         XCTAssertEqual(state.errorSummary, "1")
         XCTAssertEqual(item.renderedTitle, "ERR ⚠︎")
         XCTAssertTrue(item.renderedToolTip?.contains("Status: error") == true)
+    }
+
+    @MainActor
+    func testMaxLengthTruncatesRenderedTitleButKeepsFullOutputForTooltipAndDiagnostics() async throws {
+        let item = makeHeadlessItem(
+            config: ItemConfig(
+                name: "max-length",
+                run: "printf 'hello world'",
+                interval: .manual,
+                maxLength: 5
+            ),
+            initiallyVisible: false
+        )
+        addTeardownBlock { @MainActor in
+            await item.tearDown()
+        }
+
+        item.refreshNow()
+        let snapshot = try await waitForRuntimeSnapshot(item) { snapshot in
+            snapshot.fullOutput == "hello world"
+        }
+
+        XCTAssertEqual(item.renderedTitle, "hell\u{2026}")
+        XCTAssertEqual(snapshot.fullOutput, "hello world")
+        XCTAssertTrue(item.renderedToolTip?.contains("hello world") == true)
+    }
+
+    @MainActor
+    func testMaxLengthTruncationPreservesGraphemeClustersInRenderedTitle() async throws {
+        let item = makeHeadlessItem(
+            config: ItemConfig(
+                name: "max-length-emoji",
+                run: "printf '🇺🇸hi'",
+                interval: .manual,
+                maxLength: 2
+            ),
+            initiallyVisible: false
+        )
+        addTeardownBlock { @MainActor in
+            await item.tearDown()
+        }
+
+        item.refreshNow()
+        _ = try await waitForRuntimeSnapshot(item) { snapshot in
+            snapshot.fullOutput == "🇺🇸hi"
+        }
+
+        // A naive UTF-16/scalar-based truncation would split the two-scalar
+        // flag emoji; grapheme-cluster counting must keep it intact.
+        XCTAssertEqual(item.renderedTitle, "🇺🇸\u{2026}")
+    }
+
+    @MainActor
+    func testHideWhenEmptyHidesOnEmptySuccessAndRestoresOnLaterNonEmptySuccess() async throws {
+        let marker = FileManager.default.temporaryDirectory
+            .appendingPathComponent("pinchos-hide-when-empty-\(UUID().uuidString)")
+        let item = makeHeadlessItem(
+            config: ItemConfig(
+                name: "hide-empty",
+                run: "if [ -e '\(marker.path)' ]; then printf 'value\\n'; else printf ''; fi",
+                interval: .manual,
+                hideWhenEmpty: true
+            ),
+            initiallyVisible: false
+        )
+        addTeardownBlock { @MainActor in
+            await item.tearDown()
+            try? FileManager.default.removeItem(at: marker)
+        }
+
+        item.activate()
+        _ = try await waitForRuntimeSnapshot(item) { snapshot in
+            snapshot.status == .fresh && snapshot.fullOutput == ""
+        }
+        XCTAssertFalse(item.isVisible)
+
+        try Data().write(to: marker)
+        item.refreshNow()
+        _ = try await waitForRuntimeSnapshot(item) { snapshot in
+            snapshot.fullOutput == "value\n"
+        }
+        XCTAssertTrue(item.isVisible)
+    }
+
+    @MainActor
+    func testHideOnErrorHidesCompletedFailureIncludingFirstRunAndRestoresAfterRecovery() async throws {
+        let marker = FileManager.default.temporaryDirectory
+            .appendingPathComponent("pinchos-hide-on-error-\(UUID().uuidString)")
+        let item = makeHeadlessItem(
+            config: ItemConfig(
+                name: "hide-on-error",
+                run: "if [ -e '\(marker.path)' ]; then printf good; else exit 1; fi",
+                interval: .manual,
+                hideOnError: true
+            ),
+            initiallyVisible: false
+        )
+        addTeardownBlock { @MainActor in
+            await item.tearDown()
+            try? FileManager.default.removeItem(at: marker)
+        }
+
+        item.activate()
+        _ = try await waitForRuntimeSnapshot(item) { snapshot in
+            snapshot.status == .error
+        }
+        XCTAssertFalse(item.isVisible)
+
+        try Data().write(to: marker)
+        item.refreshNow()
+        _ = try await waitForRuntimeSnapshot(item) { snapshot in
+            snapshot.status == .fresh
+        }
+        XCTAssertTrue(item.isVisible)
+    }
+
+    @MainActor
+    func testHideOnErrorAndHideWhenEmptyNeverHideAnItemBeforeItsFirstAttempt() async throws {
+        let item = makeHeadlessItem(
+            config: ItemConfig(
+                name: "pre-attempt",
+                run: "sleep 0.3; exit 1",
+                interval: .manual,
+                hideWhenEmpty: true,
+                hideOnError: true
+            ),
+            initiallyVisible: true
+        )
+        addTeardownBlock { @MainActor in
+            await item.tearDown()
+        }
+
+        item.refreshNow()
+        try await waitForRunning(item)
+        // Still mid-flight with no completed execution yet: hide policies must not apply.
+        XCTAssertTrue(item.isVisible)
+
+        _ = try await waitForRuntimeSnapshot(item) { snapshot in
+            snapshot.status == .error
+        }
+        XCTAssertFalse(item.isVisible)
+    }
+
+    @MainActor
+    func testDisabledItemStaysVisibleButPreventsScheduledInitialManualClickAndActionExecution() async throws {
+        let marker = FileManager.default.temporaryDirectory
+            .appendingPathComponent("pinchos-disabled-\(UUID().uuidString)")
+        let item = makeHeadlessItem(
+            config: ItemConfig(
+                name: "disabled",
+                run: "touch '\(marker.path)'; printf ran",
+                interval: .manual,
+                click: "touch '\(marker.path)'",
+                actions: [ItemAction(title: "Run", kind: .command("touch '\(marker.path)'"))],
+                disabled: true
+            ),
+            initiallyVisible: true
+        )
+        addTeardownBlock { @MainActor in
+            await item.tearDown()
+            try? FileManager.default.removeItem(at: marker)
+        }
+
+        XCTAssertTrue(item.isVisible)
+
+        item.refreshNow()
+        item.processClick(eventType: .leftMouseUp)
+        item.invokeAction(at: 0)
+        try await Task.sleep(for: .milliseconds(200))
+
+        XCTAssertFalse(FileManager.default.fileExists(atPath: marker.path))
+        XCTAssertTrue(item.isVisible)
+        let snapshot = await item.runnerSnapshot()
+        XCTAssertNil(snapshot.lastExecution)
+    }
+
+    @MainActor
+    func testTogglingDisabledThroughLiveReloadCancelsActiveWorkWithoutLeakingChildProcess() async throws {
+        let childPIDURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("pinchos-disabled-reload-child-\(UUID().uuidString)")
+        let command = "(trap '' TERM; while :; do sleep 1; done) & child=$!; printf '%s' \"$child\" > '\(childPIDURL.path)'; wait \"$child\""
+        let item = makeHeadlessItem(
+            config: ItemConfig(
+                name: "disable-reload",
+                run: command,
+                interval: .manual
+            ),
+            initiallyVisible: false
+        )
+        addTeardownBlock { @MainActor in
+            await item.tearDown()
+            try? FileManager.default.removeItem(at: childPIDURL)
+        }
+
+        item.refreshNow()
+        let childPID = try await waitForPID(at: childPIDURL)
+        try await waitForRunning(item)
+
+        await item.prepareUpdate(config: ItemConfig(
+            name: "disable-reload",
+            run: command,
+            interval: .manual,
+            disabled: true
+        ))
+        let gone = await waitUntilGone(childPID)
+        XCTAssertTrue(gone, "toggling disabled left child process \(childPID) alive")
+        item.commitPreparedUpdate()
+
+        let snapshot = await item.runnerSnapshot()
+        XCTAssertFalse(snapshot.isRunning)
+    }
+
+    @MainActor
+    func testReEnablingADisabledItemThroughLiveReloadAllowsRefreshAgain() async throws {
+        let item = makeHeadlessItem(
+            config: ItemConfig(
+                name: "re-enable",
+                run: "printf value",
+                interval: .manual,
+                disabled: true
+            ),
+            initiallyVisible: false
+        )
+        addTeardownBlock { @MainActor in
+            await item.tearDown()
+        }
+
+        item.refreshNow()
+        try await Task.sleep(for: .milliseconds(100))
+        var snapshot = await item.runnerSnapshot()
+        XCTAssertNil(snapshot.lastExecution)
+
+        await item.prepareUpdate(config: ItemConfig(
+            name: "re-enable",
+            run: "printf value",
+            interval: .manual,
+            disabled: false
+        ))
+        item.commitPreparedUpdate()
+
+        item.refreshNow()
+        _ = try await waitForRuntimeSnapshot(item) { snapshot in
+            snapshot.fullOutput == "value"
+        }
+        snapshot = await item.runnerSnapshot()
+        XCTAssertEqual(snapshot.lastExecution?.stdout, "value")
+    }
+
+    @MainActor
+    func testIconOnlyClearsDisplayedTitleWhenIconLoadsButKeepsFullTitleAndTooltip() async throws {
+        let iconURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("pinchos-icon-only-\(UUID().uuidString).png")
+        try writeTestIcon(to: iconURL)
+        let item = makeHeadlessItem(
+            config: ItemConfig(
+                name: "icon-only",
+                run: "printf value",
+                interval: .manual,
+                icon: iconURL.path,
+                iconOnly: true
+            ),
+            initiallyVisible: false
+        )
+        addTeardownBlock { @MainActor in
+            await item.tearDown()
+            try? FileManager.default.removeItem(at: iconURL)
+        }
+
+        item.refreshNow()
+        _ = try await waitForRuntimeSnapshot(item) { snapshot in
+            snapshot.fullOutput == "value"
+        }
+
+        XCTAssertEqual(item.renderedTitle, "value")
+        XCTAssertEqual(item.renderedButtonTitle, "")
+        XCTAssertTrue(item.renderedToolTip?.contains("value") == true)
+    }
+
+    @MainActor
+    func testIconOnlyFallsBackToTextWhenConfiguredIconIsUnreadable() async throws {
+        let item = makeHeadlessItem(
+            config: ItemConfig(
+                name: "icon-only-missing",
+                run: "printf value",
+                interval: .manual,
+                icon: "/nonexistent/path/to/pinchos-test-icon.png",
+                iconOnly: true
+            ),
+            initiallyVisible: false
+        )
+        addTeardownBlock { @MainActor in
+            await item.tearDown()
+        }
+
+        item.refreshNow()
+        _ = try await waitForRuntimeSnapshot(item) { snapshot in
+            snapshot.fullOutput == "value"
+        }
+
+        XCTAssertEqual(item.renderedButtonTitle, "value")
+    }
+
+    private func writeTestIcon(to url: URL) throws {
+        guard let bitmap = NSBitmapImageRep(
+            bitmapDataPlanes: nil,
+            pixelsWide: 4,
+            pixelsHigh: 4,
+            bitsPerSample: 8,
+            samplesPerPixel: 4,
+            hasAlpha: true,
+            isPlanar: false,
+            colorSpaceName: .deviceRGB,
+            bitmapFormat: [],
+            bytesPerRow: 0,
+            bitsPerPixel: 0
+        ), let png = bitmap.representation(using: .png, properties: [:]) else {
+            throw NSError(
+                domain: "RecoveryLifecycleTests",
+                code: 20,
+                userInfo: [NSLocalizedDescriptionKey: "failed to synthesize a test icon"]
+            )
+        }
+        try png.write(to: url)
     }
 
     @MainActor

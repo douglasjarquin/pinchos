@@ -318,6 +318,7 @@ final class StatusItemController: StatusItemMenuDelegate {
                 let menuItem = NSMenuItem(title: action.title, action: #selector(itemAction(_:)), keyEquivalent: "")
                 menuItem.target = self
                 menuItem.representedObject = ItemActionTarget(item: item, index: index)
+                menuItem.isEnabled = !item.config.disabled
                 menu.addItem(menuItem)
                 if case .refresh = action.kind {
                     hasConfiguredRefresh = true
@@ -330,6 +331,7 @@ final class StatusItemController: StatusItemMenuDelegate {
                 let refresh = NSMenuItem(title: "Refresh Now", action: #selector(refreshAction(_:)), keyEquivalent: "")
                 refresh.target = self
                 refresh.representedObject = RefreshActionTarget(item: item)
+                refresh.isEnabled = !item.config.disabled
                 menu.addItem(refresh)
                 menu.addItem(NSMenuItem.separator())
             }
@@ -348,6 +350,10 @@ final class StatusItemController: StatusItemMenuDelegate {
             if actionSnapshots.contains(where: { $0.snapshot != nil }) {
                 menu.addItem(NSMenuItem.separator())
                 addActionDiagnostics(actions: item.config.actions, snapshots: actionSnapshots, to: menu)
+            }
+            if item.config.disabled {
+                menu.addItem(NSMenuItem.separator())
+                menu.addItem(disabledItem(title: "Disabled: yes"))
             }
             menu.addItem(NSMenuItem.separator())
         }
