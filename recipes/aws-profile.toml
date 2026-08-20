@@ -1,0 +1,47 @@
+# Recipe: aws-profile (optional third-party tool)
+#
+# Purpose: show which AWS account a named CLI profile currently resolves
+# to, so you notice immediately if a terminal or script is pointed at the
+# wrong account.
+# Dependencies: the AWS CLI (`aws`), which does not ship with macOS.
+#   Source / install: https://aws.amazon.com/cli/ (Homebrew:
+#   `brew install awscli`).
+# Account/auth requirement: a working AWS CLI profile, already configured
+#   with `aws configure --profile <name>` (or SSO via `aws configure
+#   sso`), with permission to call `sts:GetCallerIdentity`. `AWS_PROFILE`
+#   below is a profile *name* placeholder, not a credential — replace
+#   "default" with whichever profile you configured; no access key,
+#   secret key, or session token belongs in this file or in Pinchos.
+#
+# Expected output: "123456789012" (a 12-digit AWS account ID, from
+#   `aws sts get-caller-identity --query Account --output text`).
+#   Account-dependent by design — that is the point of the recipe. An
+#   account ID is not a secret, but it does identify which AWS account
+#   your shell is pointed at; treat the rendered menu-bar text with the
+#   same care you'd give any visible account identifier on your screen.
+# Limitations: an expired SSO session, a missing profile, or no network
+#   route to AWS all make `aws` exit non-zero with a message on stderr;
+#   with `on_error = "keep_last"` below, the item keeps showing the last
+#   resolved account ID instead of flashing `error_text` on a transient
+#   credential refresh. This recipe is not exercised in CI (no AWS
+#   account or network there); it is syntax-checked only.
+#   This is a single command (no shell pipeline), so `pinchos doctor` can
+#   check that `aws` is on PATH.
+#
+# Copy this file's [item.*] table(s) into your pinchos.toml, replace
+# "default" with your own profile name, then:
+#   .build/release/pinchos validate
+#   .build/release/pinchos doctor
+#   .build/release/pinchos run aws_account
+
+[item.aws_account]
+type = "command"
+run = "aws sts get-caller-identity --query Account --output text"
+interval = "10m"
+timeout = "10s"
+format = "AWS {output}"
+on_error = "keep_last"
+stale_after = "30m"
+
+[item.aws_account.env]
+AWS_PROFILE = "default"

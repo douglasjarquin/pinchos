@@ -1,0 +1,46 @@
+# Recipe: system-resources (disk, memory, load)
+#
+# Purpose: three independent items covering the classic "system health"
+# trio: root-volume disk usage, physical memory pressure, and 1-minute
+# CPU load average. They are grouped in one file because they are all
+# built-in macOS signals with no external dependency, not because they
+# must be used together — copy only the [item.*] table(s) you want.
+#
+# Dependencies: none beyond the macOS base system (/bin/df, /usr/bin/vm_stat,
+# /usr/sbin/sysctl).
+#
+# All three commands use a shell pipeline (`|`), so `pinchos doctor` reports
+# that it "could not identify a single command to check safely" for each
+# item's `run` line — that is expected for compound commands, not a bug;
+# `doctor` still checks the configured shell, working directory, and icon.
+
+# --- disk ------------------------------------------------------------
+# Expected output: "7%" (percentage of the root volume in use).
+#   Machine-dependent: reflects whatever is mounted at "/" on this Mac.
+#   `format` is left unset because `df`'s own "Capacity" column already
+#   includes the trailing "%".
+[item.disk]
+type = "command"
+run = "df -h / | awk 'NR==2{print $5}'"
+interval = "5m"
+
+# --- memory ------------------------------------------------------------
+# Expected output: "82%" (used pages / (used + free + speculative) pages,
+#   a rough approximation of "memory pressure" similar to Activity Monitor's
+#   memory gauge, not an official Apple metric). Machine- and workload-
+#   dependent: it changes with every app you have open.
+[item.memory]
+type = "command"
+run = "vm_stat | awk '/Pages free/{free=$3} /Pages active/{active=$3} /Pages inactive/{inactive=$3} /Pages speculative/{spec=$3} /Pages wired down/{wired=$4} END{used=active+inactive+wired; total=used+free+spec; print int(used/total*100+0.5)}'"
+interval = "1m"
+format = "{output}%"
+
+# --- load ------------------------------------------------------------
+# Expected output: "3.60" (1-minute load average, the first of the three
+#   numbers `uptime` and `sysctl vm.loadavg` both report). Higher than
+#   your core count generally means the system is saturated; the useful
+#   threshold is machine-dependent (core count varies by Mac model).
+[item.load]
+type = "command"
+run = "sysctl -n vm.loadavg | awk '{print $2}'"
+interval = "30s"
