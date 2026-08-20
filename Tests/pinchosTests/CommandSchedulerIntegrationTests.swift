@@ -9,7 +9,7 @@ import XCTest
 /// commands rather than a fake, complementing `CommandSchedulerTests` (which
 /// exercises the scheduler actor itself in isolation).
 @MainActor
-private final class HeadlessManagedItemFactory: ManagedItemFactory {
+final class HeadlessManagedItemFactory: ManagedItemFactory {
     private let scheduler: CommandScheduler
 
     init(scheduler: CommandScheduler) {

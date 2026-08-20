@@ -24,6 +24,15 @@ final class PerformanceInvariantTests: XCTestCase {
         ItemConfig(name: name, run: "printf ok", interval: .manual)
     }
 
+    private func makeController(_ path: String, scheduler: CommandScheduler) -> StatusItemController {
+        StatusItemController(
+            configPath: path,
+            onReload: {},
+            itemFactory: HeadlessManagedItemFactory(scheduler: scheduler),
+            scheduler: scheduler
+        )
+    }
+
     /// Timer (de)registration on the scheduler actor completes asynchronously
     /// relative to the synchronous `startTimer`/`cancelRefreshTimer` call
     /// sites, so tests give it a short, fixed window to settle before
@@ -34,11 +43,7 @@ final class PerformanceInvariantTests: XCTestCase {
 
     func testTimerSourceCountTracksScheduledItemsAcrossReconfigurationWithoutLeaking() async throws {
         let scheduler = CommandScheduler()
-        let controller = StatusItemController(
-            configPath: "/tmp/pinchos-perf-timer-test.toml",
-            onReload: {},
-            scheduler: scheduler
-        )
+        let controller = makeController("/tmp/pinchos-perf-timer-test.toml", scheduler: scheduler)
         addTeardownBlock { @MainActor in
             await controller.shutdown()
         }
@@ -77,11 +82,7 @@ final class PerformanceInvariantTests: XCTestCase {
 
     func testManualIntervalItemsNeverAllocateATimerSource() async throws {
         let scheduler = CommandScheduler()
-        let controller = StatusItemController(
-            configPath: "/tmp/pinchos-perf-timer-test-manual.toml",
-            onReload: {},
-            scheduler: scheduler
-        )
+        let controller = makeController("/tmp/pinchos-perf-timer-test-manual.toml", scheduler: scheduler)
         addTeardownBlock { @MainActor in
             await controller.shutdown()
         }
@@ -97,11 +98,7 @@ final class PerformanceInvariantTests: XCTestCase {
 
     func testShutdownCancelsEveryLiveTimerSource() async throws {
         let scheduler = CommandScheduler()
-        let controller = StatusItemController(
-            configPath: "/tmp/pinchos-perf-timer-test-shutdown.toml",
-            onReload: {},
-            scheduler: scheduler
-        )
+        let controller = makeController("/tmp/pinchos-perf-timer-test-shutdown.toml", scheduler: scheduler)
 
         await controller.apply(config: PinchosConfig(items: [
             scheduledItem("alpha"), scheduledItem("beta"), scheduledItem("gamma")
