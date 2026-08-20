@@ -19,29 +19,22 @@ final class SignalIntegrationTests: XCTestCase {
         try runSignalScenario(signal: SIGTERM, expectedExitCode: 143)
     }
 
-    func testSIGTERMCancelsDoctorRunnerAndRemovesOwnedDescendants() throws {
+    func testDoctorDoesNotExecuteConfiguredItemShell() throws {
+        // Doctor resolves command availability via PATH/filesystem lookup and
+        // must not execute the configured shell or `run` command (#45).
         let root = FileManager.default.temporaryDirectory
-            .appendingPathComponent("pinchos-issue44-doctor-signal-\(UUID().uuidString)", isDirectory: true)
+            .appendingPathComponent("pinchos-issue45-doctor-shell-free-\(UUID().uuidString)", isDirectory: true)
         let configDirectory = root.appendingPathComponent("pinchos", isDirectory: true)
         let configURL = configDirectory.appendingPathComponent("pinchos.toml")
-        let shellURL = root.appendingPathComponent("slow-shell")
+        let shellURL = root.appendingPathComponent("must-not-run-shell")
         let markerURL = root.appendingPathComponent("doctor-shell.pid")
         try FileManager.default.createDirectory(at: configDirectory, withIntermediateDirectories: true)
         var process: Process?
-        var parentIdentity: OwnedProcess?
-        var supervisorIdentity: OwnedProcess?
-        var ownedProcesses = Set<OwnedProcess>()
-        var ownedPIDs = Set<pid_t>()
         defer {
             if let process, process.isRunning {
                 process.terminate()
                 process.waitUntilExit()
             }
-            cleanupProcesses(
-                processes: ownedProcesses,
-                owner: supervisorIdentity,
-                parent: parentIdentity
-            )
             try? FileManager.default.removeItem(at: root)
         }
 
@@ -53,13 +46,13 @@ final class SignalIntegrationTests: XCTestCase {
         """#.write(to: shellURL, atomically: true, encoding: .utf8)
         try FileManager.default.setAttributes([.posixPermissions: NSNumber(value: 0o755)], ofItemAtPath: shellURL.path)
         try #"""
-        [item.slow]
+        [item.probe]
         type = "command"
         timeout = "1m"
         shell = ["\#(shellURL.path)", "-c"]
         run = "true"
 
-        [item.slow.env]
+        [item.probe.env]
         PINCHOS_MARKER = "\#(markerURL.path)"
         """#.write(to: configURL, atomically: true, encoding: .utf8)
 
@@ -73,30 +66,14 @@ final class SignalIntegrationTests: XCTestCase {
         launchedProcess.standardOutput = FileHandle.nullDevice
         launchedProcess.standardError = FileHandle.nullDevice
         try launchedProcess.run()
-
-        parentIdentity = try XCTUnwrap(processIdentity(for: launchedProcess.processIdentifier))
-        let childPID = try waitForPID(at: markerURL)
-        XCTAssertEqual(kill(childPID, 0), 0, "doctor marker child must exist before signal delivery")
-        let childProcess = try XCTUnwrap(processIdentity(for: childPID))
-        let groupID = try XCTUnwrap(processGroupID(for: childPID))
-        let groupLeader = try XCTUnwrap(processIdentity(for: groupID))
-        supervisorIdentity = groupLeader
-        let groupProcesses = processIdentities(in: groupID)
-        XCTAssertEqual(groupLeader.parentPID, parentIdentity?.pid)
-        XCTAssertTrue(groupProcesses.contains(childProcess))
-        XCTAssertTrue(groupProcesses.allSatisfy { isDescendant($0, of: parentIdentity!) })
-        ownedProcesses.formUnion(groupProcesses)
-        ownedPIDs.formUnion(groupProcesses.map(\.pid))
-        XCTAssertEqual(kill(launchedProcess.processIdentifier, SIGTERM), 0)
         launchedProcess.waitUntilExit()
 
-        XCTAssertTrue(waitUntilGone(childPID), "doctor SIGTERM left owned descendant \(childPID) alive")
-        for pid in ownedPIDs {
-            XCTAssertTrue(waitUntilGone(pid), "doctor SIGTERM left owned process \(pid) alive")
-        }
-        XCTAssertTrue(waitUntilGroupGone(groupID), "doctor SIGTERM left owned process group \(groupID) alive")
+        XCTAssertFalse(
+            FileManager.default.fileExists(atPath: markerURL.path),
+            "shell-free doctor must not execute the configured item shell"
+        )
         XCTAssertEqual(launchedProcess.terminationReason, .exit)
-        XCTAssertEqual(launchedProcess.terminationStatus, 143)
+        XCTAssertEqual(launchedProcess.terminationStatus, 0)
     }
 
     func testGUISIGTERMCancelsMainRunnerAndRemovesOwnedDescendants() throws {
