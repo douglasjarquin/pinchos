@@ -477,6 +477,66 @@ final class RecoveryLifecycleTests: XCTestCase {
     }
 
     @MainActor
+    func testQueuedClickDoesNotRunObsoleteCommandAfterClickReload() async throws {
+        let obsoleteMarker = FileManager.default.temporaryDirectory
+            .appendingPathComponent("pinchos-obsolete-click-\(UUID().uuidString)")
+        let replacementMarker = FileManager.default.temporaryDirectory
+            .appendingPathComponent("pinchos-replacement-click-\(UUID().uuidString)")
+        defer {
+            try? FileManager.default.removeItem(at: obsoleteMarker)
+            try? FileManager.default.removeItem(at: replacementMarker)
+        }
+
+        let item = makeHeadlessItem(
+            config: ItemConfig(
+                name: "stale-click",
+                run: "printf unused",
+                interval: .manual,
+                click: "printf obsolete > '\(obsoleteMarker.path)'"
+            ),
+            initiallyVisible: false
+        )
+        addTeardownBlock { @MainActor in
+            await item.tearDown()
+        }
+
+        let gateEntered = expectation(description: "queued click reached test gate")
+        var releaseContinuation: CheckedContinuation<Void, Never>?
+        item.clickInvocationTestGate = {
+            gateEntered.fulfill()
+            await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+                releaseContinuation = continuation
+            }
+        }
+
+        item.processClick(eventType: .leftMouseUp)
+        await fulfillment(of: [gateEntered], timeout: 2)
+
+        await item.prepareUpdate(
+            config: ItemConfig(
+                name: "stale-click",
+                run: "printf unused",
+                interval: .manual,
+                click: "printf replacement > '\(replacementMarker.path)'"
+            )
+        )
+        item.commitPreparedUpdate()
+
+        releaseContinuation?.resume()
+        releaseContinuation = nil
+        try await Task.sleep(for: .milliseconds(100))
+
+        XCTAssertFalse(
+            FileManager.default.fileExists(atPath: obsoleteMarker.path),
+            "queued click must not execute the pre-reload click command"
+        )
+        XCTAssertFalse(
+            FileManager.default.fileExists(atPath: replacementMarker.path),
+            "queued obsolete click must not start the replacement command either"
+        )
+    }
+
+    @MainActor
     func testStaleScheduleAfterConfigReloadUsesLastSuccessfulUpdate() async throws {
         let item = makeHeadlessItem(
             config: ItemConfig(

@@ -32,6 +32,14 @@ final class ManagedItem: ManagedItemLifecycle {
     private var lastSuccessfulTitle: String?
     private var stalePresentationTask: Task<Void, Never>?
 
+    /// Test-only seams that pause a queued click/action invocation after it has been
+    /// accepted (bookkeeping incremented) but before it re-checks lifecycle state and
+    /// touches its captured runner. This lets tests deterministically land a config
+    /// reload or removal in the acceptance-to-start window without racing on timing.
+    /// Production code always passes `nil`, so these are no-ops outside tests.
+    var clickInvocationTestGate: (() async -> Void)?
+    var actionInvocationTestGate: (() async -> Void)?
+
     private struct PendingUpdate {
         let config: ItemConfig
         let runner: CommandRunner?
@@ -486,6 +494,16 @@ final class ManagedItem: ManagedItemLifecycle {
         return await actionRunner.snapshot()
     }
 
+    func clickSnapshot() async -> CommandRunnerSnapshot? {
+        guard let clickRunner else { return nil }
+        return await clickRunner.snapshot()
+    }
+
+    /// Test-only visibility into the accept/start bookkeeping used to gate
+    /// updates, removal, and shutdown on outstanding interaction-triggered work.
+    var pendingClickInvocationCountForTesting: Int { pendingClickInvocations }
+    var pendingActionInvocationCountForTesting: Int { pendingActionInvocations }
+
     func invokeAction(at index: Int) {
         guard isActive, !isPreparingUpdate, !isPreparingRemoval,
             config.actions.indices.contains(index)
@@ -498,18 +516,42 @@ final class ManagedItem: ManagedItemLifecycle {
         case .command:
             guard let actionRunner = actionRunners[index] else { return }
             pendingActionInvocations += 1
-            Task { @MainActor [weak self, actionRunner] in
-                defer { self?.finishActionInvocation() }
-                guard let self,
-                    self.isActive,
-                    !self.isPreparingUpdate,
-                    !self.isPreparingRemoval,
-                    self.actionRunners[index] === actionRunner
-                else {
-                    return
-                }
-                _ = await actionRunner.runIfIdle()
+            invokeGuarded(
+                runner: actionRunner,
+                testGate: actionInvocationTestGate,
+                currentRunner: { $0.actionRunners[index] },
+                onFinish: { $0.finishActionInvocation() }
+            )
+        }
+    }
+
+    /// Shared "accept now, re-validate immediately before starting" contract for
+    /// interaction-triggered runs (clicks, declarative command actions). A runner
+    /// captured at acceptance time may become stale if a config reload or removal
+    /// commits while the queued task is waiting for its turn on the main actor:
+    /// `currentRunner` re-reads the item's live runner (by reference identity) right
+    /// before starting, so a task that lost that race silently no-ops instead of
+    /// launching a command that belongs to a superseded configuration.
+    private func invokeGuarded(
+        runner: CommandRunner,
+        testGate: (() async -> Void)?,
+        currentRunner: @escaping (ManagedItem) -> CommandRunner?,
+        onFinish: @escaping (ManagedItem) -> Void
+    ) {
+        Task { @MainActor [weak self, runner] in
+            defer { if let self { onFinish(self) } }
+            if let testGate {
+                await testGate()
             }
+            guard let self,
+                self.isActive,
+                !self.isPreparingUpdate,
+                !self.isPreparingRemoval,
+                currentRunner(self) === runner
+            else {
+                return
+            }
+            _ = await runner.runIfIdle()
         }
     }
 
@@ -526,18 +568,12 @@ final class ManagedItem: ManagedItemLifecycle {
         } else if clickRunner != nil {
             guard let clickRunner else { return }
             pendingClickInvocations += 1
-            Task { @MainActor [weak self, clickRunner] in
-                defer { self?.finishClickInvocation() }
-                guard let self,
-                    self.isActive,
-                    !self.isPreparingUpdate,
-                    !self.isPreparingRemoval,
-                    self.clickRunner === clickRunner
-                else {
-                    return
-                }
-                _ = await clickRunner.runIfIdle()
-            }
+            invokeGuarded(
+                runner: clickRunner,
+                testGate: clickInvocationTestGate,
+                currentRunner: { $0.clickRunner },
+                onFinish: { $0.finishClickInvocation() }
+            )
         } else if config.refreshOnClick {
             refreshNow()
         }
