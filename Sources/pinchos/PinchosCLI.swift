@@ -45,6 +45,7 @@ final class CLICommandRunnerRegistry {
 }
 
 private enum CLIExitCode {
+    static let notEnabled: Int32 = 1
     static let usage: Int32 = 2
     static let config: Int32 = 3
     static let diagnostics: Int32 = 4
@@ -83,6 +84,8 @@ struct PinchosCLI {
     private let opener: (URL) -> Bool
     private let shutdownCoordinator: ShutdownCoordinator?
     private let runnerRegistry: CLICommandRunnerRegistry
+    private let launchAgentService: LaunchAgentService
+    private let currentExecutablePath: () -> String?
 
     init(
         configPath: String = ConfigLocation.resolve(),
@@ -90,7 +93,9 @@ struct PinchosCLI {
         output: CLIOutput = CLIOutput(),
         opener: @escaping (URL) -> Bool = { NSWorkspace.shared.open($0) },
         shutdownCoordinator: ShutdownCoordinator? = nil,
-        runnerRegistry: CLICommandRunnerRegistry? = nil
+        runnerRegistry: CLICommandRunnerRegistry? = nil,
+        launchAgentService: LaunchAgentService = LaunchAgentService(),
+        currentExecutablePath: @escaping () -> String? = { Bundle.main.executablePath }
     ) {
         self.configPath = configPath
         self.fileManager = fileManager
@@ -98,6 +103,8 @@ struct PinchosCLI {
         self.opener = opener
         self.shutdownCoordinator = shutdownCoordinator
         self.runnerRegistry = runnerRegistry ?? CLICommandRunnerRegistry()
+        self.launchAgentService = launchAgentService
+        self.currentExecutablePath = currentExecutablePath
     }
 
     func run(arguments: [String]) async -> Int32 {
@@ -125,6 +132,8 @@ struct PinchosCLI {
                 return try runOpenConfig(arguments: Array(arguments.dropFirst()))
             case "run":
                 return try await runItem(arguments: Array(arguments.dropFirst()))
+            case "service":
+                return try runService(arguments: Array(arguments.dropFirst()))
             default:
                 throw CLIError.usage("unknown command '\(command)'\nTry 'pinchos --help' for usage.")
             }
@@ -302,6 +311,118 @@ struct PinchosCLI {
             output.stderr("pinchos run \(name): launch failed: \(message)\n")
             return CLIExitCode.launchFailure
         }
+    }
+
+    private func runService(arguments: [String]) throws -> Int32 {
+        guard let subcommand = arguments.first else {
+            printServiceHelp()
+            return CLIExitCode.usage
+        }
+        switch subcommand {
+        case "--help", "-h", "help":
+            printServiceHelp()
+            return 0
+        case "install":
+            return try runServiceInstall(arguments: Array(arguments.dropFirst()))
+        case "status":
+            return try runServiceStatus(arguments: Array(arguments.dropFirst()))
+        case "uninstall":
+            return try runServiceUninstall(arguments: Array(arguments.dropFirst()))
+        default:
+            throw CLIError.usage("unknown service subcommand '\(subcommand)'\nTry 'pinchos service --help' for usage.")
+        }
+    }
+
+    private func runServiceInstall(arguments: [String]) throws -> Int32 {
+        if arguments == ["--help"] || arguments == ["-h"] {
+            printServiceInstallHelp()
+            return 0
+        }
+        let usage = "usage: pinchos service install [--executable <absolute-path>]"
+        let executablePath = try parseExecutableOverride(arguments, usage: usage) ?? resolveCurrentExecutablePath()
+        guard executablePath.hasPrefix("/") else {
+            throw CLIError.usage(usage)
+        }
+
+        switch launchAgentService.install(executablePath: executablePath) {
+        case .alreadyInstalled:
+            output.stdout("Launch agent already installed and enabled: \(launchAgentService.plistURL.path)\n")
+            return 0
+        case .installed:
+            output.stdout("Installed launch agent: \(launchAgentService.plistURL.path)\n")
+            output.stdout("Target executable: \(executablePath)\n")
+            output.stdout("Logs: \(launchAgentService.standardOutURL.path)\n")
+            return 0
+        case .failed(let message):
+            throw CLIError.config(message)
+        }
+    }
+
+    private func runServiceStatus(arguments: [String]) throws -> Int32 {
+        if arguments == ["--help"] || arguments == ["-h"] {
+            printServiceStatusHelp()
+            return 0
+        }
+        let usage = "usage: pinchos service status [--executable <absolute-path>]"
+        let expectedExecutablePath = try parseExecutableOverride(arguments, usage: usage) ?? resolveCurrentExecutablePath()
+
+        let status = launchAgentService.status(expectedExecutablePath: expectedExecutablePath)
+        output.stdout("Launch agent: \(launchAgentService.label)\n")
+        output.stdout("Configuration file: \(status.plistPath) (\(status.plistExists ? "present" : "missing"))\n")
+        if let configured = status.configuredExecutablePath {
+            if status.matchesExpectedExecutable {
+                output.stdout("Executable: \(configured)\n")
+            } else {
+                output.stdout("Executable: \(configured) (differs from the current binary at \(expectedExecutablePath))\n")
+            }
+        } else {
+            output.stdout("Executable: not configured\n")
+        }
+        output.stdout("Enabled: \(status.loaded ? "yes" : "no")\n")
+        if status.running, let pid = status.pid {
+            output.stdout("Running: yes (pid \(pid))\n")
+        } else {
+            output.stdout("Running: \(status.running ? "yes" : "no")\n")
+        }
+        output.stdout("Logs: \(launchAgentService.standardOutURL.path)\n")
+
+        return status.loaded ? 0 : CLIExitCode.notEnabled
+    }
+
+    private func runServiceUninstall(arguments: [String]) throws -> Int32 {
+        if arguments == ["--help"] || arguments == ["-h"] {
+            printServiceUninstallHelp()
+            return 0
+        }
+        guard arguments.isEmpty else {
+            throw CLIError.usage("usage: pinchos service uninstall")
+        }
+
+        switch launchAgentService.uninstall() {
+        case .alreadyAbsent:
+            output.stdout("Launch agent already not installed.\n")
+            return 0
+        case .uninstalled:
+            output.stdout("Uninstalled launch agent: \(launchAgentService.plistURL.path)\n")
+            return 0
+        case .failed(let message):
+            throw CLIError.config(message)
+        }
+    }
+
+    private func parseExecutableOverride(_ arguments: [String], usage: String) throws -> String? {
+        guard !arguments.isEmpty else { return nil }
+        guard arguments.count == 2, arguments[0] == "--executable", !arguments[1].isEmpty else {
+            throw CLIError.usage(usage)
+        }
+        return arguments[1]
+    }
+
+    private func resolveCurrentExecutablePath() throws -> String {
+        guard let path = currentExecutablePath(), path.hasPrefix("/") else {
+            throw CLIError.config("unable to resolve the current executable's path; pass --executable <absolute-path> instead")
+        }
+        return path
     }
 
     private func runDoctor(arguments: [String]) async throws -> Int32 {
@@ -631,6 +752,7 @@ struct PinchosCLI {
           config-path      Print the resolved config path
           open-config      Open the config in its default application
           run <item>       Execute one configured item
+          service          Manage the per-user launch-at-login agent
 
         Use `pinchos <command> --help` for command-specific help.
         """
@@ -659,5 +781,50 @@ struct PinchosCLI {
 
     private func printRunHelp() {
         output.stdout("Usage: pinchos run <item>\n\nExecute one configured item with the shell, working directory, merged environment, timeout, and output limits used by Pinchos.\n")
+    }
+
+    private func printServiceHelp() {
+        let help = """
+        Usage: pinchos service <subcommand> [options]
+
+        Subcommands:
+          install      Install and enable the per-user launch-at-login agent
+          status       Report the agent's configuration, enabled, and running state
+          uninstall    Disable and remove the agent
+
+        Manages a per-user launchd LaunchAgent (~/Library/LaunchAgents) that starts
+        Pinchos at login. No root privileges are required or used.
+
+        Use `pinchos service <subcommand> --help` for subcommand-specific help.
+        """
+        output.stdout(help + "\n")
+    }
+
+    private func printServiceInstallHelp() {
+        let help = """
+        Usage: pinchos service install [--executable <absolute-path>]
+
+        Installs (or re-installs) the per-user launch-at-login agent and loads it
+        immediately. Idempotent: running it again with the same target executable
+        while already enabled makes no changes. Defaults to the currently running
+        binary's absolute path; pass --executable to target a different one (for
+        example after copying a new build to ~/.local/bin/pinchos).
+        """
+        output.stdout(help + "\n")
+    }
+
+    private func printServiceStatusHelp() {
+        let help = """
+        Usage: pinchos service status [--executable <absolute-path>]
+
+        Reports the agent's configuration file path, configured executable,
+        enabled (loaded) state, and running state (with pid when running).
+        Exit code is 0 when enabled, 1 when not installed or not enabled.
+        """
+        output.stdout(help + "\n")
+    }
+
+    private func printServiceUninstallHelp() {
+        output.stdout("Usage: pinchos service uninstall\n\nUnloads the agent and removes its configuration file. Safe to run when not installed.\n")
     }
 }
