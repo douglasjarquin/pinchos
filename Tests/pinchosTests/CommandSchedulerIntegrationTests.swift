@@ -5,9 +5,32 @@ import XCTest
 
 /// Issue #49: integration coverage for the one application-scoped
 /// `CommandScheduler` wired through `StatusItemController`/`ManagedItem`,
-/// using real `ManagedItem`s (via `DefaultManagedItemFactory`) and real
-/// shell commands rather than a fake, complementing `CommandSchedulerTests`
-/// (which exercises the scheduler actor itself in isolation).
+/// using real `ManagedItem`s through a headless factory and real shell
+/// commands rather than a fake, complementing `CommandSchedulerTests` (which
+/// exercises the scheduler actor itself in isolation).
+@MainActor
+private final class HeadlessManagedItemFactory: ManagedItemFactory {
+    private let scheduler: CommandScheduler
+
+    init(scheduler: CommandScheduler) {
+        self.scheduler = scheduler
+    }
+
+    func make(
+        config: ItemConfig,
+        menuDelegate: StatusItemMenuDelegate,
+        initiallyVisible: Bool
+    ) -> any ManagedItemLifecycle {
+        ManagedItem(
+            config: config,
+            menuDelegate: menuDelegate,
+            initiallyVisible: initiallyVisible,
+            scheduler: scheduler,
+            statusItemFactory: { nil }
+        )
+    }
+}
+
 final class CommandSchedulerIntegrationTests: XCTestCase {
     private func manualItem(_ name: String, run: String) -> ItemConfig {
         ItemConfig(name: name, run: run, interval: .manual)
@@ -15,6 +38,16 @@ final class CommandSchedulerIntegrationTests: XCTestCase {
 
     private func uniqueConfigPath(_ label: String) -> String {
         "/tmp/pinchos-scheduler-integration-\(label)-\(UUID().uuidString).toml"
+    }
+
+    @MainActor
+    private func makeController(_ label: String, scheduler: CommandScheduler) -> StatusItemController {
+        StatusItemController(
+            configPath: uniqueConfigPath(label),
+            onReload: {},
+            itemFactory: HeadlessManagedItemFactory(scheduler: scheduler),
+            scheduler: scheduler
+        )
     }
 
     /// Six manual items, each triggering an initial refresh on activation,
@@ -25,11 +58,7 @@ final class CommandSchedulerIntegrationTests: XCTestCase {
     @MainActor
     func testManyItemsAcrossOneControllerNeverExceedTheConfiguredActiveSessionLimit() async throws {
         let scheduler = CommandScheduler()
-        let controller = StatusItemController(
-            configPath: uniqueConfigPath("fairness"),
-            onReload: {},
-            scheduler: scheduler
-        )
+        let controller = makeController("fairness", scheduler: scheduler)
         addTeardownBlock { @MainActor in
             await controller.shutdown()
         }
@@ -72,11 +101,7 @@ final class CommandSchedulerIntegrationTests: XCTestCase {
     @MainActor
     func testConfigReloadAppliesANewSchedulerLimitEvenWhenNoItemChanges() async throws {
         let scheduler = CommandScheduler(maxActiveSessions: 4)
-        let controller = StatusItemController(
-            configPath: uniqueConfigPath("limit-only-reload"),
-            onReload: {},
-            scheduler: scheduler
-        )
+        let controller = makeController("limit-only-reload", scheduler: scheduler)
         addTeardownBlock { @MainActor in
             await controller.shutdown()
         }
@@ -97,11 +122,7 @@ final class CommandSchedulerIntegrationTests: XCTestCase {
     @MainActor
     func testConfigReloadWithoutASchedulerSectionRevertsToTheDefaultLimit() async throws {
         let scheduler = CommandScheduler(maxActiveSessions: 4)
-        let controller = StatusItemController(
-            configPath: uniqueConfigPath("revert-to-default"),
-            onReload: {},
-            scheduler: scheduler
-        )
+        let controller = makeController("revert-to-default", scheduler: scheduler)
         addTeardownBlock { @MainActor in
             await controller.shutdown()
         }
@@ -126,11 +147,7 @@ final class CommandSchedulerIntegrationTests: XCTestCase {
         let marker = FileManager.default.temporaryDirectory
             .appendingPathComponent("pinchos-scheduler-removed-queued-\(UUID().uuidString)")
         let scheduler = CommandScheduler()
-        let controller = StatusItemController(
-            configPath: uniqueConfigPath("removed-while-queued"),
-            onReload: {},
-            scheduler: scheduler
-        )
+        let controller = makeController("removed-while-queued", scheduler: scheduler)
         addTeardownBlock { @MainActor in
             await controller.shutdown()
             try? FileManager.default.removeItem(at: marker)
@@ -180,11 +197,7 @@ final class CommandSchedulerIntegrationTests: XCTestCase {
     @MainActor
     func testShutdownDrainsQueuedAndActiveSchedulerPermitsAcrossAllItems() async throws {
         let scheduler = CommandScheduler()
-        let controller = StatusItemController(
-            configPath: uniqueConfigPath("shutdown-drains-queue"),
-            onReload: {},
-            scheduler: scheduler
-        )
+        let controller = makeController("shutdown-drains-queue", scheduler: scheduler)
 
         let items = (0..<5).map { manualItem("item\($0)", run: "sleep 1") }
         await controller.apply(config: PinchosConfig(items: items, scheduler: SchedulerConfig(maxActiveSessions: 1)))
