@@ -268,7 +268,13 @@ final class ProcessGroupController: @unchecked Sendable {
     func beginTermination(_ reason: Claim) -> Bool {
         lock.lock()
         let canClaim = claim == nil || claim == reason || claim == .natural
-        if claim == nil {
+        // A `.natural` claim only records that the shell leader exited; it must
+        // not block a later timeout/cancellation from becoming the definitive
+        // reason once same-group descendants outlive the shell. Overwriting it
+        // here is what lets `claimDescription()` (and therefore
+        // `LingeringProcess.currentExecution()`) report `.timedOut`/`.cancelled`
+        // instead of silently keeping a stale `.exited(0)` claim.
+        if claim == nil || claim == .natural {
             claim = reason
         }
         let shouldRequest = session != nil && !cleanupRequested
@@ -349,19 +355,27 @@ private struct LingeringProcess: Sendable {
     let execution: CommandExecution
     let stdout: OutputCollector
     let stderr: OutputCollector
+    let startedAt: UInt64
 
-    func currentExecution() -> CommandExecution {
+    /// The session-level result: the shell's preliminary terminal reason,
+    /// overridden by a later timeout/cancellation claim against the owned
+    /// process group, together with output drained since the shell exited
+    /// and a duration spanning the full owned session (shell + descendants),
+    /// not just the shell leader's lifetime.
+    func currentExecution(finishedAt: UInt64 = DispatchTime.now().uptimeNanoseconds) -> CommandExecution {
         let stdoutSnapshot = stdout.snapshot()
         let stderrSnapshot = stderr.snapshot()
+        let terminalReason = controller.claimDescription() ?? execution.terminalReason
+        let elapsed = finishedAt &- startedAt
         return CommandExecution(
-            terminalReason: execution.terminalReason,
+            terminalReason: terminalReason,
             stdout: String(decoding: stdoutSnapshot.data, as: UTF8.self),
             stderr: String(decoding: stderrSnapshot.data, as: UTF8.self),
             stdoutBytesRead: stdoutSnapshot.bytesRead,
             stderrBytesRead: stderrSnapshot.bytesRead,
             stdoutTruncated: stdoutSnapshot.truncated,
             stderrTruncated: stderrSnapshot.truncated,
-            duration: execution.duration
+            duration: Double(elapsed) / 1_000_000_000
         )
     }
 }
@@ -698,7 +712,8 @@ private enum CommandExecutionEngine {
                     timeoutTask: timerTask,
                     execution: execution,
                     stdout: stdout,
-                    stderr: stderr
+                    stderr: stderr,
+                    startedAt: startedAt
                 )
             }
         )
@@ -1117,6 +1132,49 @@ public actor CommandRunner {
     public func runIfIdle() async -> CommandRunOutcome {
         guard await beginIfIdle() else { return .skipped }
         return await finishActiveRun()
+    }
+
+    /// Waits for the definitive result of the command session: the shell
+    /// process, every same-process-group descendant it left behind, and both
+    /// output pipes.
+    ///
+    /// `finishActiveRun()`/`runIfIdle()` intentionally return as soon as the
+    /// shell leader exits, even if it left descendants in its process group
+    /// running (`snapshot().isRunning` stays `true` in that case). That
+    /// preliminary result must not be published as the command's final
+    /// success, output, or terminal reason: a lingering descendant can still
+    /// write output, and a lingering group that later hits the configured
+    /// timeout must be reclassified as `.timedOut` rather than keeping the
+    /// shell's `.exited(0)`.
+    ///
+    /// This method waits until every owned descendant has exited and both
+    /// pipes are drained (or the owned session was terminated by timeout or
+    /// cancellation) and returns the resulting `CommandExecution`. When there
+    /// is nothing left to settle - the common case, where the shell exited
+    /// with no lingering descendants - it returns immediately with no added
+    /// latency. It is bounded by the same timeout/cancellation machinery that
+    /// bounds the run itself, so it never waits forever for an escaped
+    /// process. Returns `nil` only if no run has ever completed.
+    ///
+    /// Callers that need the authoritative result (UI success/output/
+    /// timestamps, `pinchos run`'s exit status) must call this after
+    /// `finishActiveRun()`/`runIfIdle()` instead of trusting the preliminary
+    /// execution directly.
+    public func awaitSettledExecution() async -> CommandExecution? {
+        if activeTask != nil {
+            _ = await finishActiveRun()
+        }
+        while let process = lingeringProcesses.first {
+            // The supervisor process stays alive until `release()`; do not
+            // `waitForExit()` here or we hang until the timeout kills the
+            // group. Poll descendant emptiness (which refreshes supervisor
+            // status) until the group is empty or timeout/cancel claims it.
+            while process.controller.hasDescendants() {
+                try? await Task.sleep(nanoseconds: 20_000_000)
+            }
+            await settleLingeringProcesses()
+        }
+        return lastExecution
     }
 
     public func cancelForShutdown() async {
