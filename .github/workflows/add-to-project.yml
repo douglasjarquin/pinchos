@@ -1,4 +1,4 @@
-name: Add issues to master project
+name: Add issues to Open Source project
 
 on:
   issues:
@@ -11,11 +11,11 @@ permissions: {}
 
 jobs:
   add-to-project:
-    name: Add issue to Open Source Work
+    name: Add issue to Open Source project
     runs-on: ubuntu-latest
 
     steps:
-      - name: Add issue to master project
+      - name: Add issue to Open Source project
         uses: actions/add-to-project@v2
         with:
           project-url: https://github.com/users/douglasjarquin/projects/7
