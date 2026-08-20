@@ -35,6 +35,12 @@ protocol ManagedItemFactory: AnyObject {
 
 @MainActor
 private final class DefaultManagedItemFactory: ManagedItemFactory {
+    private let scheduler: CommandScheduler
+
+    init(scheduler: CommandScheduler) {
+        self.scheduler = scheduler
+    }
+
     func make(
         config: ItemConfig,
         menuDelegate: StatusItemMenuDelegate,
@@ -43,7 +49,8 @@ private final class DefaultManagedItemFactory: ManagedItemFactory {
         ManagedItem(
             config: config,
             menuDelegate: menuDelegate,
-            initiallyVisible: initiallyVisible
+            initiallyVisible: initiallyVisible,
+            scheduler: scheduler
         )
     }
 }
@@ -97,6 +104,13 @@ private final class CopyTextTarget: NSObject {
 @MainActor
 final class StatusItemController: StatusItemMenuDelegate {
     private let itemFactory: any ManagedItemFactory
+    /// The one application-scoped `CommandScheduler` shared by every
+    /// `ManagedItem` this controller owns (see `README.md`'s "Scheduler"
+    /// section for the bounded-concurrency/fairness/diagnostics policy).
+    /// Exposed at `internal` access for scheduler-integration tests in this
+    /// module; a custom `itemFactory` injected for testing (e.g. a fake)
+    /// may simply not route work through it, in which case it sits idle.
+    let scheduler: CommandScheduler
     private var items: [String: any ManagedItemLifecycle] = [:]
     private var order: [String] = []
     private var warningItem: NSStatusItem?
@@ -109,9 +123,12 @@ final class StatusItemController: StatusItemMenuDelegate {
     init(
         configPath: String,
         onReload: @escaping () -> Void,
-        itemFactory: (any ManagedItemFactory)? = nil
+        itemFactory: (any ManagedItemFactory)? = nil,
+        scheduler: CommandScheduler? = nil
     ) {
-        self.itemFactory = itemFactory ?? DefaultManagedItemFactory()
+        let resolvedScheduler = scheduler ?? CommandScheduler()
+        self.scheduler = resolvedScheduler
+        self.itemFactory = itemFactory ?? DefaultManagedItemFactory(scheduler: resolvedScheduler)
         self.configPath = configPath
         self.onReload = onReload
     }
@@ -123,6 +140,12 @@ final class StatusItemController: StatusItemMenuDelegate {
     }
 
     private func applyNow(config: PinchosConfig) async {
+        // Always applied, independent of the item diff below: a config
+        // reload that only touches `[scheduler]` (no item changes) must
+        // still take effect.
+        await scheduler.updateMaxActiveSessions(
+            config.scheduler.maxActiveSessions ?? CommandScheduler.defaultMaxActiveSessions
+        )
         let old = currentConfig()
         let diff = ConfigDiffEngine.diff(old: old, new: config)
         recoveryState.apply(config: config)
@@ -378,6 +401,7 @@ final class StatusItemController: StatusItemMenuDelegate {
             }
             menu.addItem(NSMenuItem.separator())
         }
+        await addSchedulerDiagnostics(to: menu)
         let openConfig = NSMenuItem(title: "Open Config", action: #selector(openConfigAction), keyEquivalent: "")
         openConfig.target = self
         menu.addItem(openConfig)
@@ -388,6 +412,27 @@ final class StatusItemController: StatusItemMenuDelegate {
         quit.target = self
         menu.addItem(quit)
         return menu
+    }
+
+    /// A light-touch, always-present line surfacing the one application-scoped
+    /// `CommandScheduler`'s global saturation, independent of which (if any)
+    /// item's lifecycle menu is showing. Only mentions queued/coalesced/
+    /// delayed counts when they are non-zero so the common, unsaturated case
+    /// stays a single short line.
+    private func addSchedulerDiagnostics(to menu: NSMenu) async {
+        let diagnostics = await scheduler.diagnostics()
+        var title = "Scheduler: \(diagnostics.activeSessions)/\(diagnostics.maxActiveSessions) active"
+        if diagnostics.queuedSessions > 0 {
+            title += ", \(diagnostics.queuedSessions) queued"
+        }
+        if diagnostics.coalescedCount > 0 {
+            title += ", \(diagnostics.coalescedCount) coalesced"
+        }
+        if diagnostics.delayedAcquisitions > 0 {
+            title += ", \(diagnostics.delayedAcquisitions) delayed"
+        }
+        menu.addItem(disabledItem(title: title))
+        menu.addItem(NSMenuItem.separator())
     }
 
     private func addActionDiagnostics(

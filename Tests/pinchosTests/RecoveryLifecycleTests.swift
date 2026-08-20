@@ -28,21 +28,22 @@ private final class NoopStatusItemMenuDelegate: StatusItemMenuDelegate {
 }
 
 final class RecoveryLifecycleTests: XCTestCase {
+    /// A fresh `CommandScheduler` per test (rather than `.shared`) so
+    /// diagnostics assertions like "no timer got registered" can't be
+    /// polluted by another test's items.
     @MainActor
     private func makeHeadlessItem(
         config: ItemConfig,
         menuDelegate: StatusItemMenuDelegate? = nil,
         initiallyVisible: Bool = true,
         now: @escaping () -> Date = Date.init,
-        timerFactory: @escaping (DispatchQueue) -> DispatchSourceTimer = { queue in
-            DispatchSource.makeTimerSource(queue: queue)
-        }
+        scheduler: CommandScheduler = CommandScheduler()
     ) -> ManagedItem {
         ManagedItem(
             config: config,
             menuDelegate: menuDelegate ?? NoopStatusItemMenuDelegate(),
             initiallyVisible: initiallyVisible,
-            timerFactory: timerFactory,
+            scheduler: scheduler,
             now: now,
             statusItemFactory: { nil }
         )
@@ -75,7 +76,7 @@ final class RecoveryLifecycleTests: XCTestCase {
 
     @MainActor
     func testManualActivationDoesNotCreatePeriodicTimer() async throws {
-        let timerCreations = CallbackCounter()
+        let scheduler = CommandScheduler()
         let item = makeHeadlessItem(
             config: ItemConfig(
                 name: "manual",
@@ -84,13 +85,7 @@ final class RecoveryLifecycleTests: XCTestCase {
             ),
             menuDelegate: NoopStatusItemMenuDelegate(),
             initiallyVisible: false,
-            timerFactory: { _ in
-                _ = timerCreations.increment()
-                let timer = DispatchSource.makeTimerSource()
-                timer.resume()
-                timer.cancel()
-                return timer
-            }
+            scheduler: scheduler
         )
         addTeardownBlock { @MainActor in
             await item.tearDown()
@@ -100,7 +95,8 @@ final class RecoveryLifecycleTests: XCTestCase {
         _ = try await waitForExecution(item)
         try await Task.sleep(for: .milliseconds(200))
 
-        XCTAssertEqual(timerCreations.value, 0)
+        let diagnostics = await scheduler.diagnostics()
+        XCTAssertEqual(diagnostics.registeredTimers, 0)
     }
 
     @MainActor
@@ -895,10 +891,18 @@ final class RecoveryLifecycleTests: XCTestCase {
         XCTAssertNil(primary.errorSummary)
     }
 
+    /// Two clicks issued back-to-back (no intervening await) while a first
+    /// click already holds the scheduler permit and is running both land
+    /// while this item's one-outstanding-permit-request-per-work-kind
+    /// bound is in effect: the second coalesces into the third's still-
+    /// pending permit request (recorded on the scheduler, not the runner),
+    /// so exactly one of the two extra clicks actually reaches the runner
+    /// and increments its `skippedRefreshes`, not both.
     @MainActor
     func testRepeatedClicksWhileActiveIncrementSkippedInvocationCount() async throws {
         let marker = FileManager.default.temporaryDirectory
             .appendingPathComponent("pinchos-click-skip-\(UUID().uuidString)")
+        let scheduler = CommandScheduler()
         let item = makeHeadlessItem(
             config: ItemConfig(
                 name: "click-skip",
@@ -907,7 +911,8 @@ final class RecoveryLifecycleTests: XCTestCase {
                 click: "touch '\(marker.path)'; sleep 0.3"
             ),
             menuDelegate: NoopStatusItemMenuDelegate(),
-            initiallyVisible: false
+            initiallyVisible: false,
+            scheduler: scheduler
         )
         addTeardownBlock { @MainActor in
             await item.tearDown()
@@ -922,7 +927,9 @@ final class RecoveryLifecycleTests: XCTestCase {
         let deadline = Date().addingTimeInterval(2)
         while Date() < deadline {
             if let snapshot = await item.clickSnapshot(), snapshot.runner.skippedRefreshes > 0 {
-                XCTAssertGreaterThanOrEqual(snapshot.runner.skippedRefreshes, 2)
+                XCTAssertEqual(snapshot.runner.skippedRefreshes, 1)
+                let diagnostics = await scheduler.diagnostics()
+                XCTAssertGreaterThanOrEqual(diagnostics.coalescedCount, 1)
                 return
             }
             try await Task.sleep(for: .milliseconds(10))

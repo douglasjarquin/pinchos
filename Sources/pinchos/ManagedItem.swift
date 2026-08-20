@@ -25,9 +25,24 @@ final class ManagedItem: ManagedItemLifecycle {
     private var runner: CommandRunner
     private var clickRunner: CommandRunner?
     private var actionRunners: [Int: CommandRunner]
-    private var timer: DispatchSourceTimer?
-    private let timerQueue = DispatchQueue(label: "com.pinchos.item-timer")
-    private let timerFactory: (DispatchQueue) -> DispatchSourceTimer
+    /// The one application-scoped `CommandScheduler` bounding this item's
+    /// scheduled refreshes, manual refreshes, clicks, and command actions
+    /// alongside every other item's, replacing the per-item
+    /// `DispatchQueue`/`DispatchSourceTimer` this class used to own.
+    private let scheduler: CommandScheduler
+    private var refreshTimerToken: CommandScheduler.ItemToken?
+    /// Tracks a refresh/click/action request while it is only queued for a
+    /// global permit (not yet running). A second request arriving in that
+    /// window coalesces into this one (see `recordCoalesced`) instead of
+    /// enqueuing a second waiter, bounding the interactive/scheduled queue
+    /// depth this item can contribute to at most one per work kind. Once a
+    /// permit is granted the corresponding entry is cleared immediately
+    /// (before the runner actually starts), so a request arriving while the
+    /// command itself is running still reaches the runner's own no-overlap
+    /// check and increments `skippedRefreshes` exactly as before.
+    private var pendingRefreshPermitTask: Task<Void, Never>?
+    private var pendingClickPermitTask: Task<Void, Never>?
+    private var pendingActionPermitTasks: [Int: Task<Void, Never>] = [:]
     private weak var menuDelegate: StatusItemMenuDelegate?
     private let now: () -> Date
     private var isActive = true
@@ -88,9 +103,7 @@ final class ManagedItem: ManagedItemLifecycle {
         config: ItemConfig,
         menuDelegate: StatusItemMenuDelegate,
         initiallyVisible: Bool = true,
-        timerFactory: @escaping (DispatchQueue) -> DispatchSourceTimer = { queue in
-            DispatchSource.makeTimerSource(queue: queue)
-        },
+        scheduler: CommandScheduler = .shared,
         now: @escaping () -> Date = Date.init,
         statusItemFactory: @escaping () -> NSStatusItem? = {
             NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
@@ -98,7 +111,7 @@ final class ManagedItem: ManagedItemLifecycle {
     ) {
         self.config = config
         self.menuDelegate = menuDelegate
-        self.timerFactory = timerFactory
+        self.scheduler = scheduler
         self.now = now
         self.renderedTitle = config.errorText
         self.renderedToolTip = nil
@@ -195,8 +208,7 @@ final class ManagedItem: ManagedItemLifecycle {
             || previousConfig.icon != config.icon
         let becameDisabled = !previousConfig.disabled && config.disabled
         if timerNeedsRestart {
-            timer?.cancel()
-            timer = nil
+            cancelRefreshTimer()
         }
 
         // Quiesce every runner whose configuration is changing before this
@@ -250,6 +262,25 @@ final class ManagedItem: ManagedItemLifecycle {
         let replacementActionRunners = actionRunnersConfigurationChanged
             ? Self.makeActionRunners(for: config)
             : nil
+
+        // A permit request only queued (not yet running) for a runner whose
+        // configuration is changing belongs to the outgoing generation, so it
+        // is cancelled here alongside that runner's cancellation rather than
+        // left to eventually acquire a permit and no-op against the new
+        // config. A permit wait for an unaffected runner (e.g. a
+        // presentation-only update) is left alone and runs normally once
+        // this update commits.
+        if runnerNeedsCancel {
+            pendingRefreshPermitTask?.cancel()
+        }
+        if clickNeedsCancel {
+            pendingClickPermitTask?.cancel()
+        }
+        if actionsNeedCancel {
+            for task in pendingActionPermitTasks.values {
+                task.cancel()
+            }
+        }
 
         await settleConcurrently(
             cancellationOperations(
@@ -313,8 +344,12 @@ final class ManagedItem: ManagedItemLifecycle {
         configurationGeneration &+= 1
         stalePresentationTask?.cancel()
         stalePresentationTask = nil
-        timer?.cancel()
-        timer = nil
+        cancelRefreshTimer()
+        pendingRefreshPermitTask?.cancel()
+        pendingClickPermitTask?.cancel()
+        for task in pendingActionPermitTasks.values {
+            task.cancel()
+        }
 
         // Everything above is synchronous quiescing: no scheduled, manual,
         // click, or action invocation can start against this item past this
@@ -431,8 +466,7 @@ final class ManagedItem: ManagedItemLifecycle {
     }
 
     private func startTimer(runInitialRefresh: Bool = true) {
-        timer?.cancel()
-        timer = nil
+        cancelRefreshTimer()
         guard !config.disabled else { return }
         guard case .scheduled(let interval) = config.interval else {
             if runInitialRefresh {
@@ -440,16 +474,29 @@ final class ManagedItem: ManagedItemLifecycle {
             }
             return
         }
-        let newTimer = timerFactory(timerQueue)
-        newTimer.schedule(deadline: .now(), repeating: interval)
-        newTimer.setEventHandler { [weak self] in
+        let token = CommandScheduler.ItemToken()
+        refreshTimerToken = token
+        let scheduler = self.scheduler
+        Task { [weak self] in
             guard let self else { return }
-            Task { @MainActor in
-                self.tick()
+            await scheduler.registerRecurring(token: token, interval: interval) { [weak self] in
+                Task { @MainActor in
+                    self?.tick()
+                }
             }
         }
-        timer = newTimer
-        newTimer.resume()
+    }
+
+    /// Cancels this item's registration with the shared scheduler timer, if
+    /// any. Safe to call unconditionally (e.g. at the top of `startTimer`,
+    /// or during removal) since it is a no-op when nothing is registered.
+    private func cancelRefreshTimer() {
+        guard let token = refreshTimerToken else { return }
+        refreshTimerToken = nil
+        let scheduler = self.scheduler
+        Task {
+            await scheduler.cancelTimer(token)
+        }
     }
 
     private func tick() {
@@ -460,12 +507,38 @@ final class ManagedItem: ManagedItemLifecycle {
         requestRefresh()
     }
 
+    /// Requests a refresh, coalescing with any refresh already queued for a
+    /// global permit. Once granted, the permit is held for the whole
+    /// primary-runner session (`refresh()`, which itself owns the runner's
+    /// no-overlap check) and released exactly once when it settles.
     private func requestRefresh() {
         guard isActive, !isPreparingUpdate, !isPreparingRemoval, !config.disabled else { return }
+        guard pendingRefreshPermitTask == nil else {
+            recordCoalesced()
+            return
+        }
         pendingRefreshInvocations += 1
-        Task { @MainActor [self] in
-            defer { finishRefreshInvocation() }
+        pendingRefreshPermitTask = Task { @MainActor [self] in
+            do {
+                try await scheduler.acquirePermit()
+            } catch {
+                pendingRefreshPermitTask = nil
+                finishRefreshInvocation()
+                return
+            }
+            pendingRefreshPermitTask = nil
             await refresh()
+            await scheduler.releasePermit()
+            finishRefreshInvocation()
+        }
+    }
+
+    /// Records that a request coalesced into an already-queued permit wait
+    /// for this item's diagnostics, without blocking on the scheduler actor.
+    private func recordCoalesced() {
+        let scheduler = self.scheduler
+        Task {
+            await scheduler.recordCoalesced()
         }
     }
 
@@ -685,48 +758,55 @@ final class ManagedItem: ManagedItemLifecycle {
             refreshNow()
         case .command:
             guard let actionRunner = actionRunners[index] else { return }
+            guard pendingActionPermitTasks[index] == nil else {
+                recordCoalesced()
+                return
+            }
             pendingActionInvocations += 1
-            invokeGuarded(
-                runner: actionRunner,
-                testGate: actionInvocationTestGate,
-                currentRunner: { $0.actionRunners[index] },
-                onFinish: { $0.finishActionInvocation() }
-            )
+            pendingActionPermitTasks[index] = Task { @MainActor [self] in
+                do {
+                    try await scheduler.acquirePermit()
+                } catch {
+                    pendingActionPermitTasks[index] = nil
+                    finishActionInvocation()
+                    return
+                }
+                pendingActionPermitTasks[index] = nil
+                await invokeGuarded(
+                    runner: actionRunner,
+                    testGate: actionInvocationTestGate,
+                    currentRunner: { $0.actionRunners[index] }
+                )
+                await scheduler.releasePermit()
+                finishActionInvocation()
+            }
         }
     }
 
     /// Shared "accept now, re-validate immediately before starting" contract for
     /// interaction-triggered runs (clicks, declarative command actions). A runner
     /// captured at acceptance time may become stale if a config reload or removal
-    /// commits while the queued task is waiting for its turn on the main actor:
+    /// commits while the caller was waiting for a scheduler permit:
     /// `currentRunner` re-reads the item's live runner (by reference identity) right
-    /// before starting, so a task that lost that race silently no-ops instead of
-    /// launching a command that belongs to a superseded configuration.
+    /// before starting, so a call that lost that race silently no-ops instead of
+    /// launching a command that belongs to a superseded configuration. Awaits the
+    /// full run so the caller can hold its scheduler permit for the whole session.
     private func invokeGuarded(
         runner: CommandRunner,
         testGate: (() async -> Void)?,
         currentRunner: @escaping (ManagedItem) -> CommandRunner?,
         onStart: ((ManagedItem) -> Void)? = nil,
-        onCompletion: ((ManagedItem) -> Void)? = nil,
-        onFinish: @escaping (ManagedItem) -> Void
-    ) {
-        Task { @MainActor [weak self, runner] in
-            defer { if let self { onFinish(self) } }
-            if let testGate {
-                await testGate()
-            }
-            guard let self,
-                self.isActive,
-                !self.isPreparingUpdate,
-                !self.isPreparingRemoval,
-                currentRunner(self) === runner
-            else {
-                return
-            }
-            onStart?(self)
-            _ = await runner.runIfIdle()
-            onCompletion?(self)
+        onCompletion: ((ManagedItem) -> Void)? = nil
+    ) async {
+        if let testGate {
+            await testGate()
         }
+        guard isActive, !isPreparingUpdate, !isPreparingRemoval, currentRunner(self) === runner else {
+            return
+        }
+        onStart?(self)
+        _ = await runner.runIfIdle()
+        onCompletion?(self)
     }
 
     @objc private func handleClick() {
@@ -743,15 +823,30 @@ final class ManagedItem: ManagedItemLifecycle {
             return
         } else if clickRunner != nil {
             guard let clickRunner else { return }
+            guard pendingClickPermitTask == nil else {
+                recordCoalesced()
+                return
+            }
             pendingClickInvocations += 1
-            invokeGuarded(
-                runner: clickRunner,
-                testGate: clickInvocationTestGate,
-                currentRunner: { $0.clickRunner },
-                onStart: { $0.lastClickAttemptedAt = $0.now() },
-                onCompletion: { $0.lastClickCompletedAt = $0.now() },
-                onFinish: { $0.finishClickInvocation() }
-            )
+            pendingClickPermitTask = Task { @MainActor [self] in
+                do {
+                    try await scheduler.acquirePermit()
+                } catch {
+                    pendingClickPermitTask = nil
+                    finishClickInvocation()
+                    return
+                }
+                pendingClickPermitTask = nil
+                await invokeGuarded(
+                    runner: clickRunner,
+                    testGate: clickInvocationTestGate,
+                    currentRunner: { $0.clickRunner },
+                    onStart: { $0.lastClickAttemptedAt = $0.now() },
+                    onCompletion: { $0.lastClickCompletedAt = $0.now() }
+                )
+                await scheduler.releasePermit()
+                finishClickInvocation()
+            }
         } else if config.refreshOnClick {
             refreshNow()
         }
