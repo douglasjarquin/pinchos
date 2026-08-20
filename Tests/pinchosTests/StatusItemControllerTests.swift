@@ -491,6 +491,66 @@ final class StatusItemControllerTests: XCTestCase {
         }
     }
 
+    func testDisabledItemMenuDisablesExecutableActionsAndReportsDisabledState() async throws {
+        let factory = FakeManagedItemFactory()
+        let controller = makeController(factory: factory)
+        addTeardownBlock { @MainActor in
+            await controller.shutdown()
+        }
+        let config = ItemConfig(
+            name: "codex",
+            run: "echo value",
+            interval: .manual,
+            actions: [
+                ItemAction(title: "Open usage", kind: .command("echo usage")),
+                ItemAction(title: "Refresh now", kind: .refresh)
+            ],
+            disabled: true
+        )
+
+        await controller.apply(config: PinchosConfig(items: [config]))
+        let menu = await controller.makeLifecycleMenu(forManagedItem: factory.created[0])
+        let titles = menu.items.map(\.title)
+
+        let openUsage = try XCTUnwrap(menu.items.first(where: { $0.title == "Open usage" }))
+        let refreshNow = try XCTUnwrap(menu.items.first(where: { $0.title == "Refresh now" }))
+        XCTAssertFalse(openUsage.isEnabled)
+        XCTAssertFalse(refreshNow.isEnabled)
+        XCTAssertTrue(titles.contains("Disabled: yes"))
+    }
+
+    func testDisabledItemWithoutDeclarativeActionsDisablesFallbackRefreshNow() async throws {
+        let factory = FakeManagedItemFactory()
+        let controller = makeController(factory: factory)
+        addTeardownBlock { @MainActor in
+            await controller.shutdown()
+        }
+        let config = ItemConfig(name: "alpha", run: "echo alpha", interval: .scheduled(60), disabled: true)
+
+        await controller.apply(config: PinchosConfig(items: [config]))
+        let menu = await controller.makeLifecycleMenu(forManagedItem: factory.created[0])
+
+        let refresh = try XCTUnwrap(menu.items.first(where: { $0.title == "Refresh Now" }))
+        XCTAssertFalse(refresh.isEnabled)
+        XCTAssertTrue(menu.items.map(\.title).contains("Disabled: yes"))
+    }
+
+    func testEnabledItemMenuLeavesActionsEnabledAndOmitsDisabledState() async throws {
+        let factory = FakeManagedItemFactory()
+        let controller = makeController(factory: factory)
+        addTeardownBlock { @MainActor in
+            await controller.shutdown()
+        }
+
+        await controller.apply(config: PinchosConfig(items: [item("alpha")]))
+        let menu = await controller.makeLifecycleMenu(forManagedItem: factory.created[0])
+        let titles = menu.items.map(\.title)
+
+        let refresh = try XCTUnwrap(menu.items.first(where: { $0.title == "Refresh Now" }))
+        XCTAssertTrue(refresh.isEnabled)
+        XCTAssertFalse(titles.contains("Disabled: yes"))
+    }
+
     func testNoOpReloadLeavesManagedItemsUntouched() async {
         let factory = FakeManagedItemFactory()
         let controller = makeController(factory: factory)

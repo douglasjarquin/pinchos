@@ -17,8 +17,11 @@ struct ClickDiagnosticsSnapshot {
 final class ManagedItem: ManagedItemLifecycle {
     let statusItem: NSStatusItem?
     private(set) var renderedTitle: String
+    private(set) var renderedButtonTitle: String = ""
     private(set) var renderedToolTip: String?
+    private(set) var isVisible = true
     private(set) var config: ItemConfig
+    private var iconIsLoaded = false
     private var runner: CommandRunner
     private var clickRunner: CommandRunner?
     private var actionRunners: [Int: CommandRunner]
@@ -107,12 +110,12 @@ final class ManagedItem: ManagedItemLifecycle {
         self.actionRunners = Self.makeActionRunners(for: config)
         let statusItem = statusItemFactory()
         self.statusItem = statusItem
-        statusItem?.button?.title = config.errorText
         statusItem?.button?.target = self
         statusItem?.button?.action = #selector(handleClick)
         statusItem?.button?.sendAction(on: [.leftMouseUp, .rightMouseUp])
         applyIcon()
-        statusItem?.isVisible = initiallyVisible
+        applyDisplayedTitle()
+        setVisibility(initiallyVisible)
         if initiallyVisible {
             startTimer()
         }
@@ -120,7 +123,7 @@ final class ManagedItem: ManagedItemLifecycle {
 
     func activate() {
         guard isActive else { return }
-        statusItem?.isVisible = true
+        setVisibility(true)
         startTimer()
     }
 
@@ -130,14 +133,19 @@ final class ManagedItem: ManagedItemLifecycle {
     }
 
     private func applyIcon() {
-        guard let statusItem, let path = config.icon, let image = NSImage(contentsOfFile: path) else {
+        // Loading is intentionally independent of `statusItem` (nil in headless
+        // tests) so `iconIsLoaded` reflects whether the configured file actually
+        // resolved, not whether there is a real status item to paint it onto.
+        guard let path = config.icon, let image = NSImage(contentsOfFile: path) else {
             statusItem?.button?.image = nil
+            iconIsLoaded = false
             return
         }
         image.size = NSSize(width: 16, height: 16)
         image.isTemplate = true
-        statusItem.button?.image = image
-        statusItem.button?.imagePosition = .imageLeft
+        statusItem?.button?.image = image
+        statusItem?.button?.imagePosition = .imageLeft
+        iconIsLoaded = true
     }
 
     func prepareUpdate(config: ItemConfig) async {
@@ -152,31 +160,42 @@ final class ManagedItem: ManagedItemLifecycle {
             || previousConfig.shell != config.shell
             || previousConfig.workingDirectory != config.workingDirectory
             || previousConfig.environment != config.environment
-        let timerNeedsRestart = runnerConfigurationChanged || previousConfig.interval != config.interval
+        let timerNeedsRestart = runnerConfigurationChanged
+            || previousConfig.interval != config.interval
+            || previousConfig.disabled != config.disabled
         let staleAfterChanged = previousConfig.staleAfter != config.staleAfter || runnerConfigurationChanged
         let presentationNeedsUpdate = previousConfig.format != config.format
             || previousConfig.errorText != config.errorText
             || previousConfig.onError != config.onError
             || previousConfig.staleAfter != config.staleAfter
             || previousConfig.tooltip != config.tooltip
+            || previousConfig.maxLength != config.maxLength
+            || previousConfig.hideWhenEmpty != config.hideWhenEmpty
+            || previousConfig.hideOnError != config.hideOnError
+            || previousConfig.iconOnly != config.iconOnly
+            || previousConfig.disabled != config.disabled
+            || previousConfig.icon != config.icon
+        let becameDisabled = !previousConfig.disabled && config.disabled
         if timerNeedsRestart {
             timer?.cancel()
             timer = nil
         }
 
         var replacementRunner: CommandRunner?
-        if runnerConfigurationChanged {
+        if runnerConfigurationChanged || becameDisabled {
             configurationGeneration &+= 1
             await runner.cancelActive()
             await drainRefreshInvocations()
-            replacementRunner = CommandRunner(
-                command: config.run,
-                timeout: config.timeout,
-                maxOutputBytes: config.maxOutputBytes,
-                shell: config.shell,
-                workingDirectory: config.workingDirectory,
-                environment: config.environment
-            )
+            if runnerConfigurationChanged {
+                replacementRunner = CommandRunner(
+                    command: config.run,
+                    timeout: config.timeout,
+                    maxOutputBytes: config.maxOutputBytes,
+                    shell: config.shell,
+                    workingDirectory: config.workingDirectory,
+                    environment: config.environment
+                )
+            }
         }
 
         let clickRunnerConfigurationChanged = previousConfig.click != config.click
@@ -185,7 +204,7 @@ final class ManagedItem: ManagedItemLifecycle {
             || previousConfig.shell != config.shell
             || previousConfig.workingDirectory != config.workingDirectory
             || previousConfig.environment != config.environment
-        if clickRunnerConfigurationChanged {
+        if clickRunnerConfigurationChanged || becameDisabled {
             await clickRunner?.cancelActive()
         }
         let replacementClickRunner = clickRunnerConfigurationChanged ? config.click.map {
@@ -205,7 +224,7 @@ final class ManagedItem: ManagedItemLifecycle {
             || previousConfig.shell != config.shell
             || previousConfig.workingDirectory != config.workingDirectory
             || previousConfig.environment != config.environment
-        if actionRunnersConfigurationChanged {
+        if actionRunnersConfigurationChanged || becameDisabled {
             for actionRunner in actionRunners.values {
                 await actionRunner.cancelActive()
             }
@@ -301,6 +320,7 @@ final class ManagedItem: ManagedItemLifecycle {
     private func startTimer(runInitialRefresh: Bool = true) {
         timer?.cancel()
         timer = nil
+        guard !config.disabled else { return }
         guard case .scheduled(let interval) = config.interval else {
             if runInitialRefresh {
                 requestRefresh()
@@ -328,7 +348,7 @@ final class ManagedItem: ManagedItemLifecycle {
     }
 
     private func requestRefresh() {
-        guard isActive, !isPreparingUpdate, !isPreparingRemoval else { return }
+        guard isActive, !isPreparingUpdate, !isPreparingRemoval, !config.disabled else { return }
         pendingRefreshInvocations += 1
         Task { @MainActor [self] in
             defer { finishRefreshInvocation() }
@@ -476,8 +496,25 @@ final class ManagedItem: ManagedItemLifecycle {
         case .running, .fresh:
             marker = ""
         }
-        setTitle(baseTitle + marker)
+        setTitle(truncateTitle(baseTitle, maxLength: config.maxLength) + marker)
         setToolTip(renderTooltip(config.tooltip, state: snapshot))
+        setVisibility(computeVisibility(lastExecution: snapshot.lastExecution, fullOutput: snapshot.fullOutput))
+    }
+
+    /// `hide_when_empty` and `hide_on_error` only take effect after a completed
+    /// attempt (`lastExecution` becomes non-nil), so an item never disappears before
+    /// its first result lands. `disabled` overrides both policies to keep a disabled
+    /// item visible and inspectable via its right-click diagnostics menu.
+    private func computeVisibility(lastExecution: CommandExecution?, fullOutput: String?) -> Bool {
+        guard !config.disabled else { return true }
+        guard let lastExecution else { return true }
+        if lastExecution.terminalReason != .exited(code: 0) {
+            return !config.hideOnError
+        }
+        if config.hideWhenEmpty {
+            return !lastTrimmedLine(of: fullOutput ?? "").isEmpty
+        }
+        return true
     }
 
     func runtimeSnapshot() async -> ItemRuntimeSnapshot {
@@ -525,7 +562,7 @@ final class ManagedItem: ManagedItemLifecycle {
     var pendingActionInvocationCountForTesting: Int { pendingActionInvocations }
 
     func invokeAction(at index: Int) {
-        guard isActive, !isPreparingUpdate, !isPreparingRemoval,
+        guard isActive, !isPreparingUpdate, !isPreparingRemoval, !config.disabled,
             config.actions.indices.contains(index)
         else {
             return
@@ -589,6 +626,8 @@ final class ManagedItem: ManagedItemLifecycle {
         if eventType == .rightMouseUp {
             guard let statusItem else { return }
             menuDelegate?.showLifecycleMenu(for: statusItem)
+        } else if config.disabled {
+            return
         } else if clickRunner != nil {
             guard let clickRunner else { return }
             pendingClickInvocations += 1
@@ -651,11 +690,28 @@ final class ManagedItem: ManagedItemLifecycle {
 
     private func setTitle(_ title: String) {
         renderedTitle = title
-        statusItem?.button?.title = title
+        applyDisplayedTitle()
+    }
+
+    /// `icon_only` clears the status-bar button's text once an icon has actually
+    /// loaded, so a missing/unreadable icon quietly falls back to showing the text
+    /// title instead of leaving the item blank. `renderedTitle` itself (already
+    /// `max_length`-truncated and marker-suffixed) is unaffected either way; only
+    /// the button-facing `renderedButtonTitle` is blanked. The tooltip and
+    /// diagnostics menu read the untruncated full output separately, not this title.
+    private func applyDisplayedTitle() {
+        let displayed = (config.iconOnly && iconIsLoaded) ? "" : renderedTitle
+        renderedButtonTitle = displayed
+        statusItem?.button?.title = displayed
     }
 
     private func setToolTip(_ toolTip: String?) {
         renderedToolTip = toolTip
         statusItem?.button?.toolTip = toolTip
+    }
+
+    private func setVisibility(_ visible: Bool) {
+        isVisible = visible
+        statusItem?.isVisible = visible
     }
 }

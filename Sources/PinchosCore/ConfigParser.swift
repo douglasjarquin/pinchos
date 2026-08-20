@@ -19,7 +19,12 @@ public enum ConfigParser {
         "stale_after",
         "tooltip",
         "action",
-        "icon"
+        "icon",
+        "max_length",
+        "hide_when_empty",
+        "hide_on_error",
+        "icon_only",
+        "disabled"
     ]
 
     static let supportedActionKeys: Set<String> = ["title", "run", "refresh"]
@@ -714,6 +719,52 @@ public enum ConfigParser {
             icon = nil
         }
 
+        let maxLength: Int?
+        if let maxLengthValue = table["max_length"] {
+            guard let value = maxLengthValue.int else {
+                throw typeError(
+                    path: "item.\(name).max_length",
+                    expected: "integer",
+                    value: maxLengthValue,
+                    line: sourceLine(item: name, key: "max_length", sourceLines: sourceLines)
+                )
+            }
+            guard value > 0 else {
+                throw ConfigParseError(
+                    message: "item.\(name).max_length must be a positive integer",
+                    line: sourceLine(item: name, key: "max_length", sourceLines: sourceLines)
+                )
+            }
+            maxLength = value
+        } else {
+            maxLength = nil
+        }
+
+        let hideWhenEmpty = try optionalBool(
+            name: name,
+            key: "hide_when_empty",
+            table: table,
+            sourceLines: sourceLines
+        ) ?? false
+        let hideOnError = try optionalBool(
+            name: name,
+            key: "hide_on_error",
+            table: table,
+            sourceLines: sourceLines
+        ) ?? false
+        let iconOnly = try optionalBool(
+            name: name,
+            key: "icon_only",
+            table: table,
+            sourceLines: sourceLines
+        ) ?? false
+        let disabled = try optionalBool(
+            name: name,
+            key: "disabled",
+            table: table,
+            sourceLines: sourceLines
+        ) ?? false
+
         return ItemConfig(
             name: name,
             run: run,
@@ -747,7 +798,12 @@ public enum ConfigParser {
             staleAfter: staleAfter,
             tooltip: tooltip,
             actions: actions,
-            icon: icon
+            icon: icon,
+            maxLength: maxLength,
+            hideWhenEmpty: hideWhenEmpty,
+            hideOnError: hideOnError,
+            iconOnly: iconOnly,
+            disabled: disabled
         )
     }
 
@@ -1015,6 +1071,24 @@ public enum ConfigParser {
             requireNonEmpty: requireNonEmpty,
             line: sourceLine(item: name, key: key, sourceLines: sourceLines)
         )
+    }
+
+    private static func optionalBool(
+        name: String,
+        key: String,
+        table: TOMLTable,
+        sourceLines: SourceLineMap
+    ) throws -> Bool? {
+        guard let value = table[key] else { return nil }
+        guard let bool = value.bool else {
+            throw typeError(
+                path: "item.\(name).\(key)",
+                expected: "boolean",
+                value: value,
+                line: sourceLine(item: name, key: key, sourceLines: sourceLines)
+            )
+        }
+        return bool
     }
 
     private static func stringValue(

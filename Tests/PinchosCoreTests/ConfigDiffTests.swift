@@ -107,6 +107,28 @@ final class ConfigDiffTests: XCTestCase {
         XCTAssertTrue(diff.removed.isEmpty)
     }
 
+    func testDetectsChangedVisibilityAndDisabledPolicy() {
+        let old = PinchosConfig(items: [item("a")])
+        let new = PinchosConfig(items: [
+            ItemConfig(
+                name: "a",
+                run: "echo x",
+                interval: .scheduled(60),
+                maxLength: 24,
+                hideWhenEmpty: true,
+                hideOnError: true,
+                iconOnly: true,
+                disabled: true
+            )
+        ])
+
+        let diff = ConfigDiffEngine.diff(old: old, new: new)
+
+        XCTAssertEqual(diff.changed.map(\.name), ["a"])
+        XCTAssertTrue(diff.added.isEmpty)
+        XCTAssertTrue(diff.removed.isEmpty)
+    }
+
     func testDetectsOrderChangeWithSameItems() {
         let old = PinchosConfig(items: [item("a"), item("b")])
         let new = PinchosConfig(items: [item("b"), item("a")])

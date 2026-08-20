@@ -47,6 +47,11 @@ public struct ItemConfig: Equatable, Sendable {
     public let tooltip: String?
     public let actions: [ItemAction]
     public let icon: String?
+    public let maxLength: Int?
+    public let hideWhenEmpty: Bool
+    public let hideOnError: Bool
+    public let iconOnly: Bool
+    public let disabled: Bool
 
     public init(
         name: String,
@@ -65,7 +70,12 @@ public struct ItemConfig: Equatable, Sendable {
         staleAfter: TimeInterval? = nil,
         tooltip: String? = nil,
         actions: [ItemAction] = [],
-        icon: String? = nil
+        icon: String? = nil,
+        maxLength: Int? = nil,
+        hideWhenEmpty: Bool = false,
+        hideOnError: Bool = false,
+        iconOnly: Bool = false,
+        disabled: Bool = false
     ) {
         self.name = name
         self.run = run
@@ -84,6 +94,11 @@ public struct ItemConfig: Equatable, Sendable {
         self.tooltip = tooltip
         self.actions = actions
         self.icon = icon
+        self.maxLength = maxLength
+        self.hideWhenEmpty = hideWhenEmpty
+        self.hideOnError = hideOnError
+        self.iconOnly = iconOnly
+        self.disabled = disabled
     }
 }
 
