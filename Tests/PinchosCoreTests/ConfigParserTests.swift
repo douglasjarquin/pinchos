@@ -49,6 +49,502 @@ final class ConfigParserTests: XCTestCase {
         XCTAssertEqual(item.icon, "/path/to/icon.svg")
     }
 
+    func testRejectsPresentWrongTypesForEverySupportedField() {
+        let invalidFields = [
+            (key: "shell", value: "\"/bin/sh\"", expectedMessage: "must be an array"),
+            (key: "shell", value: "[42]", expectedMessage: "must be a string"),
+            (key: "working_directory", value: "42", expectedMessage: "must be a string"),
+            (key: "env", value: "[]", expectedMessage: "must be a table"),
+            (key: "interval", value: "5", expectedMessage: "must be a string"),
+            (key: "timeout", value: "15", expectedMessage: "must be a string"),
+            (key: "max_output", value: "65536", expectedMessage: "must be a string"),
+            (key: "format", value: "42", expectedMessage: "must be a string"),
+            (key: "click", value: "true", expectedMessage: "must be a string"),
+            (key: "refresh_on_click", value: "\"yes\"", expectedMessage: "must be a boolean"),
+            (key: "error_text", value: "[]", expectedMessage: "must be a string"),
+            (key: "on_error", value: "false", expectedMessage: "must be a string"),
+            (key: "stale_after", value: "5", expectedMessage: "must be a string"),
+            (key: "tooltip", value: "42", expectedMessage: "must be a string"),
+            (key: "action", value: "\"not an array\"", expectedMessage: "must be an array"),
+            (key: "icon", value: "false", expectedMessage: "must be a string")
+        ]
+
+        for field in invalidFields {
+            let toml = """
+            [item.clock]
+            type = "command"
+            run = "date"
+            \(field.key) = \(field.value)
+            """
+
+            XCTAssertThrowsError(try ConfigParser.parse(toml), "expected \(field.key) to reject") { error in
+                guard let parseError = error as? ConfigParseError else {
+                    return XCTFail("expected ConfigParseError, got \(error)")
+                }
+                XCTAssertTrue(parseError.message.contains("item.clock.\(field.key)"))
+                XCTAssertTrue(parseError.message.contains(field.expectedMessage))
+                XCTAssertEqual(parseError.line, 4)
+            }
+        }
+    }
+
+    func testRejectsUnknownItemKeysWithNearestKeySuggestionAndSourceLine() {
+        let cases = [
+            (key: "intervall", suggestion: "interval"),
+            (key: "max_outpt", suggestion: "max_output")
+        ]
+
+        for invalid in cases {
+            let toml = """
+            [item.clock]
+            type = "command"
+            run = "date"
+            \(invalid.key) = "5s"
+            """
+
+            XCTAssertThrowsError(try ConfigParser.parse(toml), "expected \(invalid.key) to reject") { error in
+                let parseError = error as? ConfigParseError
+                XCTAssertTrue(parseError?.message.contains("item.clock.\(invalid.key)") == true)
+                XCTAssertTrue(parseError?.message.contains("unknown key") == true)
+                XCTAssertTrue(parseError?.message.contains("did you mean '\(invalid.suggestion)'" ) == true)
+                XCTAssertEqual(parseError?.line, 4)
+            }
+        }
+    }
+
+    func testRejectsUnknownKeyAfterCommentedItemHeaderWithSourceLine() {
+        let toml = """
+        [item.clock] # valid TOML trailing comment
+        type = "command"
+        run = "date"
+        intervall = "5s"
+        """
+
+        XCTAssertThrowsError(try ConfigParser.parse(toml)) { error in
+            let parseError = error as? ConfigParseError
+            XCTAssertTrue(parseError?.message.contains("item.clock.intervall: unknown key") == true)
+            XCTAssertTrue(parseError?.message.contains("did you mean 'interval'") == true)
+            XCTAssertEqual(parseError?.line, 4)
+        }
+    }
+
+    func testPreservesHashInQuotedItemHeaderBeforeTrailingComment() throws {
+        let toml = """
+        [item."quoted#name"] # valid TOML trailing comment
+        type = "command"
+        run = "date"
+        """
+
+        let config = try ConfigParser.parse(toml)
+
+        XCTAssertEqual(config.items.map(\.name), ["quoted#name"])
+    }
+
+    func testPreservesEscapedQuotedItemHeaderName() throws {
+        let toml = #"""
+        [item."quoted\u002Ename"]
+        type = "command"
+        run = "date"
+        """#
+
+        let config = try ConfigParser.parse(toml)
+
+        XCTAssertEqual(config.items.map(\.name), ["quoted.name"])
+    }
+
+    func testPreservesEscapedQuotedItemHeaderNameForActionDiagnostics() {
+        let toml = #"""
+        [item."quoted\u002Ename"]
+        type = "command"
+        run = "date"
+
+        [[item."quoted\u002Ename".action]]
+        title = "Run"
+        run = "echo hi"
+        unknown = true
+        """#
+
+        XCTAssertThrowsError(try ConfigParser.parse(toml)) { error in
+            let parseError = error as? ConfigParseError
+            XCTAssertTrue(parseError?.message.contains("item.quoted.name.action[0].unknown: unknown key") == true)
+            XCTAssertEqual(parseError?.line, 8)
+        }
+    }
+
+    func testQuotedItemNameDoesNotCollideWithNestedActionSourceLines() {
+        let toml = """
+        [item.a]
+        type = "command"
+        run = "date"
+
+        [[item.a.action]]
+        title = "Run"
+        run = "echo hi"
+
+        [item."a.action[0]"]
+        type = "command"
+        """
+
+        XCTAssertThrowsError(try ConfigParser.parse(toml)) { error in
+            let parseError = error as? ConfigParseError
+            XCTAssertTrue(parseError?.message.contains("item.a.action[0]: missing required field 'run'") == true)
+            XCTAssertEqual(parseError?.line, 9)
+        }
+    }
+
+    func testEscapedQuotedKeyUsesAssignmentSourceLine() {
+        let toml = #"""
+        [item.clock]
+        type = "command"
+        run = "date"
+        "inter\u0076al" = 5
+        """#
+
+        XCTAssertThrowsError(try ConfigParser.parse(toml)) { error in
+            let parseError = error as? ConfigParseError
+            XCTAssertTrue(parseError?.message.contains("item.clock.interval: type error") == true)
+            XCTAssertEqual(parseError?.line, 4)
+        }
+    }
+
+    func testEscapedControlInQuotedItemNameCannotEnterDiagnostics() {
+        let toml = #"""
+        [item."bad\u001Bname"]
+        type = "command"
+        run = "date"
+        unknown = true
+        """#
+
+        XCTAssertThrowsError(try ConfigParser.parse(toml)) { error in
+            let parseError = error as? ConfigParseError
+            XCTAssertFalse(parseError?.message.unicodeScalars.contains { $0.value == 0x1B } == true)
+            XCTAssertTrue(parseError?.message.contains("\\u{1B}") == true)
+        }
+    }
+
+    func testInlineActionArrayElementUsesParentAssignmentSourceLine() {
+        let toml = """
+        [item.clock]
+        type = "command"
+        run = "date"
+        action = ["not a table"]
+        """
+
+        XCTAssertThrowsError(try ConfigParser.parse(toml)) { error in
+            let parseError = error as? ConfigParseError
+            XCTAssertTrue(parseError?.message.contains("item.clock.action[0]: type error") == true)
+            XCTAssertEqual(parseError?.line, 4)
+        }
+    }
+
+    func testInlineActionTableWrongRunUsesParentAssignmentSourceLine() {
+        let toml = """
+        [item.clock]
+        type = "command"
+        run = "date"
+        action = [{ title = "Bad", run = 42 }]
+        """
+
+        XCTAssertThrowsError(try ConfigParser.parse(toml)) { error in
+            let parseError = error as? ConfigParseError
+            XCTAssertTrue(parseError?.message.contains("item.clock.action[0].run: type error") == true)
+            XCTAssertEqual(parseError?.line, 4)
+        }
+    }
+
+    func testDottedUnknownAssignmentUsesItsSourceLine() {
+        let toml = """
+        [item.clock]
+        type = "command"
+        run = "date"
+        unknown.nested = "value"
+        """
+
+        XCTAssertThrowsError(try ConfigParser.parse(toml)) { error in
+            let parseError = error as? ConfigParseError
+            XCTAssertTrue(parseError?.message.contains("item.clock.unknown: unknown key") == true)
+            XCTAssertEqual(parseError?.line, 4)
+        }
+    }
+
+    func testQuotedDottedEnvironmentAssignmentUsesItsSourceLine() {
+        let toml = """
+        [item.clock]
+        type = "command"
+        run = "date"
+        env."BAD.NAME" = "value"
+        """
+
+        XCTAssertThrowsError(try ConfigParser.parse(toml)) { error in
+            let parseError = error as? ConfigParseError
+            XCTAssertTrue(parseError?.message.contains("item.clock.env.BAD.NAME: invalid environment key") == true)
+            XCTAssertEqual(parseError?.line, 4)
+        }
+    }
+
+    func testQuotedDottedEnvironmentTableKeyUsesItsSourceLine() {
+        let toml = """
+        [item.clock]
+        type = "command"
+        run = "date"
+
+        [item.clock.env]
+        "BAD.NAME" = "value"
+        """
+
+        XCTAssertThrowsError(try ConfigParser.parse(toml)) { error in
+            let parseError = error as? ConfigParseError
+            XCTAssertTrue(parseError?.message.contains("item.clock.env.BAD.NAME: invalid environment key") == true)
+            XCTAssertEqual(parseError?.line, 6)
+        }
+    }
+
+    func testRejectsPresentNonTableRootItemWithSourceLine() {
+        let toml = "item = \"not-a-table\""
+
+        XCTAssertThrowsError(try ConfigParser.parse(toml)) { error in
+            let parseError = error as? ConfigParseError
+            XCTAssertTrue(parseError?.message.contains("item: type error, must be a table") == true)
+            XCTAssertEqual(parseError?.line, 1)
+        }
+    }
+
+    func testRejectsUnknownRootKeysWithSourceLine() {
+        let toml = """
+        unrelated = 1
+
+        [item.clock]
+        type = "command"
+        run = "date"
+        """
+
+        XCTAssertThrowsError(try ConfigParser.parse(toml)) { error in
+            let parseError = error as? ConfigParseError
+            XCTAssertTrue(parseError?.message.contains("root.unrelated: unknown key") == true)
+            XCTAssertEqual(parseError?.line, 1)
+        }
+    }
+
+    func testRejectsUnknownActionKeysWithIndexAndActionSourceLine() {
+        let toml = """
+        [item.clock]
+        type = "command"
+        run = "date"
+
+        [[item.clock.action]]
+        title = "Run"
+        run = "echo hi"
+        unknown = true
+        """
+
+        XCTAssertThrowsError(try ConfigParser.parse(toml)) { error in
+            let parseError = error as? ConfigParseError
+            XCTAssertTrue(parseError?.message.contains("item.clock.action[0].unknown") == true)
+            XCTAssertTrue(parseError?.message.contains("unknown key") == true)
+            XCTAssertEqual(parseError?.line, 8)
+        }
+    }
+
+    func testRejectsUnknownActionKeyAfterCommentedArrayHeaderWithIndexedSourceLine() {
+        let toml = """
+        [item."quoted.dot"]
+        type = "command"
+        run = "date"
+
+        [[item."quoted.dot".action]] # valid TOML trailing comment
+        title = "Run"
+        run = "echo hi"
+        unknown = true
+        """
+
+        XCTAssertThrowsError(try ConfigParser.parse(toml)) { error in
+            let parseError = error as? ConfigParseError
+            XCTAssertTrue(parseError?.message.contains("item.quoted.dot.action[0].unknown: unknown key") == true)
+            XCTAssertEqual(parseError?.line, 8)
+        }
+    }
+
+    func testRejectsWrongTypesInsideEnvironmentAndActionTables() {
+        let configurations = [
+            (
+                toml: """
+                [item.clock]
+                type = "command"
+                run = "date"
+
+                [item.clock.env]
+                PATH = 42
+                """,
+                path: "item.clock.env.PATH"
+            ),
+            (
+                toml: """
+                [item.clock]
+                type = "command"
+                run = "date"
+
+                [[item.clock.action]]
+                title = 42
+                run = "echo hi"
+                """,
+                path: "item.clock.action[0].title"
+            ),
+            (
+                toml: """
+                [item.clock]
+                type = "command"
+                run = "date"
+
+                [[item.clock.action]]
+                title = "Run"
+                run = 42
+                """,
+                path: "item.clock.action[0].run"
+            ),
+            (
+                toml: """
+                [item.clock]
+                type = "command"
+                run = "date"
+
+                [[item.clock.action]]
+                title = "Refresh"
+                refresh = "yes"
+                """,
+                path: "item.clock.action[0].refresh"
+            )
+        ]
+
+        for invalid in configurations {
+            XCTAssertThrowsError(try ConfigParser.parse(invalid.toml)) { error in
+                let parseError = error as? ConfigParseError
+                XCTAssertTrue(parseError?.message.contains(invalid.path) == true)
+                XCTAssertTrue(parseError?.message.contains("type error") == true)
+            }
+        }
+    }
+
+    func testRejectsEmptyAndWhitespaceOnlyRunClickAndActionCommands() {
+        let configurations = [
+            """
+            [item.clock]
+            type = "command"
+            run = ""
+            """,
+            """
+            [item.clock]
+            type = "command"
+            run = "   \t"
+            """,
+            """
+            [item.clock]
+            type = "command"
+            run = "date"
+            click = "  "
+            """,
+            """
+            [item.clock]
+            type = "command"
+            run = "date"
+
+            [[item.clock.action]]
+            title = "Run"
+            run = " \t"
+            """
+        ]
+
+        for toml in configurations {
+            XCTAssertThrowsError(try ConfigParser.parse(toml)) { error in
+                let parseError = error as? ConfigParseError
+                XCTAssertTrue(parseError?.message.contains("non-empty string") == true)
+            }
+        }
+    }
+
+    func testReportsNonStringTypeAndRunAsTypeErrorsNotMissingFields() {
+        let cases = [
+            (key: "type", value: "42", line: 2),
+            (key: "run", value: "42", line: 3)
+        ]
+
+        for invalid in cases {
+            let toml = """
+            [item.clock]
+            type = \(invalid.key == "type" ? invalid.value : "\"command\"")
+            run = \(invalid.key == "run" ? invalid.value : "\"date\"")
+            """
+
+            XCTAssertThrowsError(try ConfigParser.parse(toml)) { error in
+                let parseError = error as? ConfigParseError
+                XCTAssertTrue(parseError?.message.contains("item.clock.\(invalid.key)") == true)
+                XCTAssertTrue(parseError?.message.contains("must be a string") == true)
+                XCTAssertFalse(parseError?.message.contains("missing required field") == true)
+                XCTAssertEqual(parseError?.line, invalid.line)
+            }
+        }
+    }
+
+    func testPreservesQuotedItemNamesAndIndexedNestedActionLines() {
+        let toml = """
+        [item."quoted.dot"]
+        type = "command"
+        run = "date"
+
+        [[item."quoted.dot".action]]
+        title = "Run"
+        run = "echo hi"
+        unknown = true
+        """
+
+        XCTAssertThrowsError(try ConfigParser.parse(toml)) { error in
+            let parseError = error as? ConfigParseError
+            XCTAssertTrue(parseError?.message.contains("item.quoted.dot.action[0].unknown") == true)
+            XCTAssertEqual(parseError?.line, 8)
+        }
+
+        let valid = try? ConfigParser.parse("""
+        [item."quoted.dot"]
+        type = "command"
+        run = "date"
+        """)
+        XCTAssertEqual(valid?.items.map(\.name), ["quoted.dot"])
+    }
+
+    func testRepositoryExamplesAndRecipesRemainValid() throws {
+        XCTAssertEqual(try ConfigParser.parse(ExampleConfig.text).items.map(\.name), ["clock"])
+
+        let thisFile = URL(fileURLWithPath: #filePath)
+        let repoRoot = thisFile.deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+        let exampleURL = repoRoot.appendingPathComponent("example/pinchos.toml")
+        let text = try String(contentsOf: exampleURL, encoding: .utf8)
+        let config = try ConfigParser.parse(text, relativeTo: exampleURL)
+        XCTAssertEqual(config.items.map(\.name), ["claude", "codex", "clock", "battery"])
+    }
+
+    func testSupportedSchemaEnumeratesEveryCurrentItemAndActionKey() {
+        XCTAssertEqual(ConfigParser.supportedRootKeys, ["item"])
+        XCTAssertEqual(ConfigParser.supportedItemKeys, [
+            "type",
+            "run",
+            "shell",
+            "working_directory",
+            "env",
+            "interval",
+            "timeout",
+            "max_output",
+            "format",
+            "click",
+            "refresh_on_click",
+            "error_text",
+            "on_error",
+            "stale_after",
+            "tooltip",
+            "action",
+            "icon"
+        ])
+        XCTAssertEqual(ConfigParser.supportedActionKeys, ["title", "run", "refresh"])
+    }
+
     func testParsesTooltipErrorPolicyAndStaleAfter() throws {
         let toml = """
         [item.limits]
