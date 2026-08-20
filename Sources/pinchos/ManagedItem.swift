@@ -480,8 +480,9 @@ final class ManagedItem: ManagedItemLifecycle {
         Task { [weak self] in
             guard let self else { return }
             await scheduler.registerRecurring(token: token, interval: interval) { [weak self] in
+                let item = self
                 Task { @MainActor in
-                    self?.tick()
+                    item?.tick()
                 }
             }
         }
