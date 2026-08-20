@@ -11,11 +11,11 @@ protocol ManagedItemLifecycle: AnyObject {
     var config: ItemConfig { get }
     func owns(statusItem: NSStatusItem) -> Bool
     func activate()
-    func prepareUpdate(config: ItemConfig) async
+    func prepareUpdate(config: ItemConfig, deadline: ContinuousClock.Instant) async
     func commitPreparedUpdate()
-    func prepareRemoval() async
+    func prepareRemoval(deadline: ContinuousClock.Instant) async
     func commitRemoval()
-    func tearDown() async
+    func tearDown(deadline: ContinuousClock.Instant) async
     func runnerSnapshot() async -> CommandRunnerSnapshot
     func runtimeSnapshot() async -> ItemRuntimeSnapshot
     func actionSnapshot(at index: Int) async -> CommandRunnerSnapshot?
@@ -180,8 +180,11 @@ final class StatusItemController: StatusItemMenuDelegate {
 
     private func rebuild(with config: PinchosConfig) async {
         let oldItems = order.compactMap { items[$0] }
-        for item in oldItems {
-            await item.prepareRemoval()
+        let deadline = LifecycleDeadline.makeInstant()
+        await withTaskGroup(of: Void.self) { group in
+            for item in oldItems {
+                group.addTask { @MainActor in await item.prepareRemoval(deadline: deadline) }
+            }
         }
         let newItems = config.items.map {
             itemFactory.make(config: $0, menuDelegate: self, initiallyVisible: false)
@@ -206,12 +209,24 @@ final class StatusItemController: StatusItemMenuDelegate {
         let addedItems = diff.added.map {
             itemFactory.make(config: $0, menuDelegate: self, initiallyVisible: false)
         }
-        for item in diff.changed {
-            await items[item.name]?.prepareUpdate(config: item)
-        }
-        for name in diff.removed {
-            if let item = items[name] {
-                await item.prepareRemoval()
+
+        // Quiescing and cancellation for every changed and removed item is
+        // fired and awaited under one shared, monotonic deadline instead of
+        // one item at a time, so total wait time is bounded by the deadline
+        // plus small coordination overhead rather than by item count.
+        let deadline = LifecycleDeadline.makeInstant()
+        await withTaskGroup(of: Void.self) { group in
+            for changedConfig in diff.changed {
+                if let item = items[changedConfig.name] {
+                    group.addTask { @MainActor in
+                        await item.prepareUpdate(config: changedConfig, deadline: deadline)
+                    }
+                }
+            }
+            for name in diff.removed {
+                if let item = items[name] {
+                    group.addTask { @MainActor in await item.prepareRemoval(deadline: deadline) }
+                }
             }
         }
 
@@ -236,7 +251,13 @@ final class StatusItemController: StatusItemMenuDelegate {
     }
 
     private func shutdownNow() async {
-        for name in order { await items[name]?.tearDown() }
+        let deadline = LifecycleDeadline.makeInstant()
+        let itemsToTearDown = order.compactMap { items[$0] }
+        await withTaskGroup(of: Void.self) { group in
+            for item in itemsToTearDown {
+                group.addTask { @MainActor in await item.tearDown(deadline: deadline) }
+            }
+        }
         items.removeAll()
         order.removeAll()
         clearWarningItem()

@@ -57,6 +57,21 @@ final class ManagedItem: ManagedItemLifecycle {
     var clickInvocationTestGate: (() async -> Void)?
     var actionInvocationTestGate: (() async -> Void)?
 
+    /// Test-only seam awaited alongside each runner's real cancellation during
+    /// `prepareUpdate`/`prepareRemoval`, keyed by role ("primary", "click", or
+    /// "action:<index>"). Real runner cancellation is normally too fast to
+    /// distinguish concurrent from sequential execution in a test; this lets
+    /// tests inject a controllable settle time per role and prove that all
+    /// roles for one item are cancelled concurrently -- bounded by the
+    /// slowest role, not the sum of all of them. Production code always
+    /// leaves this `nil`.
+    var cancellationSettlementDelayForTesting: ((String) async -> Void)?
+
+    /// Test-only observer invoked with the identities reported by
+    /// `settleConcurrently` whenever a `prepareUpdate`/`prepareRemoval`
+    /// cancellation phase misses its shared deadline.
+    var lifecycleSettlementTimeoutHandlerForTesting: (([LifecycleSettlementTimeout]) -> Void)?
+
     private struct PendingUpdate {
         let config: ItemConfig
         let runner: CommandRunner?
@@ -148,7 +163,10 @@ final class ManagedItem: ManagedItemLifecycle {
         iconIsLoaded = true
     }
 
-    func prepareUpdate(config: ItemConfig) async {
+    func prepareUpdate(
+        config: ItemConfig,
+        deadline: ContinuousClock.Instant = LifecycleDeadline.makeInstant()
+    ) async {
         guard isActive, !isPreparingRemoval, pendingUpdate == nil else { return }
 
         let previousConfig = self.config
@@ -181,11 +199,17 @@ final class ManagedItem: ManagedItemLifecycle {
             timer = nil
         }
 
+        // Quiesce every runner whose configuration is changing before this
+        // function awaits anything: `configurationGeneration` has already
+        // been bumped for the primary runner and `isPreparingUpdate` was set
+        // above, so no new scheduled/manual/click/action work can start
+        // against the old runners from this point on. Cancellation requests
+        // for all of them are then fired and awaited concurrently under one
+        // shared deadline instead of one after another.
         var replacementRunner: CommandRunner?
-        if runnerConfigurationChanged || becameDisabled {
+        let runnerNeedsCancel = runnerConfigurationChanged || becameDisabled
+        if runnerNeedsCancel {
             configurationGeneration &+= 1
-            await runner.cancelActive()
-            await drainRefreshInvocations()
             if runnerConfigurationChanged {
                 replacementRunner = CommandRunner(
                     command: config.run,
@@ -204,9 +228,7 @@ final class ManagedItem: ManagedItemLifecycle {
             || previousConfig.shell != config.shell
             || previousConfig.workingDirectory != config.workingDirectory
             || previousConfig.environment != config.environment
-        if clickRunnerConfigurationChanged || becameDisabled {
-            await clickRunner?.cancelActive()
-        }
+        let clickNeedsCancel = clickRunnerConfigurationChanged || becameDisabled
         let replacementClickRunner = clickRunnerConfigurationChanged ? config.click.map {
             CommandRunner(
                 command: $0,
@@ -224,14 +246,22 @@ final class ManagedItem: ManagedItemLifecycle {
             || previousConfig.shell != config.shell
             || previousConfig.workingDirectory != config.workingDirectory
             || previousConfig.environment != config.environment
-        if actionRunnersConfigurationChanged || becameDisabled {
-            for actionRunner in actionRunners.values {
-                await actionRunner.cancelActive()
-            }
-        }
+        let actionsNeedCancel = actionRunnersConfigurationChanged || becameDisabled
         let replacementActionRunners = actionRunnersConfigurationChanged
             ? Self.makeActionRunners(for: config)
             : nil
+
+        await settleConcurrently(
+            cancellationOperations(
+                includingPrimary: runnerNeedsCancel,
+                includingClick: clickNeedsCancel,
+                includingActions: actionsNeedCancel
+            ),
+            deadline: deadline,
+            onTimeout: { [weak self] timeouts in
+                self?.handleLifecycleSettlementTimeout(timeouts, phase: "update")
+            }
+        )
 
         pendingUpdate = PendingUpdate(
             config: config,
@@ -277,7 +307,7 @@ final class ManagedItem: ManagedItemLifecycle {
         isPreparingUpdate = false
     }
 
-    func prepareRemoval() async {
+    func prepareRemoval(deadline: ContinuousClock.Instant = LifecycleDeadline.makeInstant()) async {
         guard isActive, !isPreparingRemoval else { return }
         isPreparingRemoval = true
         configurationGeneration &+= 1
@@ -285,22 +315,36 @@ final class ManagedItem: ManagedItemLifecycle {
         stalePresentationTask = nil
         timer?.cancel()
         timer = nil
-        await runner.cancelActive()
-        await drainRefreshInvocations()
-        await clickRunner?.cancelActive()
-        for actionRunner in actionRunners.values {
-            await actionRunner.cancelActive()
-        }
+
+        // Everything above is synchronous quiescing: no scheduled, manual,
+        // click, or action invocation can start against this item past this
+        // point. All primary/click/action cancellation, plus draining any
+        // click/action invocation already accepted before quiescing, is then
+        // fired and awaited concurrently under one shared deadline.
+        let name = config.name
+        var operations = cancellationOperations(
+            includingPrimary: true,
+            includingClick: clickRunner != nil,
+            includingActions: true
+        )
         if pendingClickInvocations > 0 {
-            await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
-                clickInvocationsDrained = continuation
-            }
+            operations.append((identity: "\(name):click-drain", run: { [weak self] in
+                await self?.drainClickInvocations()
+            }))
         }
         if pendingActionInvocations > 0 {
-            await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
-                actionInvocationsDrained = continuation
-            }
+            operations.append((identity: "\(name):action-drain", run: { [weak self] in
+                await self?.drainActionInvocations()
+            }))
         }
+
+        await settleConcurrently(
+            operations,
+            deadline: deadline,
+            onTimeout: { [weak self] timeouts in
+                self?.handleLifecycleSettlementTimeout(timeouts, phase: "removal")
+            }
+        )
     }
 
     func commitRemoval() {
@@ -312,9 +356,78 @@ final class ManagedItem: ManagedItemLifecycle {
         }
     }
 
-    func tearDown() async {
-        await prepareRemoval()
+    func tearDown(deadline: ContinuousClock.Instant = LifecycleDeadline.makeInstant()) async {
+        await prepareRemoval(deadline: deadline)
         commitRemoval()
+    }
+
+    /// Builds the concurrent-cancellation operation list shared by
+    /// `prepareUpdate`/`prepareRemoval`: one operation per runner role that
+    /// needs cancelling, each identified by item name and role so
+    /// diagnostics and tests can tell them apart. Building this list is
+    /// itself synchronous; none of the operations run until
+    /// `settleConcurrently` fires them.
+    private func cancellationOperations(
+        includingPrimary: Bool,
+        includingClick: Bool,
+        includingActions: Bool
+    ) -> [(identity: String, run: () async -> Void)] {
+        var operations: [(identity: String, run: () async -> Void)] = []
+        let name = config.name
+        if includingPrimary {
+            let runner = self.runner
+            operations.append((identity: "\(name):primary", run: { [weak self] in
+                await runner.cancelActive()
+                await self?.drainRefreshInvocations()
+                await self?.awaitCancellationSettlementDelayForTesting(role: "primary")
+            }))
+        }
+        if includingClick, let clickRunner {
+            operations.append((identity: "\(name):click", run: { [weak self] in
+                await clickRunner.cancelActive()
+                await self?.awaitCancellationSettlementDelayForTesting(role: "click")
+            }))
+        }
+        if includingActions {
+            for (index, actionRunner) in actionRunners {
+                operations.append((identity: "\(name):action[\(index)]", run: { [weak self] in
+                    await actionRunner.cancelActive()
+                    await self?.awaitCancellationSettlementDelayForTesting(role: "action:\(index)")
+                }))
+            }
+        }
+        return operations
+    }
+
+    private func awaitCancellationSettlementDelayForTesting(role: String) async {
+        guard let hook = cancellationSettlementDelayForTesting else { return }
+        await hook(role)
+    }
+
+    private func handleLifecycleSettlementTimeout(
+        _ timeouts: [LifecycleSettlementTimeout],
+        phase: String
+    ) {
+        lifecycleSettlementTimeoutHandlerForTesting?(timeouts)
+        for timeout in timeouts {
+            FileHandle.standardError.write(
+                Data("pinchos: \(phase) settlement timeout waiting for \(timeout.identity)\n".utf8)
+            )
+        }
+    }
+
+    private func drainClickInvocations() async {
+        guard pendingClickInvocations > 0 else { return }
+        await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+            clickInvocationsDrained = continuation
+        }
+    }
+
+    private func drainActionInvocations() async {
+        guard pendingActionInvocations > 0 else { return }
+        await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+            actionInvocationsDrained = continuation
+        }
     }
 
     private func startTimer(runInitialRefresh: Bool = true) {

@@ -13,6 +13,11 @@ private final class FakeManagedItem: ManagedItemLifecycle {
     var runtimeSnapshotValue: ItemRuntimeSnapshot?
     var actionSnapshotValues: [CommandRunnerSnapshot?] = []
     var clickSnapshotValue: ClickDiagnosticsSnapshot?
+    /// When set, `prepareUpdate`/`prepareRemoval` sleep for this duration
+    /// after logging, letting tests prove operations across many fake items
+    /// are fired and awaited concurrently (bounded by the slowest one) under
+    /// one shared deadline instead of being summed sequentially.
+    var settlementDelay: Duration?
 
     init(
         config: ItemConfig,
@@ -34,9 +39,12 @@ private final class FakeManagedItem: ManagedItemLifecycle {
         eventLog.append("activate:\(config.name)")
     }
 
-    func prepareUpdate(config: ItemConfig) async {
+    func prepareUpdate(config: ItemConfig, deadline: ContinuousClock.Instant) async {
         pendingConfig = config
         eventLog.append("prepare-update:\(config.name)")
+        if let settlementDelay {
+            try? await Task.sleep(until: .now.advanced(by: settlementDelay))
+        }
     }
 
     func commitPreparedUpdate() {
@@ -45,16 +53,19 @@ private final class FakeManagedItem: ManagedItemLifecycle {
         eventLog.append("commit-update:\(config.name)")
     }
 
-    func prepareRemoval() async {
+    func prepareRemoval(deadline: ContinuousClock.Instant) async {
         eventLog.append("prepare-removal:\(config.name)")
+        if let settlementDelay {
+            try? await Task.sleep(until: .now.advanced(by: settlementDelay))
+        }
     }
 
     func commitRemoval() {
         eventLog.append("commit-removal:\(config.name)")
     }
 
-    func tearDown() async {
-        await prepareRemoval()
+    func tearDown(deadline: ContinuousClock.Instant) async {
+        await prepareRemoval(deadline: deadline)
         commitRemoval()
     }
 
@@ -635,6 +646,91 @@ final class StatusItemControllerTests: XCTestCase {
             "activate:beta",
             "activate:alpha"
         ])
+    }
+
+    /// Issue #54: removing many items whose `prepareRemoval` each require T
+    /// to settle must complete in approximately T, not N*T, proving
+    /// cancellation across items is fired and awaited concurrently under one
+    /// shared deadline rather than one item after another.
+    func testReorderRebuildCancelsAllOldItemsConcurrentlyNotSequentially() async throws {
+        let factory = FakeManagedItemFactory()
+        let controller = makeController(factory: factory)
+        addTeardownBlock { @MainActor in
+            await controller.shutdown()
+        }
+
+        let itemNames = ["alpha", "beta", "gamma", "delta"]
+        await controller.apply(config: PinchosConfig(items: itemNames.map { item($0) }))
+        for created in factory.created {
+            created.settlementDelay = .milliseconds(150)
+        }
+
+        let clock = ContinuousClock()
+        let started = clock.now
+        // Reordering forces `rebuild(with:)`, which prepares every old item
+        // for removal before replacing them.
+        await controller.apply(config: PinchosConfig(items: itemNames.reversed().map { item($0) }))
+        let elapsed = started.duration(to: clock.now)
+
+        XCTAssertLessThan(
+            elapsed, .milliseconds(150) * itemNames.count / 2,
+            "4 items at 150ms settle time each must not sum to ~600ms if prepared concurrently"
+        )
+    }
+
+    /// Same proof as above for `shutdownNow()`: tearing down N items that
+    /// each take T to settle must complete near T, not N*T.
+    func testShutdownTearsDownAllItemsConcurrentlyNotSequentially() async throws {
+        let factory = FakeManagedItemFactory()
+        let controller = makeController(factory: factory)
+
+        let itemNames = ["alpha", "beta", "gamma", "delta"]
+        await controller.apply(config: PinchosConfig(items: itemNames.map { item($0) }))
+        for created in factory.created {
+            created.settlementDelay = .milliseconds(150)
+        }
+
+        let clock = ContinuousClock()
+        let started = clock.now
+        await controller.shutdown()
+        let elapsed = started.duration(to: clock.now)
+
+        XCTAssertLessThan(
+            elapsed, .milliseconds(150) * itemNames.count / 2,
+            "4 items at 150ms settle time each must not sum to ~600ms during shutdown if torn down concurrently"
+        )
+    }
+
+    /// Same proof for a live reload that both updates and removes items in
+    /// one operation: `apply(diff:)` must fire and await both concurrently.
+    func testReloadCancelsChangedAndRemovedItemsConcurrentlyNotSequentially() async throws {
+        let factory = FakeManagedItemFactory()
+        let controller = makeController(factory: factory)
+        addTeardownBlock { @MainActor in
+            await controller.shutdown()
+        }
+
+        await controller.apply(config: PinchosConfig(items: [
+            item("alpha"), item("beta"), item("gamma"), item("delta")
+        ]))
+        for created in factory.created {
+            created.settlementDelay = .milliseconds(150)
+        }
+
+        let clock = ContinuousClock()
+        let started = clock.now
+        // alpha/beta change (prepareUpdate), gamma/delta are removed
+        // (prepareRemoval): four settlement waits that must overlap.
+        await controller.apply(config: PinchosConfig(items: [
+            item("alpha", run: "echo changed-alpha"),
+            item("beta", run: "echo changed-beta")
+        ]))
+        let elapsed = started.duration(to: clock.now)
+
+        XCTAssertLessThan(
+            elapsed, .milliseconds(150) * 4 / 2,
+            "changed and removed items settling at 150ms each must overlap, not sum"
+        )
     }
 
     func testInvalidReloadRetainsLastGoodItemsAndCorrectedReloadApplies() async {
