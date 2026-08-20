@@ -28,7 +28,8 @@ public enum ConfigParser {
     ]
 
     static let supportedActionKeys: Set<String> = ["title", "run", "refresh"]
-    static let supportedRootKeys: Set<String> = ["item"]
+    static let supportedRootKeys: Set<String> = ["item", "scheduler"]
+    static let supportedSchedulerKeys: Set<String> = ["max_active_sessions"]
 
     private enum SourceLineKey: Hashable {
         case rootField(String)
@@ -57,8 +58,10 @@ public enum ConfigParser {
             lineForKey: { sourceLines[.rootField($0)] }
         )
 
+        let scheduler = try parseScheduler(table: table, sourceLines: sourceLines)
+
         guard let itemValue = table["item"] else {
-            return PinchosConfig(items: [])
+            return PinchosConfig(items: [], scheduler: scheduler)
         }
         guard let itemSection = itemValue.table else {
             throw typeError(
@@ -96,7 +99,59 @@ public enum ConfigParser {
                 sourceLines: sourceLines
             )
         }
-        return PinchosConfig(items: items)
+        return PinchosConfig(items: items, scheduler: scheduler)
+    }
+
+    /// Parses the optional `[scheduler]` table, the sole advanced-user
+    /// override of `CommandScheduler`'s default active-session bound. Absent
+    /// entirely, `SchedulerConfig()` (no override) applies. When present,
+    /// `max_active_sessions` must be an integer within
+    /// `CommandScheduler.allowedMaxActiveSessionsRange`; anything else fails
+    /// validation rather than silently clamping, so a typo'd config cannot
+    /// silently run with a very different concurrency budget than intended.
+    private static func parseScheduler(
+        table: TOMLTable,
+        sourceLines: SourceLineMap
+    ) throws -> SchedulerConfig {
+        guard let schedulerValue = table["scheduler"] else {
+            return SchedulerConfig()
+        }
+        guard let schedulerTable = schedulerValue.table else {
+            throw typeError(
+                path: "scheduler",
+                expected: "table",
+                value: schedulerValue,
+                line: sourceLines[.rootField("scheduler")]
+            )
+        }
+        try validateUnknownKeys(
+            in: schedulerTable,
+            allowedKeys: supportedSchedulerKeys,
+            context: "scheduler",
+            lineForKey: { sourceLines[.rootField($0)] ?? sourceLines[.rootField("scheduler")] }
+        )
+
+        guard let maxActiveSessionsValue = schedulerTable["max_active_sessions"] else {
+            return SchedulerConfig()
+        }
+        let line = sourceLines[.rootField("max_active_sessions")] ?? sourceLines[.rootField("scheduler")]
+        guard let maxActiveSessions = maxActiveSessionsValue.int else {
+            throw typeError(
+                path: "scheduler.max_active_sessions",
+                expected: "integer",
+                value: maxActiveSessionsValue,
+                line: line
+            )
+        }
+        guard CommandScheduler.allowedMaxActiveSessionsRange.contains(maxActiveSessions) else {
+            throw ConfigParseError(
+                message: "scheduler.max_active_sessions must be between "
+                    + "\(CommandScheduler.allowedMaxActiveSessionsRange.lowerBound) and "
+                    + "\(CommandScheduler.allowedMaxActiveSessionsRange.upperBound)",
+                line: line
+            )
+        }
+        return SchedulerConfig(maxActiveSessions: maxActiveSessions)
     }
 
     private static func crossCheckDiscoveredItems(

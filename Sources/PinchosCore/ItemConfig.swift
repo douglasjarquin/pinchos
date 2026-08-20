@@ -102,11 +102,25 @@ public struct ItemConfig: Equatable, Sendable {
     }
 }
 
+/// Optional, validated override of the application-wide `CommandScheduler`
+/// policy. `maxActiveSessions` is `nil` when the user did not configure
+/// `[scheduler]` at all, in which case `CommandScheduler.defaultMaxActiveSessions`
+/// applies. See README "Command scheduler" for the full policy.
+public struct SchedulerConfig: Equatable, Sendable {
+    public let maxActiveSessions: Int?
+
+    public init(maxActiveSessions: Int? = nil) {
+        self.maxActiveSessions = maxActiveSessions
+    }
+}
+
 public struct PinchosConfig: Equatable, Sendable {
     public let items: [ItemConfig]
+    public let scheduler: SchedulerConfig
 
-    public init(items: [ItemConfig]) {
+    public init(items: [ItemConfig], scheduler: SchedulerConfig = SchedulerConfig()) {
         self.items = items
+        self.scheduler = scheduler
     }
 }
 

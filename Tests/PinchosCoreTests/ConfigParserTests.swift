@@ -542,7 +542,8 @@ final class ConfigParserTests: XCTestCase {
     }
 
     func testSupportedSchemaEnumeratesEveryCurrentItemAndActionKey() {
-        XCTAssertEqual(ConfigParser.supportedRootKeys, ["item"])
+        XCTAssertEqual(ConfigParser.supportedRootKeys, ["item", "scheduler"])
+        XCTAssertEqual(ConfigParser.supportedSchedulerKeys, ["max_active_sessions"])
         XCTAssertEqual(ConfigParser.supportedItemKeys, [
             "type",
             "run",
@@ -1376,5 +1377,106 @@ final class ConfigParserTests: XCTestCase {
         XCTAssertTrue(item.hideOnError)
         XCTAssertTrue(item.iconOnly)
         XCTAssertTrue(item.disabled)
+    }
+
+    func testSchedulerSectionDefaultsToNoOverrideWhenAbsent() throws {
+        let toml = """
+        [item.clock]
+        type = "command"
+        run = "date"
+        """
+        let config = try ConfigParser.parse(toml)
+        XCTAssertNil(config.scheduler.maxActiveSessions)
+    }
+
+    func testSchedulerSectionParsesValidMaxActiveSessionsOverride() throws {
+        let toml = """
+        [scheduler]
+        max_active_sessions = 8
+
+        [item.clock]
+        type = "command"
+        run = "date"
+        """
+        let config = try ConfigParser.parse(toml)
+        XCTAssertEqual(config.scheduler.maxActiveSessions, 8)
+        XCTAssertEqual(config.items.map(\.name), ["clock"])
+    }
+
+    func testSchedulerSectionAcceptsBoundaryValuesOfTheAllowedRange() throws {
+        let lower = CommandScheduler.allowedMaxActiveSessionsRange.lowerBound
+        let upper = CommandScheduler.allowedMaxActiveSessionsRange.upperBound
+
+        let lowerConfig = try ConfigParser.parse("""
+        [scheduler]
+        max_active_sessions = \(lower)
+        """)
+        XCTAssertEqual(lowerConfig.scheduler.maxActiveSessions, lower)
+
+        let upperConfig = try ConfigParser.parse("""
+        [scheduler]
+        max_active_sessions = \(upper)
+        """)
+        XCTAssertEqual(upperConfig.scheduler.maxActiveSessions, upper)
+    }
+
+    func testSchedulerSectionRejectsMaxActiveSessionsBelowTheAllowedRange() {
+        let tooLow = CommandScheduler.allowedMaxActiveSessionsRange.lowerBound - 1
+        let toml = """
+        [scheduler]
+        max_active_sessions = \(tooLow)
+        """
+
+        XCTAssertThrowsError(try ConfigParser.parse(toml)) { error in
+            let parseError = error as? ConfigParseError
+            XCTAssertTrue(parseError?.message.contains("scheduler.max_active_sessions must be between") == true)
+            XCTAssertEqual(parseError?.line, 2)
+        }
+    }
+
+    func testSchedulerSectionRejectsMaxActiveSessionsAboveTheAllowedRange() {
+        let tooHigh = CommandScheduler.allowedMaxActiveSessionsRange.upperBound + 1
+        let toml = """
+        [scheduler]
+        max_active_sessions = \(tooHigh)
+        """
+
+        XCTAssertThrowsError(try ConfigParser.parse(toml)) { error in
+            let parseError = error as? ConfigParseError
+            XCTAssertTrue(parseError?.message.contains("scheduler.max_active_sessions must be between") == true)
+        }
+    }
+
+    func testSchedulerSectionRejectsNonIntegerMaxActiveSessions() {
+        let toml = """
+        [scheduler]
+        max_active_sessions = "four"
+        """
+
+        XCTAssertThrowsError(try ConfigParser.parse(toml)) { error in
+            let parseError = error as? ConfigParseError
+            XCTAssertTrue(parseError?.message.contains("scheduler.max_active_sessions: type error, must be an integer") == true)
+        }
+    }
+
+    func testSchedulerSectionRejectsUnknownKeys() {
+        let toml = """
+        [scheduler]
+        max_sessions = 4
+        """
+
+        XCTAssertThrowsError(try ConfigParser.parse(toml)) { error in
+            let parseError = error as? ConfigParseError
+            XCTAssertTrue(parseError?.message.contains("scheduler.max_sessions: unknown key") == true)
+        }
+    }
+
+    func testSchedulerSectionRejectsNonTableValue() {
+        let toml = "scheduler = 4"
+
+        XCTAssertThrowsError(try ConfigParser.parse(toml)) { error in
+            let parseError = error as? ConfigParseError
+            XCTAssertTrue(parseError?.message.contains("scheduler: type error, must be a table") == true)
+        }
     }
 }

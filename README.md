@@ -156,6 +156,13 @@ title = "Refresh now"
 refresh = true
 ```
 
+An optional top-level `[scheduler]` table overrides the global active-session limit (see "Scheduler" below); it is not per-item:
+
+```toml
+[scheduler]
+max_active_sessions = 4 # optional, default min(4, CPU cores). Range 1-32.
+```
+
 - `tooltip` is rendered by the native status-item tooltip. Supported placeholders are `{output}` (the retained stdout, including newlines, as a bounded preview — see "Diagnostics previews vs. retained output" below), `{updated_at}` (the last successful completion time), `{attempted_at}` (the last command start time), `{duration}` (the last run duration with three decimal places and an `s` suffix), `{exit_status}` (the last exit code or terminal result), `{error}` (the latest bounded stderr line or terminal error), `{stale}` (`yes` or `no`), and `{status}` (`running`, `fresh`, `stale`, `error`, or `unavailable`).
 - Timestamps use UTC ISO-8601 format.
 - Before the first successful run, `{output}` and `{updated_at}` are empty, while `{attempted_at}` and diagnostic placeholders become available after an attempt.
@@ -197,6 +204,17 @@ refresh = true
 - `click` is fire-and-forget only in the sense that the left-click never blocks the UI and never replaces the item's primary displayed value — it is not silent. A configured `click` command gets its own **Click Action** section in the right-click menu, independent of the primary refresh diagnostics: current state (never run, running, completed, error, timed out, or cancelled), last attempt/completion time, duration, exit/signal/timeout/cancellation/launch-failure detail, skipped-invocation count (while the click runner is already busy), per-stream byte counts and truncation, a bounded stderr preview, and **Copy Click Output**/**Copy Click Error** actions for the complete retained streams. A click failure never overwrites the menu-bar title, tooltip output, or the primary runner's last-good value. Diagnostics for the click runner are retained across presentation-only reloads and reset only when the click command or its execution settings (shell, environment, working directory, timeout, or `max_output`) change or `click` is removed.
 - A command action's diagnostics offer their own **Copy "&lt;title&gt;" Output**/**Copy "&lt;title&gt;" Error** entries once that action has produced non-empty output/error, mirroring the click and primary sections.
 - An unresolvable shell or working directory is reported in the config warning; a launch failure during execution is retained in the item's diagnostics menu with the resolved path.
+
+### Scheduler
+
+Every Pinchos-managed command session — a scheduled tick, a manual **Refresh Now**, a left-click, or a declarative command action — is admitted through one application-scoped `CommandScheduler` (`Sources/PinchosCore/CommandScheduler.swift`), not through per-item timers or an unbounded thread pool. `StatusItemController` owns a single instance for the app's lifetime and every `ManagedItem` shares it.
+
+- **Bounded concurrency**: at most `max_active_sessions` command sessions run at once, process-wide, regardless of how many items are configured. The default is `min(4, CPU cores)` — enough headroom that a handful of items never serialize behind each other, without letting a large configuration spawn dozens of concurrent shells at once. Override it with the optional `[scheduler] max_active_sessions` key (integer, 1–32); an out-of-range or non-integer value is a configuration error reported with the offending line, same as any other schema violation. Live-reloading `[scheduler]` alone (no item changes) still takes effect immediately.
+- **Fairness**: permits are granted strictly in request order (FIFO), and each item may have at most one outstanding permit request per work kind (refresh, click, or a given command action) at a time — a second request for the same kind while one is already queued collapses into it instead of enqueuing a second waiter (see "Coalescing" below). Together this bounds how long any item can wait behind others to a function of total queue depth, not of any single noisy item's request rate.
+- **Coalescing**: the collapsing described above is exactly the mechanism that keeps "obsolete" scheduled work bounded — a slow scheduled tick can never accumulate a backlog of pending refreshes for the same item, and every collapsed request increments a `coalesced` diagnostic count rather than silently vanishing. This is separate from (and layered on top of) each runner's own no-overlap check, which still applies once a session actually starts: a permit granted while that item's previous run for the same work kind is still executing lands on the runner's existing "skipped" counter, exactly as before this scheduler existed.
+- **Shared timing**: scheduled items register with the scheduler's single deadline-driven timer instead of each holding its own `DispatchSourceTimer`; there is one driver task for the whole app, not one per item. After the system sleeps, a recurring registration's next deadline is advanced past "now" in one step on wake, so it fires once, not once per interval that was missed while asleep.
+- **Cancellation and shutdown**: removing or reconfiguring an item cancels both its active session and any request only queued for a permit; the same happens for every item during app shutdown, and shutdown never admits a new session once it has begun. A cancelled permit wait never runs the command it was requesting.
+- **Diagnostics**: each item's right-click menu keeps its own per-work-kind "skipped" counts (unchanged from before this scheduler existed). The lifecycle menu additionally shows one global `Scheduler: <active>/<max_active_sessions> active` line, extended with `, N queued`, `, N coalesced`, and/or `, N delayed` whenever any of those counts are non-zero, so saturation is visible without needing to inspect every item individually.
 
 ### Diagnostics previews vs. retained output
 
@@ -250,7 +268,7 @@ See [`example/pinchos.toml`](example/pinchos.toml) for a full working config wit
 - `Sources/PinchosCore` — UI-free library: TOML parsing (via TOMLKit), duration and byte-size parsing, `{output}` templating, bounded/sanitized diagnostics previews (`DiagnosticPreviewFormatter`), the config-diff engine, and bounded process-group command execution with concurrent stdout/stderr draining.
 - Each command session has a supervisor process as its process-group leader.
   The supervisor remains alive until its descendants have exited or cancellation terminates the group, so every signal is made through the live session owner rather than a reusable numeric process-group ID.
-- `Sources/pinchos` — the AppKit executable: one `NSStatusItem` and one per-item scheduled `DispatchSourceTimer` when configured, plus manual refresh actions, declarative per-item menu actions, menu and lifecycle projection of `PinchosCore` runner snapshots, a shared `ShutdownCoordinator` for GUI and CLI lifecycle convergence, and a `ConfigWatcher` (`DispatchSourceFileSystemObject`) for live reload.
+- `Sources/pinchos` — the AppKit executable: one `NSStatusItem` per configured item, a single application-scoped `CommandScheduler` (see "Scheduler" below) shared by every item's scheduled refresh, manual refresh, click, and command actions, declarative per-item menu actions, menu and lifecycle projection of `PinchosCore` runner snapshots, a shared `ShutdownCoordinator` for GUI and CLI lifecycle convergence, and a `ConfigWatcher` (`DispatchSourceFileSystemObject`) for live reload.
 - Config file reads and TOML parsing run off the AppKit main actor through `ConfigLoadCoordinator`, which tags each reload with a generation number so a superseded parse — success or failure — is never applied over a newer one, and coalesces reload bursts into a single pending load instead of an unbounded backlog.
 
 ### Why TOMLKit
