@@ -158,36 +158,45 @@ public struct ItemRuntimeSnapshot: Equatable, Sendable {
 }
 
 private final class OutputCollector: @unchecked Sendable {
-    private let limit: Int
+    private let budget: OutputMemoryBudget?
     private let lock = NSLock()
-    private var retained = Data()
+    private var buffer: TailByteBuffer
     private var bytesRead = 0
     private var truncated = false
 
-    init(limit: Int) {
-        self.limit = limit
+    init(limit: Int, budget: OutputMemoryBudget? = nil) {
+        self.budget = budget
+        self.buffer = TailByteBuffer(capacity: limit, budget: budget)
     }
 
-    func append(_ data: Data) {
+    deinit {
+        if let budget, buffer.reservedCapacity > 0 {
+            budget.release(buffer.reservedCapacity)
+        }
+    }
+
+    /// Appends bytes read directly from the raw drain buffer. Taking a
+    /// pointer (rather than a `Data`) avoids allocating and copying an
+    /// intermediate `Data` for every 16KiB chunk read off the pipe; the
+    /// pointer is only read synchronously within this call.
+    func append(_ bytes: UnsafeRawBufferPointer) {
+        guard !bytes.isEmpty else { return }
         lock.lock()
         defer { lock.unlock() }
 
-        let (newTotal, totalOverflowed) = bytesRead.addingReportingOverflow(data.count)
+        let (newTotal, totalOverflowed) = bytesRead.addingReportingOverflow(bytes.count)
         bytesRead = totalOverflowed ? Int.max : newTotal
-        if bytesRead > limit || totalOverflowed {
-            truncated = true
-        }
 
-        retained.append(data)
-        if retained.count > limit {
-            retained = Data(retained.suffix(limit))
+        buffer.append(bytes)
+        if totalOverflowed || buffer.didEvict {
+            truncated = true
         }
     }
 
     func snapshot() -> (data: Data, bytesRead: Int, truncated: Bool) {
         lock.lock()
         defer { lock.unlock() }
-        return (retained, bytesRead, truncated)
+        return (buffer.snapshot(), bytesRead, truncated)
     }
 }
 
@@ -455,7 +464,8 @@ private enum CommandExecutionEngine {
         environment: [String: String],
         timeout: TimeInterval,
         maxOutputBytes: Int,
-        controller: ProcessGroupController
+        controller: ProcessGroupController,
+        outputBudget: OutputMemoryBudget
     ) async -> CommandExecutionResult {
         let race = EventRace()
         return await withTaskCancellationHandler(
@@ -468,6 +478,7 @@ private enum CommandExecutionEngine {
                     timeout: timeout,
                     maxOutputBytes: maxOutputBytes,
                     controller: controller,
+                    outputBudget: outputBudget,
                     race: race
                 )
             },
@@ -485,6 +496,7 @@ private enum CommandExecutionEngine {
         timeout: TimeInterval,
         maxOutputBytes: Int,
         controller: ProcessGroupController,
+        outputBudget: OutputMemoryBudget,
         race: EventRace
     ) async -> CommandExecutionResult {
         let startedAt = DispatchTime.now().uptimeNanoseconds
@@ -492,6 +504,7 @@ private enum CommandExecutionEngine {
             return launchFailure(
                 "shell argument vector must include an executable",
                 maxOutputBytes: maxOutputBytes,
+                outputBudget: outputBudget,
                 startedAt: startedAt
             )
         }
@@ -499,6 +512,7 @@ private enum CommandExecutionEngine {
             return launchFailure(
                 "shell executable cannot be resolved: \(shellExecutable)",
                 maxOutputBytes: maxOutputBytes,
+                outputBudget: outputBudget,
                 startedAt: startedAt
             )
         }
@@ -508,6 +522,7 @@ private enum CommandExecutionEngine {
                 return launchFailure(
                     "working directory cannot be resolved: \(workingDirectory)",
                     maxOutputBytes: maxOutputBytes,
+                    outputBudget: outputBudget,
                     startedAt: startedAt
                 )
             }
@@ -516,6 +531,7 @@ private enum CommandExecutionEngine {
             return launchFailure(
                 "environment variable name cannot be exported: \(invalidEnvironmentName)",
                 maxOutputBytes: maxOutputBytes,
+                outputBudget: outputBudget,
                 startedAt: startedAt
             )
         }
@@ -525,6 +541,7 @@ private enum CommandExecutionEngine {
             return launchFailure(
                 "environment variable contains a NUL byte: \(invalidEnvironmentValue)",
                 maxOutputBytes: maxOutputBytes,
+                outputBudget: outputBudget,
                 startedAt: startedAt
             )
         }
@@ -540,8 +557,8 @@ private enum CommandExecutionEngine {
             return CommandExecutionResult(
                 execution: makeExecution(
                     reason: .launchFailed(String(cString: strerror(errorCode))),
-                    stdout: OutputCollector(limit: maxOutputBytes),
-                    stderr: OutputCollector(limit: maxOutputBytes),
+                    stdout: OutputCollector(limit: maxOutputBytes, budget: outputBudget),
+                    stderr: OutputCollector(limit: maxOutputBytes, budget: outputBudget),
                     startedAt: startedAt
                 ),
                 lingeringProcess: nil
@@ -558,8 +575,8 @@ private enum CommandExecutionEngine {
             return CommandExecutionResult(
                 execution: makeExecution(
                     reason: .launchFailed(String(cString: strerror(errorCode))),
-                    stdout: OutputCollector(limit: maxOutputBytes),
-                    stderr: OutputCollector(limit: maxOutputBytes),
+                    stdout: OutputCollector(limit: maxOutputBytes, budget: outputBudget),
+                    stderr: OutputCollector(limit: maxOutputBytes, budget: outputBudget),
                     startedAt: startedAt
                 ),
                 lingeringProcess: nil
@@ -596,8 +613,8 @@ private enum CommandExecutionEngine {
             return CommandExecutionResult(
                 execution: makeExecution(
                     reason: .launchFailed(String(describing: error)),
-                    stdout: OutputCollector(limit: maxOutputBytes),
-                    stderr: OutputCollector(limit: maxOutputBytes),
+                    stdout: OutputCollector(limit: maxOutputBytes, budget: outputBudget),
+                    stderr: OutputCollector(limit: maxOutputBytes, budget: outputBudget),
                     startedAt: startedAt
                 ),
                 lingeringProcess: nil
@@ -611,8 +628,8 @@ private enum CommandExecutionEngine {
         let stdoutReadFileDescriptor = stdoutFileDescriptors[0]
         let stderrReadFileDescriptor = stderrFileDescriptors[0]
 
-        let stdout = OutputCollector(limit: maxOutputBytes)
-        let stderr = OutputCollector(limit: maxOutputBytes)
+        let stdout = OutputCollector(limit: maxOutputBytes, budget: outputBudget)
+        let stderr = OutputCollector(limit: maxOutputBytes, budget: outputBudget)
         let drainController = DrainController()
         let stdoutTask = Task {
             await drainAsync(
@@ -863,10 +880,14 @@ private enum CommandExecutionEngine {
             }
             let count = buffer.withUnsafeMutableBytes { rawBuffer -> Int in
                 guard let baseAddress = rawBuffer.baseAddress else { return 0 }
-                return Darwin.read(fileDescriptor, baseAddress, rawBuffer.count)
+                let readCount = Darwin.read(fileDescriptor, baseAddress, rawBuffer.count)
+                if readCount > 0 {
+                    collector.append(UnsafeRawBufferPointer(start: baseAddress, count: readCount))
+                }
+                return readCount
             }
             if count > 0 {
-                collector.append(Data(buffer.prefix(count)))
+                continue
             } else if count == 0 {
                 return
             } else if errno != EINTR {
@@ -984,13 +1005,14 @@ private enum CommandExecutionEngine {
     private static func launchFailure(
         _ message: String,
         maxOutputBytes: Int,
+        outputBudget: OutputMemoryBudget,
         startedAt: UInt64
     ) -> CommandExecutionResult {
         CommandExecutionResult(
             execution: makeExecution(
                 reason: .launchFailed(message),
-                stdout: OutputCollector(limit: maxOutputBytes),
-                stderr: OutputCollector(limit: maxOutputBytes),
+                stdout: OutputCollector(limit: maxOutputBytes, budget: outputBudget),
+                stderr: OutputCollector(limit: maxOutputBytes, budget: outputBudget),
                 startedAt: startedAt
             ),
             lingeringProcess: nil
@@ -1026,6 +1048,7 @@ public actor CommandRunner {
     private let environment: [String: String]
     private let timeout: TimeInterval
     private let maxOutputBytes: Int
+    private let outputBudget: OutputMemoryBudget
     private var activeTask: Task<CommandExecutionResult, Never>?
     private var activeController: ProcessGroupController?
     private var lingeringProcesses: [LingeringProcess] = []
@@ -1043,6 +1066,31 @@ public actor CommandRunner {
         workingDirectory: String? = nil,
         environment: [String: String] = [:]
     ) {
+        self.init(
+            command: command,
+            timeout: timeout,
+            maxOutputBytes: maxOutputBytes,
+            shell: shell,
+            workingDirectory: workingDirectory,
+            environment: environment,
+            outputBudget: .shared
+        )
+    }
+
+    /// Test-only entry point for exercising a private, non-default
+    /// `OutputMemoryBudget` (e.g. a small budget shared across many
+    /// runners to prove aggregate retained-output memory stays bounded)
+    /// without mutating the process-wide `OutputMemoryBudget.shared`
+    /// singleton other concurrently-running tests also rely on.
+    init(
+        command: String,
+        timeout: TimeInterval,
+        maxOutputBytes: Int,
+        shell: [String] = ItemConfig.defaultShell,
+        workingDirectory: String? = nil,
+        environment: [String: String] = [:],
+        outputBudget: OutputMemoryBudget
+    ) {
         precondition(timeout > 0, "command timeout must be positive")
         precondition(maxOutputBytes > 0, "maximum command output must be positive")
         self.command = command
@@ -1051,6 +1099,7 @@ public actor CommandRunner {
         self.environment = environment
         self.timeout = timeout
         self.maxOutputBytes = maxOutputBytes
+        self.outputBudget = outputBudget
     }
 
     deinit {
@@ -1081,6 +1130,7 @@ public actor CommandRunner {
         let environment = self.environment
         let timeout = self.timeout
         let maxOutputBytes = self.maxOutputBytes
+        let outputBudget = self.outputBudget
         let task = Task.detached {
             await withTaskCancellationHandler {
                 await CommandExecutionEngine.run(
@@ -1090,7 +1140,8 @@ public actor CommandRunner {
                     environment: environment,
                     timeout: timeout,
                     maxOutputBytes: maxOutputBytes,
-                    controller: controller
+                    controller: controller,
+                    outputBudget: outputBudget
                 )
             } onCancel: {
                 _ = controller.beginTermination(.cancelled)

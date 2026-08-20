@@ -608,6 +608,11 @@ public enum ConfigParser {
         let maxOutputBytes: Int
         do {
             maxOutputBytes = try parseByteCount(maxOutputString)
+        } catch ByteCountParseError.tooLarge {
+            throw ConfigParseError(
+                message: "item.\(name): max_output '\(maxOutputString)' exceeds the \(maxAllowedOutputBytes / (1024 * 1024))MiB safe maximum per stream",
+                line: sourceLine(item: name, key: "max_output", sourceLines: sourceLines)
+            )
         } catch {
             throw ConfigParseError(
                 message: "item.\(name): invalid max_output '\(maxOutputString)'",

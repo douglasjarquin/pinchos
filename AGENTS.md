@@ -9,6 +9,7 @@ This file is the project's committed home for project-intrinsic agent knowledge:
 - Measure idle memory with `footprint <pid>` (`phys_footprint` line), not `ps`'s RSS column - `ps` counts dyld shared-cache pages mapped read-only across every process on the system, inflating a small Swift/AppKit binary's reported RSS by ~3x over its actual physical footprint.
 - Config resolution: `$XDG_CONFIG_HOME/pinchos/pinchos.toml` if that env var is set and non-empty, else `~/.config/pinchos/pinchos.toml`. See `Sources/pinchos/ConfigLocation.swift`.
 - Manual QA evidence lives in `docs/manual-qa/`. The v1 pass used marker-file timestamps instead of screenshots because this environment has no human available to grant the one-time Screen Recording/Accessibility permission `screencapture`/Accessibility APIs require - if a future session runs with a real logged-in GUI session and that permission already granted, prefer real screenshots.
+- Retained command output (`Sources/PinchosCore/TailByteBuffer.swift`) is a ring buffer with amortized O(1) append, not a `Data` recopy - and every stdout/stderr collector process-wide draws from one shared `OutputMemoryBudget` (default 8MiB, see `CommandExecution.swift`/README "Output memory budget"). `CommandRunner` has an internal (non-public) initializer accepting a custom `OutputMemoryBudget` for tests that need to prove aggregate-budget behavior without mutating the shared singleton other concurrently-running tests rely on.
 
 ## Maintaining this file
 

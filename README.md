@@ -126,7 +126,7 @@ shell = ["/bin/zsh", "-lc"] # optional, default ["/bin/sh", "-c"]
 working_directory = "~/src/project" # optional, tilde-expanded; relative paths are relative to this config file
 interval = "60s"        # optional, default "60s". Formats: "30s", "5m", "1h", or "manual"
 timeout = "15s"         # optional, default "15s", minimum "1s". Terminates the command process group when it expires
-max_output = "64KiB"    # optional, default "64KiB" per stdout/stderr stream. Formats: "B", "KiB", "MiB"
+max_output = "64KiB"    # optional, default "64KiB" per stdout/stderr stream. Formats: "B", "KiB", "MiB". Maximum 4MiB per stream.
 format = "{output}%"    # optional. {output} is the trimmed last stdout line of `run`. Absent = raw output.
 click = "<shell command>" # optional, run (fire-and-forget) on left-click
 refresh_on_click = true  # optional, refresh `run` on left-click when `click` is absent
@@ -170,8 +170,10 @@ refresh = true
 - Repeated command-action invocations are skipped while that action is running, and the skipped count is retained in the item's diagnostics.
 - Timeout and cancellation terminate the process group with `SIGTERM` followed immediately by `SIGKILL`, so managed descendants cannot outlive an item or the app.
 - A command that exits while leaving same-group background work running remains owned by its item until that work exits or the item is removed.
-- `max_output` is an independent retained-tail limit for stdout and stderr, so `64KiB` can retain up to 64KiB from each stream while both streams continue draining.
-- Retaining the tail keeps the final output line and the most recent stderr diagnostic available even when a command emits more than the configured limit.
+- `max_output` is an independent retained-tail limit for stdout and stderr, so `64KiB` can retain up to 64KiB from each stream while both streams continue draining. Values above 4MiB are rejected at config load with the item, key, and source line.
+- Retaining the tail keeps the final output line and the most recent stderr diagnostic available even when a command emits more than the configured limit. Retention is a circular byte buffer, so appending new output costs work proportional to the new bytes read, not to `max_output` or to total bytes read so far.
+- When a retained tail happens to start mid-way through a multi-byte UTF-8 scalar (because the cut landed inside it), the orphaned byte(s) render as the U+FFFD replacement character rather than corrupting or merging with neighboring text — standard `String(decoding:as:)` behavior, not something pinchos special-cases.
+- **Output memory budget:** every stdout/stderr collector in the process (primary, click, and action runners) draws from one shared 8MiB aggregate budget. Configuring several noisy items or actions with large `max_output` values cannot together reserve more than that shared budget — collectors that would exceed it simply retain less than their configured `max_output`, with their `truncated` diagnostic reflecting the shortfall. This decouples "sum of every item's configured `max_output`" from actual retained memory, which is what keeps the default idle-footprint target meaningful even for adversarial configs.
 - `icon` is a plain filesystem path, not a built-in icon library — pinchos ships with no bundled icon catalog. Point it at any image file you like; it's drawn as a template image (tinted automatically for light/dark menu bars) at 16x16, to the left of the item's text. A missing or unreadable file just falls back to text-only — it never crashes the app.
 - A failing command never crashes pinchos. With the default `on_error = "replace"`, it renders `error_text`; with `on_error = "keep_last"`, it retains the last successful title and full output while marking the item with a compact warning indicator.
 - `stale_after` uses the last successful completion as its clock origin and becomes stale when the age is greater than or equal to the configured threshold. A first-run failure is `error`/`unavailable` rather than a fabricated stale value.
