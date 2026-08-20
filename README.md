@@ -205,6 +205,10 @@ The two icon files under [`example/icons/`](example/icons/) are MIT-licensed bra
 
 See [`example/pinchos.toml`](example/pinchos.toml) for a full working config with four items (claude, codex, clock, battery).
 
+### Recipes
+
+[`recipes/`](recipes/README.md) is a curated catalog of standalone, copy-pasteable configs for common menu-bar signals — clock, battery, disk/memory/load, VPN/network state, network latency, HTTP health, and optional third-party integrations (`quota-axi`, `gh`, `aws`). It's documentation and example configuration, not a runtime plugin system; see [`recipes/README.md`](recipes/README.md) for the full index and how to copy, validate, diagnose, and run each one.
+
 ## Architecture
 
 - `Sources/PinchosCore` — UI-free library: TOML parsing (via TOMLKit), duration and byte-size parsing, `{output}` templating, the config-diff engine, and bounded process-group command execution with concurrent stdout/stderr draining.
