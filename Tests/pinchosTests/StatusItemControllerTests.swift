@@ -207,7 +207,8 @@ final class StatusItemControllerTests: XCTestCase {
         let titles = menu.items.map(\.title)
 
         XCTAssertTrue(titles.contains("State: error"))
-        XCTAssertTrue(titles.contains("Value: full\nvalue\n"))
+        // Menu titles use DiagnosticPreviewFormatter: newlines collapse to U+240A.
+        XCTAssertTrue(titles.contains("Value: full \u{240A} value"))
         XCTAssertTrue(titles.contains("Last attempt: 2023-11-14T22:13:20Z"))
         XCTAssertTrue(titles.contains("Last success: 2023-11-14T22:12:20Z"))
         XCTAssertTrue(titles.contains("Stale: yes"))
