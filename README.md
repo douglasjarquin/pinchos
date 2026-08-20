@@ -58,14 +58,51 @@ The raw POSIX signal disposition does no async work, actor calls, locking, or al
 
 ### Launch at login
 
-Pinchos doesn't manage login items for you (that's out of scope for v1). Two options, pick whichever fits:
+```sh
+.build/release/pinchos service install    # install and enable
+.build/release/pinchos service status     # report configuration, enabled, and running state
+.build/release/pinchos service uninstall  # disable and remove
+```
+
+`pinchos service install` writes and loads a per-user `launchd` LaunchAgent at
+`~/Library/LaunchAgents/com.pinchos.agent.plist`, targeting the currently
+running binary's absolute path (pass `--executable <absolute-path>` to target
+a different one, for example after copying a new build to
+`~/.local/bin/pinchos`). This is a plain per-user LaunchAgent, not `SMAppService`:
+Pinchos today ships as a standalone SwiftPM binary rather than a signed `.app`
+bundle, and `SMAppService`'s login-item registration is keyed by bundle
+identifier, so it doesn't apply until the `.app` packaging work in [#15](https://github.com/douglasjarquin/pinchos/issues/15).
+No root privileges are required or used.
+
+- **Idempotent**: running `install` again with the same target executable
+  while already enabled makes no changes. Re-running it after upgrading the
+  binary (or with a different `--executable`) unloads the old configuration
+  and loads the new one in place.
+- **One fixed location**: the agent's label (`com.pinchos.agent`) and plist
+  path never change, so there is exactly one possible configuration file for
+  this mechanism — reinstalling always converges that single file instead of
+  accumulating stale entries under old paths or labels, and `uninstall`
+  removes it outright rather than leaving it disabled on disk.
+- **Deterministic environment**: the generated plist sets `PATH` and `HOME`
+  explicitly and does not depend on any interactive shell profile — `launchd`
+  itself never sources `.zshrc`/`.bash_profile` either way, but the generated
+  configuration pins this down explicitly rather than relying on that
+  incidentally. `pinchos` is launched with `RunAtLoad` only, so quitting it
+  normally does not trigger an automatic relaunch until the next login.
+- `service status` reports the configuration file's presence and target
+  executable, whether the agent is enabled (loaded in `launchd`), and whether
+  it is currently running (with its pid). Exit code is `0` when enabled, `1`
+  when not installed or not enabled.
+- stdout/stderr from the launched process are redirected to
+  `~/Library/Logs/pinchos/pinchos.log` and `pinchos.err.log`.
+
+**Manual recovery / removal**, if `pinchos` is ever unavailable to run
+`service uninstall` (for example after deleting the binary):
 
 ```sh
-# One-off, from Terminal or a script:
-open /path/to/pinchos/.build/release/pinchos
-
-# Or add it under System Settings -> General -> Login Items,
-# pointing at the same release binary.
+launchctl bootout gui/$(id -u)/com.pinchos.agent   # stop and unload, ignore errors if not loaded
+rm -f ~/Library/LaunchAgents/com.pinchos.agent.plist
+rm -rf ~/Library/Logs/pinchos                      # optional: also remove logs
 ```
 
 ## Config
@@ -90,6 +127,7 @@ The release binary also provides setup, validation, diagnostics, and one-shot ex
 .build/release/pinchos config-path
 .build/release/pinchos open-config
 .build/release/pinchos run codex
+.build/release/pinchos service install
 ```
 
 Use `pinchos <command> --help` for command-specific help.
@@ -98,9 +136,10 @@ Use `pinchos <command> --help` for command-specific help.
 `doctor` reports config accessibility, shell and command availability, working directories, icons, environment prerequisites, and launch-at-login state when the app bundle exposes it.
 `config-path` prints the resolved path without creating files, while `open-config` opens that path in its default application and creates an empty file only when necessary.
 `run <item>` uses the same configured shell vector, working directory, merged environment, timeout, and output bounds as the menu-bar app.
+`service install`/`status`/`uninstall` manage the per-user launch-at-login `launchd` agent; see "Launch at login" above.
 
 CLI exit codes are suitable for scripts.
-`0` means success, `2` means invalid command usage, `3` means config or open failure, and `4` means `doctor` found a problem.
+`0` means success, `1` means `service status` found the agent not installed or not enabled, `2` means invalid command usage, `3` means config or open failure, and `4` means `doctor` found a problem.
 `run` preserves a configured command's exit code, uses `124` for timeouts, and uses `127` for launch failures.
 
 ### Strict schema compatibility
@@ -292,4 +331,4 @@ See [`docs/performance.md`](docs/performance.md) for the performance budgets and
 
 ## Out of scope for v1
 
-No additional module types beyond `command`, no nested/JSON-path format placeholders, no preferences UI, no login-item management, no code signing/notarization/distribution pipeline, no Homebrew formula, no multi-bar layout engine. See the project brief for the full list.
+No additional module types beyond `command`, no nested/JSON-path format placeholders, no preferences UI, no code signing/notarization/distribution pipeline, no Homebrew formula, no multi-bar layout engine. `pinchos service` (see "Launch at login" above) covers per-user launch-at-login for today's standalone binary; `SMAppService`/Login Items integration for a packaged `.app` is deferred to [#15](https://github.com/douglasjarquin/pinchos/issues/15). See the project brief for the full list.
