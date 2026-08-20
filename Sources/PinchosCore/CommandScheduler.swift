@@ -274,7 +274,8 @@ public actor CommandScheduler {
             },
             onCancel: { [weak self] in
                 slot.fail(CancellationError())
-                Task { await self?.removeWaiter(id) }
+                let scheduler = self
+                Task { await scheduler?.removeWaiter(id) }
             }
         )
     }
