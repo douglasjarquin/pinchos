@@ -343,7 +343,7 @@ final class StaleClickInvocationTests: XCTestCase {
         item.commitPreparedUpdate()
 
         let snapshot = await item.clickSnapshot()
-        XCTAssertEqual(snapshot?.isRunning, false)
+        XCTAssertEqual(snapshot?.runner.isRunning, false)
     }
 
     // MARK: - Repeated clicks still share one runner gate and record skipped invocations rather than overlapping.
@@ -368,7 +368,7 @@ final class StaleClickInvocationTests: XCTestCase {
 
         try await waitForPendingClickInvocationsToDrain(item)
         let snapshot = await item.clickSnapshot()
-        XCTAssertEqual(snapshot?.skippedRefreshes, 1)
+        XCTAssertEqual(snapshot?.runner.skippedRefreshes, 1)
         XCTAssertTrue(FileManager.default.fileExists(atPath: marker.path))
     }
 
@@ -406,7 +406,7 @@ final class StaleClickInvocationTests: XCTestCase {
     private func waitForClickRunning(_ item: ManagedItem) async throws {
         let deadline = Date().addingTimeInterval(2)
         while Date() < deadline {
-            if await item.clickSnapshot()?.isRunning == true { return }
+            if await item.clickSnapshot()?.runner.isRunning == true { return }
             try await Task.sleep(for: .milliseconds(10))
         }
         throw NSError(

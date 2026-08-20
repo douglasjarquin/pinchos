@@ -1,6 +1,18 @@
 import AppKit
 import PinchosCore
 
+/// Diagnostics for the click-command runner, kept independent from the primary
+/// item's runtime snapshot so a click failure or in-flight click can never be
+/// mistaken for (or overwrite) the primary displayed value. `lastAttemptedAt`
+/// and `lastCompletedAt` bracket the most recent invocation that actually
+/// reached the runner (races lost to a config reload never touch them) and are
+/// reset alongside the runner itself when click execution settings change.
+struct ClickDiagnosticsSnapshot {
+    let runner: CommandRunnerSnapshot
+    let lastAttemptedAt: Date?
+    let lastCompletedAt: Date?
+}
+
 @MainActor
 final class ManagedItem: ManagedItemLifecycle {
     let statusItem: NSStatusItem?
@@ -31,6 +43,8 @@ final class ManagedItem: ManagedItemLifecycle {
     private var lastUpdatedAt: Date?
     private var lastSuccessfulTitle: String?
     private var stalePresentationTask: Task<Void, Never>?
+    private var lastClickAttemptedAt: Date?
+    private var lastClickCompletedAt: Date?
 
     /// Test-only seams that pause a queued click/action invocation after it has been
     /// accepted (bookkeeping incremented) but before it re-checks lifecycle state and
@@ -222,6 +236,8 @@ final class ManagedItem: ManagedItemLifecycle {
         }
         if pendingUpdate.clickRunnerConfigurationChanged {
             clickRunner = pendingUpdate.clickRunner
+            lastClickAttemptedAt = nil
+            lastClickCompletedAt = nil
         }
         if pendingUpdate.actionRunnersConfigurationChanged {
             actionRunners = pendingUpdate.actionRunners ?? [:]
@@ -494,9 +510,13 @@ final class ManagedItem: ManagedItemLifecycle {
         return await actionRunner.snapshot()
     }
 
-    func clickSnapshot() async -> CommandRunnerSnapshot? {
+    func clickSnapshot() async -> ClickDiagnosticsSnapshot? {
         guard let clickRunner else { return nil }
-        return await clickRunner.snapshot()
+        return ClickDiagnosticsSnapshot(
+            runner: await clickRunner.snapshot(),
+            lastAttemptedAt: lastClickAttemptedAt,
+            lastCompletedAt: lastClickCompletedAt
+        )
     }
 
     /// Test-only visibility into the accept/start bookkeeping used to gate
@@ -536,6 +556,8 @@ final class ManagedItem: ManagedItemLifecycle {
         runner: CommandRunner,
         testGate: (() async -> Void)?,
         currentRunner: @escaping (ManagedItem) -> CommandRunner?,
+        onStart: ((ManagedItem) -> Void)? = nil,
+        onCompletion: ((ManagedItem) -> Void)? = nil,
         onFinish: @escaping (ManagedItem) -> Void
     ) {
         Task { @MainActor [weak self, runner] in
@@ -551,7 +573,9 @@ final class ManagedItem: ManagedItemLifecycle {
             else {
                 return
             }
+            onStart?(self)
             _ = await runner.runIfIdle()
+            onCompletion?(self)
         }
     }
 
@@ -572,6 +596,8 @@ final class ManagedItem: ManagedItemLifecycle {
                 runner: clickRunner,
                 testGate: clickInvocationTestGate,
                 currentRunner: { $0.clickRunner },
+                onStart: { $0.lastClickAttemptedAt = $0.now() },
+                onCompletion: { $0.lastClickCompletedAt = $0.now() },
                 onFinish: { $0.finishClickInvocation() }
             )
         } else if config.refreshOnClick {
