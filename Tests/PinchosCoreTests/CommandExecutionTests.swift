@@ -378,8 +378,8 @@ final class CommandExecutionTests: XCTestCase {
         }
         XCTAssertEqual(execution.terminalReason, .exited(code: 0))
         XCTAssertTrue(waitUntilGone(child))
-        let finalSnapshot = await runner.snapshot()
-        XCTAssertFalse(finalSnapshot.isRunning)
+        let finalSnapshot = await waitForRunnerIdle(runner)
+        XCTAssertFalse(finalSnapshot.isRunning, "runner still reported running after its descendant exited")
 
         try await Task.sleep(nanoseconds: 1_200_000_000)
         guard case .completed(let rerun) = await runner.runIfIdle() else {
@@ -477,6 +477,22 @@ final class CommandExecutionTests: XCTestCase {
             usleep(10_000)
         } while Date() < deadline
         return false
+    }
+
+    /// `CommandRunnerSnapshot.isRunning` only clears once the process-session
+    /// supervisor observes the process group is empty. That observation is a
+    /// polling loop (see `ProcessSessionSpawner.supervisorScript`) that forks
+    /// `ps`/`awk` on a fixed interval, so it can lag noticeably behind the
+    /// descendant actually exiting under CI load. Poll for idle instead of
+    /// asserting immediately after the descendant is confirmed gone.
+    private func waitForRunnerIdle(_ runner: CommandRunner, timeout: TimeInterval = 5) async -> CommandRunnerSnapshot {
+        let deadline = Date().addingTimeInterval(timeout)
+        var snapshot = await runner.snapshot()
+        while snapshot.isRunning && Date() < deadline {
+            try? await Task.sleep(nanoseconds: 20_000_000)
+            snapshot = await runner.snapshot()
+        }
+        return snapshot
     }
 }
 
