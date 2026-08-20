@@ -125,8 +125,7 @@ final class StatusItemController: StatusItemMenuDelegate {
         await apply(diff: diff, config: config)
     }
 
-    func showParseError(_ error: Error) async {
-        let description = String(describing: error)
+    func showParseError(_ description: String) async {
         await enqueueLifecycleOperation { [weak self] in
             self?.showRecoveryNow(configExists: true, errorDescription: description)
         }

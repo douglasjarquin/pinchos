@@ -228,6 +228,7 @@ See [`example/pinchos.toml`](example/pinchos.toml) for a full working config wit
 - Each command session has a supervisor process as its process-group leader.
   The supervisor remains alive until its descendants have exited or cancellation terminates the group, so every signal is made through the live session owner rather than a reusable numeric process-group ID.
 - `Sources/pinchos` — the AppKit executable: one `NSStatusItem` and one per-item scheduled `DispatchSourceTimer` when configured, plus manual refresh actions, declarative per-item menu actions, menu and lifecycle projection of `PinchosCore` runner snapshots, a shared `ShutdownCoordinator` for GUI and CLI lifecycle convergence, and a `ConfigWatcher` (`DispatchSourceFileSystemObject`) for live reload.
+- Config file reads and TOML parsing run off the AppKit main actor through `ConfigLoadCoordinator`, which tags each reload with a generation number so a superseded parse — success or failure — is never applied over a newer one, and coalesces reload bursts into a single pending load instead of an unbounded backlog.
 
 ### Why TOMLKit
 
