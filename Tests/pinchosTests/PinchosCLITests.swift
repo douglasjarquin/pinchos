@@ -1,3 +1,4 @@
+import Darwin
 import Foundation
 import XCTest
 @testable import pinchos
@@ -324,6 +325,66 @@ final class PinchosCLITests: XCTestCase {
         let timeoutCode = await cli.run(arguments: ["run", "timeout"])
         XCTAssertEqual(timeoutCode, 124)
         XCTAssertTrue(capture.stderr.contains("timed out"))
+    }
+
+    func testRunWaitsForLingeringDescendantAndIncludesItsLateOutput() async throws {
+        let root = try makeRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let configURL = root.appendingPathComponent("pinchos/pinchos.toml")
+        try FileManager.default.createDirectory(at: configURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try """
+        [item.lingering]
+        type = "command"
+        run = "(sleep 0.3; printf 'late\\n') & exit 0"
+        timeout = "2s"
+        """.write(to: configURL, atomically: true, encoding: .utf8)
+        let capture = CLIOutputCapture()
+        let cli = PinchosCLI(configPath: configURL.path, output: capture.output)
+
+        let startedAt = Date()
+        let runCode = await cli.run(arguments: ["run", "lingering"])
+
+        // A same-group descendant outliving the shell must not be treated as
+        // final: `pinchos run` has to wait for it to settle so its output is
+        // captured and the CLI does not exit while it still owns the group.
+        XCTAssertEqual(runCode, 0)
+        XCTAssertEqual(capture.stdout, "late\n")
+        XCTAssertGreaterThanOrEqual(Date().timeIntervalSince(startedAt), 0.25)
+    }
+
+    func testRunKillsIndefiniteLingeringDescendantAtConfiguredTimeoutAndLeavesNoOrphan() async throws {
+        let root = try makeRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let configURL = root.appendingPathComponent("pinchos/pinchos.toml")
+        try FileManager.default.createDirectory(at: configURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+        let childPIDURL = root.appendingPathComponent("child.pid")
+        try """
+        [item.indefinite]
+        type = "command"
+        run = "(trap '' TERM; while :; do sleep 1; done) & child=$!; printf '%s' $child > '\(childPIDURL.path)'; exit 0"
+        timeout = "1s"
+        """.write(to: configURL, atomically: true, encoding: .utf8)
+        let capture = CLIOutputCapture()
+        let cli = PinchosCLI(configPath: configURL.path, output: capture.output)
+
+        let runCode = await cli.run(arguments: ["run", "indefinite"])
+
+        XCTAssertEqual(runCode, 124)
+        XCTAssertTrue(capture.stderr.contains("timed out"))
+        let pidText = try String(contentsOf: childPIDURL).trimmingCharacters(in: .whitespacesAndNewlines)
+        let childPID = try XCTUnwrap(Int32(pidText))
+        XCTAssertTrue(waitUntilProcessIsGone(childPID), "pinchos run left an orphaned descendant \(childPID) after its timeout")
+    }
+
+    private func waitUntilProcessIsGone(_ pid: Int32) -> Bool {
+        let deadline = Date().addingTimeInterval(2)
+        repeat {
+            if kill(pid, 0) == -1, errno == ESRCH {
+                return true
+            }
+            usleep(10_000)
+        } while Date() < deadline
+        return false
     }
 
     private func makeRoot() throws -> URL {

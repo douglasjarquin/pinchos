@@ -306,6 +306,40 @@ final class RecoveryLifecycleTests: XCTestCase {
     }
 
     @MainActor
+    func testLateStdoutFromLingeringDescendantUpdatesFinalOutputAndTimestamp() async throws {
+        let item = makeHeadlessItem(
+            config: ItemConfig(
+                name: "late-output",
+                run: "(sleep 0.3; printf 'late\\n') & exit 0",
+                interval: .manual
+            ),
+            initiallyVisible: false
+        )
+        addTeardownBlock { @MainActor in
+            await item.tearDown()
+        }
+
+        item.refreshNow()
+        try await waitForRunning(item)
+
+        // The shell already exited, but a same-group descendant is still
+        // writing output. The item must not have committed anything from the
+        // preliminary shell exit while that descendant lingers.
+        let whileLingering = await item.runtimeSnapshot()
+        XCTAssertTrue(whileLingering.isRunning)
+        XCTAssertNil(whileLingering.fullOutput)
+        XCTAssertNil(whileLingering.lastUpdatedAt)
+
+        let settled = try await waitForRuntimeSnapshot(item) { snapshot in
+            !snapshot.isRunning && snapshot.fullOutput != nil
+        }
+        XCTAssertEqual(settled.fullOutput, "late\n")
+        XCTAssertNotNil(settled.lastUpdatedAt)
+        XCTAssertEqual(settled.status, .fresh)
+        XCTAssertEqual(item.renderedTitle, "late")
+    }
+
+    @MainActor
     func testConfigReloadTerminatesLingeringDescendantBeforeReplacingRunner() async throws {
         let childPIDURL = FileManager.default.temporaryDirectory
             .appendingPathComponent("pinchos-reload-child-\(UUID().uuidString)")

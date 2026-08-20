@@ -449,6 +449,37 @@ final class CommandExecutionTests: XCTestCase {
         XCTAssertFalse(snapshot.isRunning)
     }
 
+    func testCancellationAfterNaturalShellExitYieldsCancelledDefinitiveReason() async throws {
+        let childPIDURL = temporaryURL("cancel-after-natural-exit-child")
+        defer { try? FileManager.default.removeItem(at: childPIDURL) }
+        var childPID: Int32?
+        defer {
+            if let childPID {
+                _ = kill(childPID, SIGKILL)
+                _ = waitUntilGone(childPID)
+            }
+        }
+
+        let command = "(trap '' TERM; while :; do sleep 1; done) & child=$!; printf '%s' \"$child\" > '\(childPIDURL.path)'; exit 0"
+        let runner = CommandRunner(command: command, timeout: 30, maxOutputBytes: 64)
+
+        let outcome = await runner.runIfIdle()
+        guard case .completed(let preliminary) = outcome else {
+            return XCTFail("expected a completed preliminary execution, got \(outcome)")
+        }
+        XCTAssertEqual(preliminary.terminalReason, .exited(code: 0))
+        let child = try await waitForPID(at: childPIDURL)
+        childPID = child
+
+        await runner.cancelActive()
+
+        XCTAssertTrue(waitUntilGone(child), "cancellation left natural-exit child process \(child) alive")
+        let settled = await runner.awaitSettledExecution()
+        XCTAssertEqual(settled?.terminalReason, .cancelled, "definitive reason must not stay .exited(0) once cancellation claims a lingering descendant")
+        let snapshot = await runner.snapshot()
+        XCTAssertFalse(snapshot.isRunning)
+    }
+
     func testCancellationDoesNotSignalARecycledProcessGroupAfterSessionOwnershipEnds() {
         let signalBackend = FakeSignalBackend()
         let originalTarget = FakeSignalTarget()
