@@ -25,7 +25,7 @@ public struct ItemAction: Equatable, Sendable {
     }
 }
 
-public struct ItemConfig: Equatable {
+public struct ItemConfig: Equatable, Sendable {
     public static let defaultShell = ["/bin/sh", "-c"]
     public static let defaultTimeout: TimeInterval = 15
     public static let defaultMaxOutputBytes = 64 * 1024
@@ -87,7 +87,7 @@ public struct ItemConfig: Equatable {
     }
 }
 
-public struct PinchosConfig: Equatable {
+public struct PinchosConfig: Equatable, Sendable {
     public let items: [ItemConfig]
 
     public init(items: [ItemConfig]) {

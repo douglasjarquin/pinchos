@@ -1,4 +1,4 @@
-public struct ConfigParseError: Error, CustomStringConvertible, Equatable {
+public struct ConfigParseError: Error, CustomStringConvertible, Equatable, Sendable {
     public let message: String
     public let line: Int?
 
