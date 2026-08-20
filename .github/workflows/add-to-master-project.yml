@@ -1,0 +1,22 @@
+name: Add issues to master project
+
+on:
+  issues:
+    types:
+      - opened
+      - reopened
+      - transferred
+
+permissions: {}
+
+jobs:
+  add-to-project:
+    name: Add issue to Open Source Work
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Add issue to master project
+        uses: actions/add-to-project@v2
+        with:
+          project-url: https://github.com/users/douglasjarquin/projects/7
+          github-token: ${{ secrets.PROJECT_TOKEN }}
