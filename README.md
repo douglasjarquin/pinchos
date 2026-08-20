@@ -156,12 +156,12 @@ title = "Refresh now"
 refresh = true
 ```
 
-- `tooltip` is rendered by the native status-item tooltip. Supported placeholders are `{output}` (the full retained stdout, including newlines), `{updated_at}` (the last successful completion time), `{attempted_at}` (the last command start time), `{duration}` (the last run duration with three decimal places and an `s` suffix), `{exit_status}` (the last exit code or terminal result), `{error}` (the latest bounded stderr line or terminal error), `{stale}` (`yes` or `no`), and `{status}` (`running`, `fresh`, `stale`, `error`, or `unavailable`).
+- `tooltip` is rendered by the native status-item tooltip. Supported placeholders are `{output}` (the retained stdout, including newlines, as a bounded preview — see "Diagnostics previews vs. retained output" below), `{updated_at}` (the last successful completion time), `{attempted_at}` (the last command start time), `{duration}` (the last run duration with three decimal places and an `s` suffix), `{exit_status}` (the last exit code or terminal result), `{error}` (the latest bounded stderr line or terminal error), `{stale}` (`yes` or `no`), and `{status}` (`running`, `fresh`, `stale`, `error`, or `unavailable`).
 - Timestamps use UTC ISO-8601 format.
 - Before the first successful run, `{output}` and `{updated_at}` are empty, while `{attempted_at}` and diagnostic placeholders become available after an attempt.
 - `{{` and `}}` escape literal braces.
 - An unknown placeholder or unmatched brace is a configuration error, so raw placeholder braces never leak into a native tooltip.
-- The full output is the command runner's retained output subject to `max_output`; a truncation flag and byte counts remain visible in the right-click diagnostics menu.
+- The full output is the command runner's retained output subject to `max_output`; a truncation flag and byte counts remain visible in the right-click diagnostics menu, and the exact retained bytes stay available via **Copy Full Output**/**Copy Full Error**.
 - `shell` is an executable path followed by the arguments used to invoke it; `run` is appended as the final argument. The default is `[/bin/sh, -c]`, preserving the original behavior.
 - `shell` and `working_directory` are resolved when the config loads. A leading `~` expands to the launching user's home directory, and relative filesystem paths are resolved relative to the config file, including `icon` paths.
 - `working_directory` is optional. When omitted, the command inherits Pinchos's process working directory.
@@ -190,12 +190,23 @@ refresh = true
 - `stale_after` uses the last successful completion as its clock origin and becomes stale when the age is greater than or equal to the configured threshold. A first-run failure is `error`/`unavailable` rather than a fabricated stale value.
 - Command runs for a given item never overlap: if the previous run for that item hasn't finished when the next tick fires, the tick is skipped.
 - Manual refreshes use the same per-item execution gate as scheduled ticks, so repeated Refresh Now actions are skipped while a run is active.
-- While a refresh is running, the last good value stays visible and the item's native tooltip reports the running state. The right-click diagnostics menu reports the full retained value, state, last attempt, last success, stale flag, duration, exit/error details, and the hardened runner's per-stream diagnostics.
+- While a refresh is running, the last good value stays visible and the item's native tooltip reports the running state. The right-click diagnostics menu reports a bounded preview of the retained value (see below), state, last attempt, last success, stale flag, duration, exit/error details, and the hardened runner's per-stream diagnostics.
 - Skipped ticks are counted in the item's right-click diagnostics menu without replacing the last completed result.
 - The same timeout and output bounds apply to an optional click command, which is cancelled when its item is removed or Pinchos quits.
 - The diagnostics menu reports the last exit code or signal, duration, skipped ticks, per-stream truncation, and the latest bounded stderr line.
 - `click` is fire-and-forget only in the sense that the left-click never blocks the UI and never replaces the item's primary displayed value — it is not silent. A configured `click` command gets its own **Click Action** section in the right-click menu, independent of the primary refresh diagnostics: current state (never run, running, completed, error, timed out, or cancelled), last attempt/completion time, duration, exit/signal/timeout/cancellation/launch-failure detail, skipped-invocation count (while the click runner is already busy), per-stream byte counts and truncation, a bounded stderr preview, and **Copy Click Output**/**Copy Click Error** actions for the complete retained streams. A click failure never overwrites the menu-bar title, tooltip output, or the primary runner's last-good value. Diagnostics for the click runner are retained across presentation-only reloads and reset only when the click command or its execution settings (shell, environment, working directory, timeout, or `max_output`) change or `click` is removed.
+- A command action's diagnostics offer their own **Copy "&lt;title&gt;" Output**/**Copy "&lt;title&gt;" Error** entries once that action has produced non-empty output/error, mirroring the click and primary sections.
 - An unresolvable shell or working directory is reported in the config warning; a launch failure during execution is retained in the item's diagnostics menu with the resolved path.
+
+### Diagnostics previews vs. retained output
+
+Every command-derived `NSMenuItem` title and tooltip expansion is a **bounded preview**, not the raw retained string, produced by `DiagnosticPreviewFormatter` (`Sources/PinchosCore/DiagnosticPreviewFormatter.swift`). This decouples the cost of opening a right-click menu or rendering a tooltip from `max_output` (up to 4MiB per stream): the primary "Value:" line, stderr/error lines, and per-action diagnostics are capped independently in grapheme clusters, UTF-8 bytes, and line count, so a pathologically large or control-character-heavy command output can never inflate a menu's layout or hide the global **Open Config**/**Reload Config**/**Quit Pinchos** actions beneath it.
+
+- Menu titles render as one visual line: embedded line breaks are visibly escaped (joined with `␊`) rather than becoming real newlines, since AppKit renders an `NSMenuItem.title` as a single row.
+- Tooltips are a native multi-line surface and keep real line breaks, but still cap total size and line count for the same reason.
+- NUL, other C0/C1 control characters, DEL, and bidi format controls are replaced with a visible placeholder (mostly the Unicode Control Pictures block, e.g. tab becomes `␉`, escape becomes `␛`) so they can neither disappear nor visually distort surrounding text; ordinary Unicode, including multi-scalar emoji and combining marks, passes through unchanged. Truncation never splits an extended grapheme cluster.
+- Whenever a preview is actually shortened, it ends with an explicit marker naming the original byte and line counts, e.g. `… (truncated, 65536 bytes / 1 line total)`, and the corresponding menu item's accessibility label/help calls out the truncation for VoiceOver.
+- The preview never replaces the retained data: **Copy Full Output**, **Copy Full Error**, **Copy Click Output**/**Copy Click Error**, and each action's **Copy "&lt;title&gt;" Output**/**Copy "&lt;title&gt;" Error** place the exact retained stdout/stderr on the clipboard, unabridged, and are omitted whenever the corresponding stream is empty.
 - A malformed config keeps the last good config running untouched, and pinchos additionally shows a single `pinchos ⚠︎` item; click it to see the parse error (with line number when available), reload, or quit. Fix the file and it clears automatically on the next successful reload.
 - Right-click any item for its configured actions, **Refresh Now** when no built-in refresh action is configured, item diagnostics, then the global **Open Config**, **Reload Config**, and **Quit Pinchos** actions.
 - Right-click the warning item for its recovery actions.
@@ -236,7 +247,7 @@ See [`example/pinchos.toml`](example/pinchos.toml) for a full working config wit
 
 ## Architecture
 
-- `Sources/PinchosCore` — UI-free library: TOML parsing (via TOMLKit), duration and byte-size parsing, `{output}` templating, the config-diff engine, and bounded process-group command execution with concurrent stdout/stderr draining.
+- `Sources/PinchosCore` — UI-free library: TOML parsing (via TOMLKit), duration and byte-size parsing, `{output}` templating, bounded/sanitized diagnostics previews (`DiagnosticPreviewFormatter`), the config-diff engine, and bounded process-group command execution with concurrent stdout/stderr draining.
 - Each command session has a supervisor process as its process-group leader.
   The supervisor remains alive until its descendants have exited or cancellation terminates the group, so every signal is made through the live session owner rather than a reusable numeric process-group ID.
 - `Sources/pinchos` — the AppKit executable: one `NSStatusItem` and one per-item scheduled `DispatchSourceTimer` when configured, plus manual refresh actions, declarative per-item menu actions, menu and lifecycle projection of `PinchosCore` runner snapshots, a shared `ShutdownCoordinator` for GUI and CLI lifecycle convergence, and a `ConfigWatcher` (`DispatchSourceFileSystemObject`) for live reload.

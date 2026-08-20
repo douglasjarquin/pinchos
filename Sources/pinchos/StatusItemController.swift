@@ -413,12 +413,18 @@ final class StatusItemController: StatusItemMenuDelegate {
                 case .launchFailed(let message):
                     menu.addItem(disabledItem(title: actionPrefix + "launch failed"))
                     if !message.isEmpty {
-                        menu.addItem(disabledItem(title: actionPrefix + "launch: \(String(message.prefix(200)))"))
+                        menu.addItem(launchFailurePreviewItem(prefix: actionPrefix + "launch: ", fullText: message))
                     }
                 }
                 let stderrLine = lastTrimmedLine(of: execution.stderr)
                 if !stderrLine.isEmpty {
-                    menu.addItem(disabledItem(title: actionPrefix + "stderr: \(String(stderrLine.prefix(200)))"))
+                    menu.addItem(stderrPreviewItem(prefix: actionPrefix + "stderr: ", fullText: stderrLine))
+                }
+                if !execution.stdout.isEmpty {
+                    menu.addItem(copyItem(title: "Copy \"\(title)\" Output", text: execution.stdout))
+                }
+                if !execution.stderr.isEmpty {
+                    menu.addItem(copyItem(title: "Copy \"\(title)\" Error", text: execution.stderr))
                 }
             }
             if snapshot.skippedRefreshes > 0 {
@@ -456,7 +462,7 @@ final class StatusItemController: StatusItemMenuDelegate {
             case .launchFailed(let message):
                 menu.addItem(disabledItem(title: prefix + "last result: launch failed"))
                 if !message.isEmpty {
-                    menu.addItem(disabledItem(title: prefix + "launch: \(String(message.prefix(200)))"))
+                    menu.addItem(launchFailurePreviewItem(prefix: prefix + "launch: ", fullText: message))
                 }
             }
             menu.addItem(disabledItem(title: prefix + String(format: "duration: %.3fs", execution.duration)))
@@ -474,7 +480,7 @@ final class StatusItemController: StatusItemMenuDelegate {
                             : "stderr: \(execution.stderrBytesRead) bytes")))
             let stderrLine = lastTrimmedLine(of: execution.stderr)
             if !stderrLine.isEmpty {
-                menu.addItem(disabledItem(title: prefix + "stderr: \(String(stderrLine.prefix(200)))"))
+                menu.addItem(stderrPreviewItem(prefix: prefix + "stderr: ", fullText: stderrLine))
             }
             if !execution.stdout.isEmpty {
                 menu.addItem(copyItem(title: "Copy Click Output", text: execution.stdout))
@@ -513,6 +519,7 @@ final class StatusItemController: StatusItemMenuDelegate {
         let item = NSMenuItem(title: title, action: #selector(copyDiagnosticText(_:)), keyEquivalent: "")
         item.target = self
         item.representedObject = CopyTextTarget(text: text)
+        item.setAccessibilityHelp("Copies the complete retained text to the clipboard, unabridged.")
         return item
     }
 
@@ -524,7 +531,11 @@ final class StatusItemController: StatusItemMenuDelegate {
 
     private func addRuntimeState(from snapshot: ItemRuntimeSnapshot, to menu: NSMenu) {
         menu.addItem(disabledItem(title: "State: \(snapshot.status.rawValue)"))
-        menu.addItem(disabledItem(title: snapshot.fullOutput.map { "Value: \($0)" } ?? "Value: unavailable"))
+        if let fullOutput = snapshot.fullOutput {
+            menu.addItem(valuePreviewItem(prefix: "Value: ", fullText: fullOutput))
+        } else {
+            menu.addItem(disabledItem(title: "Value: unavailable"))
+        }
         menu.addItem(disabledItem(title: "Last attempt: \(snapshot.lastAttemptedAt.map(formatTimestamp) ?? "unavailable")"))
         menu.addItem(disabledItem(title: "Last success: \(snapshot.lastUpdatedAt.map(formatTimestamp) ?? "unavailable")"))
         menu.addItem(disabledItem(title: "Stale: \(snapshot.isStale ? "yes" : "no")"))
@@ -535,7 +546,13 @@ final class StatusItemController: StatusItemMenuDelegate {
             menu.addItem(disabledItem(title: "Last exit: \(exitStatus)"))
         }
         if let errorSummary = snapshot.errorSummary {
-            menu.addItem(disabledItem(title: "Error: \(errorSummary)"))
+            menu.addItem(stderrPreviewItem(prefix: "Error: ", fullText: errorSummary))
+        }
+        if let fullOutput = snapshot.fullOutput, !fullOutput.isEmpty {
+            menu.addItem(copyItem(title: "Copy Full Output", text: fullOutput))
+        }
+        if let stderr = snapshot.lastExecution?.stderr, !stderr.isEmpty {
+            menu.addItem(copyItem(title: "Copy Full Error", text: stderr))
         }
     }
 
@@ -554,7 +571,7 @@ final class StatusItemController: StatusItemMenuDelegate {
             case .launchFailed(let message):
                 menu.addItem(disabledItem(title: "Last result: launch failed"))
                 if !message.isEmpty {
-                    menu.addItem(disabledItem(title: "launch: \(String(message.prefix(200)))"))
+                    menu.addItem(launchFailurePreviewItem(prefix: "launch: ", fullText: message))
                 }
             }
             menu.addItem(disabledItem(title: String(format: "Duration: %.3fs", execution.duration)))
@@ -570,7 +587,7 @@ final class StatusItemController: StatusItemMenuDelegate {
                         : "stderr: \(execution.stderrBytesRead) bytes"))
             let stderrLine = lastTrimmedLine(of: execution.stderr)
             if !stderrLine.isEmpty {
-                menu.addItem(disabledItem(title: "stderr: \(String(stderrLine.prefix(200)))"))
+                menu.addItem(stderrPreviewItem(prefix: "stderr: ", fullText: stderrLine))
             }
         }
         menu.addItem(disabledItem(title: "Skipped ticks: \(snapshot.skippedRefreshes)"))
@@ -580,6 +597,32 @@ final class StatusItemController: StatusItemMenuDelegate {
         let item = NSMenuItem(title: title, action: nil, keyEquivalent: "")
         item.isEnabled = false
         return item
+    }
+
+    /// Builds a disabled, bounded-preview diagnostics line under `limits`
+    /// and, when the preview is truncated, an accessibility label/help pair
+    /// that names the true byte/line totals so VoiceOver doesn't have to
+    /// read a truncation marker embedded in the visible title.
+    private func previewItem(prefix: String, fullText: String, limits: DiagnosticPreviewFormatter.Limits) -> NSMenuItem {
+        let preview = DiagnosticPreviewFormatter.preview(fullText, limits: limits)
+        let item = disabledItem(title: prefix + preview.text)
+        if preview.isTruncated {
+            item.setAccessibilityLabel(prefix.trimmingCharacters(in: CharacterSet(charactersIn: ": ")))
+            item.setAccessibilityHelp("Truncated preview; use the corresponding Copy action for the full text.")
+        }
+        return item
+    }
+
+    private func valuePreviewItem(prefix: String, fullText: String) -> NSMenuItem {
+        previewItem(prefix: prefix, fullText: fullText, limits: .menuValue)
+    }
+
+    private func stderrPreviewItem(prefix: String, fullText: String) -> NSMenuItem {
+        previewItem(prefix: prefix, fullText: fullText, limits: .menuStderr)
+    }
+
+    private func launchFailurePreviewItem(prefix: String, fullText: String) -> NSMenuItem {
+        previewItem(prefix: prefix, fullText: fullText, limits: .actionDiagnostics)
     }
 
     private func present(menu: NSMenu, on statusItem: NSStatusItem) {

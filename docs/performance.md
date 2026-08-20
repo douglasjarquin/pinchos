@@ -81,6 +81,19 @@ Deterministic resource-invariant tests, run as part of `swift test`:
   configuration retains *exactly* its configured budget and *exactly* the tail of the
   stream through the same `CommandRunner` path `ManagedItem` uses in production. Together
   these are the architectural half of the P4 budget.
+- **Menu construction cost, independent of `max_output`** (issue #53) —
+  [`Tests/pinchosTests/StatusItemControllerTests.swift`](../Tests/pinchosTests/StatusItemControllerTests.swift)`.testMenuConstructionCostIsBoundedIndependentOfMaxOutput`
+  builds a real lifecycle menu against the maximum allowed retained output
+  (`maxAllowedOutputBytes`, 4MiB) simultaneously across the primary value, primary
+  stderr, and a command action's stdout/stderr, and proves the combined size of every
+  resulting menu title stays a small, fixed budget — the deterministic, timing-free half
+  of "menu construction stays under a measured main-thread latency budget in a release
+  build." [`Tests/PinchosCoreTests/DiagnosticPreviewFormatterTests.swift`](../Tests/PinchosCoreTests/DiagnosticPreviewFormatterTests.swift)
+  covers the underlying `DiagnosticPreviewFormatter` at the unit level (byte/line/cluster
+  boundaries, control-character and bidi sanitization, grapheme-cluster-safe truncation).
+  A real release-build wall-clock measurement of this same scenario is deferred to the
+  manual P4 tier above, consistent with this repo's policy against wall-clock assertions
+  in hosted CI.
 
 These tests are intentionally deterministic (fixed byte counts, injected timer factories,
 no wall-clock assertions) so they never flake on a noisy hosted runner, unlike the P0–P5
