@@ -126,7 +126,8 @@ private func parseTooltipTemplate(_ template: String) throws -> [TooltipSegment]
 private func tooltipValue(_ name: String, state: ItemRuntimeSnapshot) -> String {
     switch name {
     case "output":
-        return state.fullOutput ?? ""
+        guard let fullOutput = state.fullOutput else { return "" }
+        return DiagnosticPreviewFormatter.preview(fullOutput, limits: .tooltip).text
     case "updated_at":
         return state.lastUpdatedAt.map(formatTimestamp) ?? ""
     case "attempted_at":
@@ -137,7 +138,7 @@ private func tooltipValue(_ name: String, state: ItemRuntimeSnapshot) -> String 
     case "exit_status":
         return state.exitStatus ?? ""
     case "error":
-        return state.errorSummary ?? ""
+        return state.errorSummary.map { DiagnosticPreviewFormatter.preview($0, limits: .menuStderr).text } ?? ""
     case "stale":
         return state.isStale ? "yes" : "no"
     case "status":
@@ -148,8 +149,9 @@ private func tooltipValue(_ name: String, state: ItemRuntimeSnapshot) -> String 
 }
 
 private func defaultTooltip(for state: ItemRuntimeSnapshot) -> String {
+    let value = state.fullOutput.map { DiagnosticPreviewFormatter.preview($0, limits: .tooltip).text } ?? "Unavailable"
     var lines = [
-        "Value: \(state.fullOutput ?? "Unavailable")",
+        "Value: \(value)",
         "Status: \(state.status.rawValue)"
     ]
     if let lastUpdatedAt = state.lastUpdatedAt {
@@ -165,7 +167,7 @@ private func defaultTooltip(for state: ItemRuntimeSnapshot) -> String {
         lines.append("Exit: \(exitStatus)")
     }
     if let errorSummary = state.errorSummary {
-        lines.append("Error: \(errorSummary)")
+        lines.append("Error: \(DiagnosticPreviewFormatter.preview(errorSummary, limits: .menuStderr).text)")
     }
     if state.isStale {
         lines.append("Stale: yes")

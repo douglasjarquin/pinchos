@@ -733,6 +733,263 @@ final class StatusItemControllerTests: XCTestCase {
         )
     }
 
+    func testLifecycleMenuBoundsAPathologicalValueAndOffersCopyFullOutput() async throws {
+        let factory = FakeManagedItemFactory()
+        let controller = makeController(factory: factory)
+        addTeardownBlock { @MainActor in
+            await controller.shutdown()
+        }
+
+        await controller.apply(config: PinchosConfig(items: [item("alpha")]))
+        let hugeOutput = (1...5000).map { "line \($0)" }.joined(separator: "\n") + "\n"
+        factory.created[0].runtimeSnapshotValue = ItemRuntimeSnapshot(
+            isRunning: false,
+            fullOutput: hugeOutput,
+            lastAttemptedAt: nil,
+            lastUpdatedAt: Date(),
+            lastExecution: nil,
+            staleAfter: nil,
+            skippedRefreshes: 0,
+            now: Date()
+        )
+
+        let menu = await controller.makeLifecycleMenu(forManagedItem: factory.created[0])
+        let titles = menu.items.map(\.title)
+
+        let valueTitle = try XCTUnwrap(titles.first(where: { $0.hasPrefix("Value: ") }))
+        XCTAssertLessThan(valueTitle.utf8.count, 1024, "a pathological value must not become a pathological menu title")
+        XCTAssertFalse(valueTitle.contains("\n"), "the menu title must never contain a raw newline")
+        XCTAssertTrue(valueTitle.contains("5000 line"), "the truncation marker must report the true original line count")
+
+        let copyItem = try XCTUnwrap(menu.items.first(where: { $0.title == "Copy Full Output" }))
+        XCTAssertTrue(NSApplication.shared.sendAction(copyItem.action!, to: copyItem.target, from: copyItem))
+        XCTAssertEqual(NSPasteboard.general.string(forType: .string), hugeOutput, "copy must retrieve the exact retained text, not the preview")
+
+        XCTAssertEqual(Array(titles.suffix(3)), ["Open Config", "Reload Config", "Quit Pinchos"], "global actions must stay reachable regardless of output size")
+    }
+
+    func testLifecycleMenuValuePreviewIsAccessibleWhenTruncated() async throws {
+        let factory = FakeManagedItemFactory()
+        let controller = makeController(factory: factory)
+        addTeardownBlock { @MainActor in
+            await controller.shutdown()
+        }
+
+        await controller.apply(config: PinchosConfig(items: [item("alpha")]))
+        factory.created[0].runtimeSnapshotValue = ItemRuntimeSnapshot(
+            isRunning: false,
+            fullOutput: String(repeating: "x", count: 64 * 1024),
+            lastAttemptedAt: nil,
+            lastUpdatedAt: Date(),
+            lastExecution: nil,
+            staleAfter: nil,
+            skippedRefreshes: 0,
+            now: Date()
+        )
+
+        let menu = await controller.makeLifecycleMenu(forManagedItem: factory.created[0])
+        let valueItem = try XCTUnwrap(menu.items.first(where: { $0.title.hasPrefix("Value: ") }))
+
+        XCTAssertNotNil(valueItem.accessibilityLabel())
+        XCTAssertNotNil(valueItem.accessibilityHelp())
+    }
+
+    func testLifecycleMenuOmitsCopyActionsWhenOutputAndErrorAreEmpty() async throws {
+        let factory = FakeManagedItemFactory()
+        let controller = makeController(factory: factory)
+        addTeardownBlock { @MainActor in
+            await controller.shutdown()
+        }
+
+        await controller.apply(config: PinchosConfig(items: [item("alpha")]))
+        factory.created[0].runtimeSnapshotValue = ItemRuntimeSnapshot(
+            isRunning: false,
+            fullOutput: "",
+            lastAttemptedAt: nil,
+            lastUpdatedAt: Date(),
+            lastExecution: nil,
+            staleAfter: nil,
+            skippedRefreshes: 0,
+            now: Date()
+        )
+
+        let menu = await controller.makeLifecycleMenu(forManagedItem: factory.created[0])
+        let titles = menu.items.map(\.title)
+
+        XCTAssertFalse(titles.contains("Copy Full Output"))
+        XCTAssertFalse(titles.contains("Copy Full Error"))
+    }
+
+    func testLifecycleMenuOffersCopyFullErrorWhenLastExecutionFailedWithStderr() async throws {
+        let factory = FakeManagedItemFactory()
+        let controller = makeController(factory: factory)
+        addTeardownBlock { @MainActor in
+            await controller.shutdown()
+        }
+
+        await controller.apply(config: PinchosConfig(items: [item("alpha")]))
+        let execution = CommandExecution(
+            terminalReason: .exited(code: 1),
+            stdout: "",
+            stderr: "boom\nsecond line\n",
+            stdoutBytesRead: 0,
+            stderrBytesRead: 18,
+            stdoutTruncated: false,
+            stderrTruncated: false,
+            duration: 0.01
+        )
+        factory.created[0].runtimeSnapshotValue = ItemRuntimeSnapshot(
+            isRunning: false,
+            fullOutput: nil,
+            lastAttemptedAt: Date(),
+            lastUpdatedAt: nil,
+            lastExecution: execution,
+            staleAfter: nil,
+            skippedRefreshes: 0,
+            now: Date()
+        )
+
+        let menu = await controller.makeLifecycleMenu(forManagedItem: factory.created[0])
+        let copyItem = try XCTUnwrap(menu.items.first(where: { $0.title == "Copy Full Error" }))
+        XCTAssertTrue(NSApplication.shared.sendAction(copyItem.action!, to: copyItem.target, from: copyItem))
+        XCTAssertEqual(NSPasteboard.general.string(forType: .string), "boom\nsecond line\n")
+    }
+
+    func testLifecycleMenuSanitizesControlCharactersInValuePreviewAndKeepsGlobalActionsIntact() async throws {
+        let factory = FakeManagedItemFactory()
+        let controller = makeController(factory: factory)
+        addTeardownBlock { @MainActor in
+            await controller.shutdown()
+        }
+
+        await controller.apply(config: PinchosConfig(items: [item("alpha")]))
+        let adversarial = "Open Config\u{0000}Reload Config\u{0007}Quit Pinchos\r\n" + String(repeating: "\r\n", count: 20)
+        factory.created[0].runtimeSnapshotValue = ItemRuntimeSnapshot(
+            isRunning: false,
+            fullOutput: adversarial,
+            lastAttemptedAt: nil,
+            lastUpdatedAt: Date(),
+            lastExecution: nil,
+            staleAfter: nil,
+            skippedRefreshes: 0,
+            now: Date()
+        )
+
+        let menu = await controller.makeLifecycleMenu(forManagedItem: factory.created[0])
+        let titles = menu.items.map(\.title)
+        let valueTitle = try XCTUnwrap(titles.first(where: { $0.hasPrefix("Value: ") }))
+
+        XCTAssertFalse(valueTitle.contains("\u{0000}"))
+        XCTAssertFalse(valueTitle.contains("\n"))
+        XCTAssertEqual(titles.filter { $0 == "Open Config" }.count, 1, "adversarial output must not fake a second global action")
+        XCTAssertEqual(Array(titles.suffix(3)), ["Open Config", "Reload Config", "Quit Pinchos"])
+    }
+
+    func testLifecycleMenuOffersPerActionCopyOutputAndError() async throws {
+        let factory = FakeManagedItemFactory()
+        let controller = makeController(factory: factory)
+        addTeardownBlock { @MainActor in
+            await controller.shutdown()
+        }
+        let config = ItemConfig(
+            name: "codex",
+            run: "echo value",
+            interval: .manual,
+            actions: [ItemAction(title: "Fail action", kind: .command("exit 7"))]
+        )
+        await controller.apply(config: PinchosConfig(items: [config]))
+        let execution = CommandExecution(
+            terminalReason: .exited(code: 7),
+            stdout: "action stdout\n",
+            stderr: "action-error\n",
+            stdoutBytesRead: 14,
+            stderrBytesRead: 13,
+            stdoutTruncated: false,
+            stderrTruncated: false,
+            duration: 0.1
+        )
+        factory.created[0].actionSnapshotValues = [
+            CommandRunnerSnapshot(isRunning: false, lastExecution: execution, skippedRefreshes: 0)
+        ]
+
+        let menu = await controller.makeLifecycleMenu(forManagedItem: factory.created[0])
+
+        let copyOutput = try XCTUnwrap(menu.items.first(where: { $0.title == "Copy \"Fail action\" Output" }))
+        XCTAssertTrue(NSApplication.shared.sendAction(copyOutput.action!, to: copyOutput.target, from: copyOutput))
+        XCTAssertEqual(NSPasteboard.general.string(forType: .string), "action stdout\n")
+
+        let copyError = try XCTUnwrap(menu.items.first(where: { $0.title == "Copy \"Fail action\" Error" }))
+        XCTAssertTrue(NSApplication.shared.sendAction(copyError.action!, to: copyError.target, from: copyError))
+        XCTAssertEqual(NSPasteboard.general.string(forType: .string), "action-error\n")
+    }
+
+    /// Deterministic architectural half of the P4 "menu construction latency"
+    /// budget (issue #53): rather than a wall-clock assertion (which this
+    /// repo deliberately avoids in hosted CI -- see docs/performance.md),
+    /// this proves the thing that actually bounds AppKit's per-open layout
+    /// work is structural: the combined size of every menu item title stays
+    /// a small, fixed budget no matter how large the retained output is,
+    /// because every output-derived title routes through
+    /// `DiagnosticPreviewFormatter` instead of embedding the raw string.
+    /// Exercises the maximum allowed `max_output` value (`maxAllowedOutputBytes`)
+    /// simultaneously across the primary value, primary stderr, and a
+    /// command action's stdout/stderr -- the menu is still cheap to lay out,
+    /// and the exact retained text for each stream remains reachable through
+    /// its own Copy action.
+    func testMenuConstructionCostIsBoundedIndependentOfMaxOutput() async throws {
+        let factory = FakeManagedItemFactory()
+        let controller = makeController(factory: factory)
+        addTeardownBlock { @MainActor in
+            await controller.shutdown()
+        }
+        let config = ItemConfig(
+            name: "codex",
+            run: "echo value",
+            interval: .manual,
+            actions: [ItemAction(title: "Noisy action", kind: .command("false"))]
+        )
+        await controller.apply(config: PinchosConfig(items: [config]))
+
+        let maximalValue = String(repeating: "v", count: maxAllowedOutputBytes)
+        let maximalStderr = String(repeating: "e", count: maxAllowedOutputBytes)
+        let execution = CommandExecution(
+            terminalReason: .exited(code: 1),
+            stdout: maximalValue,
+            stderr: maximalStderr,
+            stdoutBytesRead: maxAllowedOutputBytes,
+            stderrBytesRead: maxAllowedOutputBytes,
+            stdoutTruncated: false,
+            stderrTruncated: false,
+            duration: 0.1
+        )
+        factory.created[0].runtimeSnapshotValue = ItemRuntimeSnapshot(
+            isRunning: false,
+            fullOutput: maximalValue,
+            lastAttemptedAt: Date(),
+            lastUpdatedAt: Date(),
+            lastExecution: execution,
+            staleAfter: nil,
+            skippedRefreshes: 0,
+            now: Date()
+        )
+        factory.created[0].actionSnapshotValues = [
+            CommandRunnerSnapshot(isRunning: false, lastExecution: execution, skippedRefreshes: 0)
+        ]
+
+        let menu = await controller.makeLifecycleMenu(forManagedItem: factory.created[0])
+
+        let totalTitleBytes = menu.items.reduce(0) { $0 + $1.title.utf8.count }
+        XCTAssertLessThan(
+            totalTitleBytes, 16 * 1024,
+            "the combined size of every menu title must stay a small fixed budget regardless of a multi-megabyte max_output"
+        )
+        XCTAssertEqual(Array(menu.items.suffix(3).map(\.title)), ["Open Config", "Reload Config", "Quit Pinchos"])
+
+        let copyOutput = try XCTUnwrap(menu.items.first(where: { $0.title == "Copy Full Output" }))
+        NSApplication.shared.sendAction(copyOutput.action!, to: copyOutput.target, from: copyOutput)
+        XCTAssertEqual(NSPasteboard.general.string(forType: .string)?.utf8.count, maxAllowedOutputBytes)
+    }
+
     func testInvalidReloadRetainsLastGoodItemsAndCorrectedReloadApplies() async {
         let factory = FakeManagedItemFactory()
         let controller = makeController(factory: factory)
