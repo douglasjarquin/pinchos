@@ -249,7 +249,8 @@ See `docs/manual-qa/` for the evidence captured for v1: the example config runni
 
 ## CI
 
-`.github/workflows/ci.yml` runs `swift build` and `swift test` on a macOS runner for every PR and every push to `main`.
+`.github/workflows/ci.yml` runs `swift build`, `swift test`, and `swift build -c release` on a macOS runner for every PR and every push to `main`.
+See [`docs/performance.md`](docs/performance.md) for the performance budgets and benchmark profiles behind the claims above, including the deterministic timer/output-budget invariant tests `swift test` enforces and how to run a controlled release-binary measurement locally.
 
 ## Out of scope for v1
 
