@@ -254,6 +254,73 @@ final class PinchosCLITests: XCTestCase {
         XCTAssertTrue(capture.stdout.contains("launch at login"))
     }
 
+    func testDoctorReportsConfiguredSymbolInsteadOfMissingFileIcon() async throws {
+        let root = try makeRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let configURL = root.appendingPathComponent("pinchos/pinchos.toml")
+        try FileManager.default.createDirectory(at: configURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try """
+        [item.chart]
+        type = "command"
+        run = "true"
+        symbol = "chart.bar.fill"
+        """.write(to: configURL, atomically: true, encoding: .utf8)
+        let capture = CLIOutputCapture()
+        let cli = PinchosCLI(configPath: configURL.path, output: capture.output)
+
+        let doctorCode = await cli.run(arguments: ["doctor"])
+        XCTAssertEqual(doctorCode, 0)
+        XCTAssertTrue(capture.stdout.contains("[PASS] item.chart.symbol"))
+        XCTAssertTrue(capture.stdout.contains("chart.bar.fill"))
+        XCTAssertFalse(capture.stdout.contains("item.chart.icon"))
+    }
+
+    func testDoctorReportsUnavailableSymbolWithoutRejectingValidate() async throws {
+        let root = try makeRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let configURL = root.appendingPathComponent("pinchos/pinchos.toml")
+        try FileManager.default.createDirectory(at: configURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try """
+        [item.missing]
+        type = "command"
+        run = "true"
+        symbol = "pinchos.definitely.not.a.real.symbol"
+        """.write(to: configURL, atomically: true, encoding: .utf8)
+        let capture = CLIOutputCapture()
+        let cli = PinchosCLI(configPath: configURL.path, output: capture.output)
+
+        let validateCode = await cli.run(arguments: ["validate"])
+        XCTAssertEqual(validateCode, 0)
+
+        let doctorCode = await cli.run(arguments: ["doctor"])
+        XCTAssertEqual(doctorCode, 4)
+        XCTAssertTrue(capture.stdout.contains("[FAIL] item.missing.symbol"))
+        XCTAssertTrue(capture.stdout.contains("unavailable"))
+        XCTAssertTrue(capture.stdout.contains("rendering text-only"))
+        XCTAssertFalse(capture.stdout.contains("item.missing.icon"))
+    }
+
+    func testValidateRejectsSymbolAndIconTogether() async throws {
+        let root = try makeRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let configURL = root.appendingPathComponent("pinchos/pinchos.toml")
+        try FileManager.default.createDirectory(at: configURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try """
+        [item.both]
+        type = "command"
+        run = "true"
+        icon = "/tmp/icon.svg"
+        symbol = "chart.bar.fill"
+        """.write(to: configURL, atomically: true, encoding: .utf8)
+        let capture = CLIOutputCapture()
+        let cli = PinchosCLI(configPath: configURL.path, output: capture.output)
+
+        let validateCode = await cli.run(arguments: ["validate"])
+        XCTAssertEqual(validateCode, 3)
+        XCTAssertTrue(capture.stderr.contains("item.both.symbol"))
+        XCTAssertTrue(capture.stderr.contains("cannot be combined"))
+    }
+
     func testDoctorDoesNotExecuteConfiguredShellOrEnvironment() async throws {
         let root = try makeRoot()
         defer { try? FileManager.default.removeItem(at: root) }

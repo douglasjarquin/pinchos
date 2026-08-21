@@ -9,6 +9,7 @@ protocol StatusItemMenuDelegate: AnyObject {
 @MainActor
 protocol ManagedItemLifecycle: AnyObject {
     var config: ItemConfig { get }
+    var iconDiagnosticNote: String? { get }
     func owns(statusItem: NSStatusItem) -> Bool
     func activate()
     func prepareUpdate(config: ItemConfig, deadline: ContinuousClock.Instant) async
@@ -436,6 +437,9 @@ final class StatusItemController: StatusItemMenuDelegate {
         }
         let runtime = await item.runtimeSnapshot()
         addRuntimeState(from: runtime, to: menu)
+        if let note = item.iconDiagnosticNote {
+            menu.addItem(disabledItem(title: "Icon: \(note)"))
+        }
         menu.addItem(NSMenuItem.separator())
         addDiagnostics(from: runtime.runnerSnapshot, to: menu)
         if let clickSnapshot = await item.clickSnapshot() {
@@ -485,6 +489,9 @@ final class StatusItemController: StatusItemMenuDelegate {
         }
 
         menu.addItem(disabledItem(title: groupSummaryTitle(group, entries: memberEntries)))
+        if let note = items[group.name]?.iconDiagnosticNote {
+            menu.addItem(disabledItem(title: "Icon: \(note)"))
+        }
         menu.addItem(NSMenuItem.separator())
         for entry in memberEntries {
             let submenu = NSMenu()

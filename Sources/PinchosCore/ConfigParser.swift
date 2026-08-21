@@ -20,6 +20,7 @@ public enum ConfigParser {
         "tooltip",
         "action",
         "icon",
+        "symbol",
         "max_length",
         "hide_when_empty",
         "hide_on_error",
@@ -30,7 +31,7 @@ public enum ConfigParser {
     static let supportedActionKeys: Set<String> = ["title", "run", "refresh"]
     static let supportedRootKeys: Set<String> = ["item", "scheduler", "group"]
     static let supportedSchedulerKeys: Set<String> = ["max_active_sessions"]
-    static let supportedGroupKeys: Set<String> = ["title", "members", "icon"]
+    static let supportedGroupKeys: Set<String> = ["title", "members", "icon", "symbol"]
 
     /// Which top-level namespace a scanned declaration name belongs to.
     /// Item and group names share one flat lookup space for membership
@@ -881,18 +882,13 @@ public enum ConfigParser {
             )
         }
 
-        let icon: String?
-        if let iconValue = table["icon"] {
-            let rawIcon = try stringValue(
-                name: name,
-                key: "icon",
-                value: iconValue,
-                sourceLines: sourceLines
-            )
-            icon = resolvePath(rawIcon, relativeTo: configURL)
-        } else {
-            icon = nil
-        }
+        let iconSource = try parseIconSource(
+            name: name,
+            namespace: "item",
+            table: table,
+            relativeTo: configURL,
+            sourceLines: sourceLines
+        )
 
         let maxLength: Int?
         if let maxLengthValue = table["max_length"] {
@@ -973,7 +969,8 @@ public enum ConfigParser {
             staleAfter: staleAfter,
             tooltip: tooltip,
             actions: actions,
-            icon: icon,
+            icon: iconSource?.filePath,
+            symbol: iconSource?.symbolName,
             maxLength: maxLength,
             hideWhenEmpty: hideWhenEmpty,
             hideOnError: hideOnError,
@@ -993,13 +990,6 @@ public enum ConfigParser {
         relativeTo configURL: URL?,
         sourceLines: SourceLineMap
     ) throws -> GroupItemConfig {
-        if table["symbol"] != nil {
-            throw ConfigParseError(
-                message: "group.\(name).symbol: SF Symbol groups are not supported yet (see issue #14); "
-                    + "use icon with a local image file path instead",
-                line: sourceLine(item: name, key: "symbol", sourceLines: sourceLines)
-            )
-        }
         try validateUnknownKeys(
             in: table,
             allowedKeys: supportedGroupKeys,
@@ -1009,11 +999,51 @@ public enum ConfigParser {
 
         let title = try requiredGroupString(name: name, key: "title", table: table, sourceLines: sourceLines)
         let members = try parseGroupMembers(name: name, value: table["members"], sourceLines: sourceLines)
+        let iconSource = try parseIconSource(
+            name: name,
+            namespace: "group",
+            table: table,
+            relativeTo: configURL,
+            sourceLines: sourceLines
+        )
+
+        return GroupItemConfig(
+            name: name,
+            title: title,
+            members: members,
+            icon: iconSource?.filePath,
+            symbol: iconSource?.symbolName
+        )
+    }
+
+    /// Parses the mutually exclusive `symbol` / `icon` pair shared by
+    /// `[item.*]` and `[group.*]`. Each key is type-checked on its own
+    /// (empty/non-string `symbol` is an item/key/line error); if both keys
+    /// are present the config is rejected rather than silently ranking them.
+    private static func parseIconSource(
+        name: String,
+        namespace: String,
+        table: TOMLTable,
+        relativeTo configURL: URL?,
+        sourceLines: SourceLineMap
+    ) throws -> ItemIconSource? {
+        let context = "\(namespace).\(name)"
+        let symbol: String?
+        if let symbolValue = table["symbol"] {
+            symbol = try stringValue(
+                path: "\(context).symbol",
+                value: symbolValue,
+                requireNonEmpty: true,
+                line: sourceLine(item: name, key: "symbol", sourceLines: sourceLines)
+            )
+        } else {
+            symbol = nil
+        }
 
         let icon: String?
         if let iconValue = table["icon"] {
             let rawIcon = try stringValue(
-                path: "group.\(name).icon",
+                path: "\(context).icon",
                 value: iconValue,
                 requireNonEmpty: false,
                 line: sourceLine(item: name, key: "icon", sourceLines: sourceLines)
@@ -1023,7 +1053,20 @@ public enum ConfigParser {
             icon = nil
         }
 
-        return GroupItemConfig(name: name, title: title, members: members, icon: icon)
+        if symbol != nil, table["icon"] != nil {
+            throw ConfigParseError(
+                message: "\(context).symbol: cannot be combined with icon; choose one icon source",
+                line: sourceLine(item: name, key: "symbol", sourceLines: sourceLines)
+            )
+        }
+
+        if let symbol {
+            return .symbol(symbol)
+        }
+        if let icon {
+            return .file(icon)
+        }
+        return nil
     }
 
     private static func requiredGroupString(

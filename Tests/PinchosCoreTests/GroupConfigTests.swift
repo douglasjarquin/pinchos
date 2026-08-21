@@ -48,12 +48,45 @@ final class GroupConfigTests: XCTestCase {
         let config = try ConfigParser.parse(toml)
         let group = try XCTUnwrap(config.items.first(where: { $0.name == "ai" })).group
         XCTAssertNil(group.icon)
+        XCTAssertNil(group.symbol)
+        XCTAssertNil(group.iconSource)
     }
 
-    func testGroupRejectsSFSymbolWithIssue14Pointer() {
+    func testGroupParsesSymbolAsNativeSource() throws {
         let toml = members("""
         [group.ai]
         title = "AI"
+        members = ["claude"]
+        symbol = "brain"
+        """)
+
+        let config = try ConfigParser.parse(toml)
+        let group = try XCTUnwrap(config.items.first(where: { $0.name == "ai" })).group
+        XCTAssertEqual(group.symbol, "brain")
+        XCTAssertNil(group.icon)
+        XCTAssertEqual(group.iconSource, .symbol("brain"))
+    }
+
+    func testGroupRejectsEmptySymbolWithKeyAndSourceLine() {
+        let toml = members("""
+        [group.ai]
+        title = "AI"
+        symbol = ""
+        members = ["claude"]
+        """)
+
+        XCTAssertThrowsError(try ConfigParser.parse(toml)) { error in
+            let parseError = error as? ConfigParseError
+            XCTAssertTrue(parseError?.message.contains("group.ai.symbol") == true)
+            XCTAssertTrue(parseError?.message.contains("non-empty") == true)
+        }
+    }
+
+    func testGroupRejectsSymbolAndIconTogether() {
+        let toml = members("""
+        [group.ai]
+        title = "AI"
+        icon = "/path/to/icon.svg"
         symbol = "brain"
         members = ["claude"]
         """)
@@ -61,7 +94,8 @@ final class GroupConfigTests: XCTestCase {
         XCTAssertThrowsError(try ConfigParser.parse(toml)) { error in
             let parseError = error as? ConfigParseError
             XCTAssertTrue(parseError?.message.contains("group.ai.symbol") == true)
-            XCTAssertTrue(parseError?.message.contains("#14") == true)
+            XCTAssertTrue(parseError?.message.contains("cannot be combined") == true)
+            XCTAssertTrue(parseError?.message.contains("icon") == true)
         }
     }
 
