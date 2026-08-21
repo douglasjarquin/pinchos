@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!--
+	Pinchos is not App Sandboxed: it runs arbitrary user-configured shell
+	commands (see pinchos.toml `run`), which the App Sandbox is fundamentally
+	incompatible with. Hardened Runtime (enabled via `codesign --options
+	runtime`, not an entitlement) is what notarization actually requires, and
+	no entitlement below opts out of any Hardened Runtime protection - this
+	file intentionally grants nothing beyond the process's normal, unsandboxed
+	capabilities.
+	-->
+</dict>
+</plist>
