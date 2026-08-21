@@ -26,10 +26,17 @@ protocol ManagedItemLifecycle: AnyObject {
 
 @MainActor
 protocol ManagedItemFactory: AnyObject {
+    /// `isTopLevel` is `false` exactly when `name` is a member of some
+    /// group (see `PinchosConfig.hiddenMemberNames`): the created instance
+    /// then gets no real backing `NSStatusItem` at all, since it must never
+    /// occupy its own menu-bar slot alongside the group(s) that reference
+    /// it. It still runs its schedule and is reachable by name from a
+    /// group's menu.
     func make(
         config: ItemConfig,
         menuDelegate: StatusItemMenuDelegate,
-        initiallyVisible: Bool
+        initiallyVisible: Bool,
+        isTopLevel: Bool
     ) -> any ManagedItemLifecycle
 }
 
@@ -44,14 +51,26 @@ private final class DefaultManagedItemFactory: ManagedItemFactory {
     func make(
         config: ItemConfig,
         menuDelegate: StatusItemMenuDelegate,
-        initiallyVisible: Bool
+        initiallyVisible: Bool,
+        isTopLevel: Bool
     ) -> any ManagedItemLifecycle {
-        ManagedItem(
-            config: config,
-            menuDelegate: menuDelegate,
-            initiallyVisible: initiallyVisible,
-            scheduler: scheduler
-        )
+        switch config {
+        case .command:
+            return ManagedItem(
+                config: config,
+                menuDelegate: menuDelegate,
+                initiallyVisible: initiallyVisible,
+                isTopLevel: isTopLevel,
+                scheduler: scheduler
+            )
+        case .group:
+            return ManagedGroupItem(
+                config: config,
+                menuDelegate: menuDelegate,
+                initiallyVisible: initiallyVisible,
+                isTopLevel: isTopLevel
+            )
+        }
     }
 }
 
@@ -209,8 +228,9 @@ final class StatusItemController: StatusItemMenuDelegate {
                 group.addTask { @MainActor in await item.prepareRemoval(deadline: deadline) }
             }
         }
+        let hidden = config.hiddenMemberNames
         let newItems = config.items.map {
-            itemFactory.make(config: $0, menuDelegate: self, initiallyVisible: false)
+            itemFactory.make(config: $0, menuDelegate: self, initiallyVisible: false, isTopLevel: !hidden.contains($0.name))
         }
 
         for item in oldItems {
@@ -229,8 +249,9 @@ final class StatusItemController: StatusItemMenuDelegate {
             return
         }
 
+        let hidden = config.hiddenMemberNames
         let addedItems = diff.added.map {
-            itemFactory.make(config: $0, menuDelegate: self, initiallyVisible: false)
+            itemFactory.make(config: $0, menuDelegate: self, initiallyVisible: false, isTopLevel: !hidden.contains($0.name))
         }
 
         // Quiescing and cancellation for every changed and removed item is
@@ -357,49 +378,7 @@ final class StatusItemController: StatusItemMenuDelegate {
     func makeLifecycleMenu(forManagedItem item: (any ManagedItemLifecycle)?) async -> NSMenu {
         let menu = NSMenu()
         if let item {
-            var hasConfiguredRefresh = false
-            for (index, action) in item.config.actions.enumerated() {
-                let menuItem = NSMenuItem(title: action.title, action: #selector(itemAction(_:)), keyEquivalent: "")
-                menuItem.target = self
-                menuItem.representedObject = ItemActionTarget(item: item, index: index)
-                menuItem.isEnabled = !item.config.disabled
-                menu.addItem(menuItem)
-                if case .refresh = action.kind {
-                    hasConfiguredRefresh = true
-                }
-            }
-            if !item.config.actions.isEmpty {
-                menu.addItem(NSMenuItem.separator())
-            }
-            if !hasConfiguredRefresh {
-                let refresh = NSMenuItem(title: "Refresh Now", action: #selector(refreshAction(_:)), keyEquivalent: "")
-                refresh.target = self
-                refresh.representedObject = RefreshActionTarget(item: item)
-                refresh.isEnabled = !item.config.disabled
-                menu.addItem(refresh)
-                menu.addItem(NSMenuItem.separator())
-            }
-            let runtime = await item.runtimeSnapshot()
-            addRuntimeState(from: runtime, to: menu)
-            menu.addItem(NSMenuItem.separator())
-            addDiagnostics(from: runtime.runnerSnapshot, to: menu)
-            if let clickSnapshot = await item.clickSnapshot() {
-                menu.addItem(NSMenuItem.separator())
-                addClickDiagnostics(clickSnapshot, to: menu)
-            }
-            var actionSnapshots: [(index: Int, snapshot: CommandRunnerSnapshot?)] = []
-            for index in item.config.actions.indices {
-                actionSnapshots.append((index: index, snapshot: await item.actionSnapshot(at: index)))
-            }
-            if actionSnapshots.contains(where: { $0.snapshot != nil }) {
-                menu.addItem(NSMenuItem.separator())
-                addActionDiagnostics(actions: item.config.actions, snapshots: actionSnapshots, to: menu)
-            }
-            if item.config.disabled {
-                menu.addItem(NSMenuItem.separator())
-                menu.addItem(disabledItem(title: "Disabled: yes"))
-            }
-            menu.addItem(NSMenuItem.separator())
+            await addMenuContent(for: item, to: menu)
         }
         await addSchedulerDiagnostics(to: menu)
         let openConfig = NSMenuItem(title: "Open Config", action: #selector(openConfigAction), keyEquivalent: "")
@@ -412,6 +391,122 @@ final class StatusItemController: StatusItemMenuDelegate {
         quit.target = self
         menu.addItem(quit)
         return menu
+    }
+
+    /// Dispatches on `item.config`'s kind so a command item's own status-item
+    /// menu and a group's per-member submenu (see `addGroupContent`) share
+    /// exactly one implementation of "what a command item's menu contains" --
+    /// nesting falls out for free, since a group member that is itself a
+    /// group recurses back into `addGroupContent`.
+    private func addMenuContent(for item: any ManagedItemLifecycle, to menu: NSMenu) async {
+        switch item.config {
+        case .command(let commandConfig):
+            await addCommandContent(item: item, commandConfig: commandConfig, to: menu)
+        case .group(let group):
+            await addGroupContent(group, to: menu)
+        }
+    }
+
+    private func addCommandContent(
+        item: any ManagedItemLifecycle,
+        commandConfig: CommandItemConfig,
+        to menu: NSMenu
+    ) async {
+        var hasConfiguredRefresh = false
+        for (index, action) in commandConfig.actions.enumerated() {
+            let menuItem = NSMenuItem(title: action.title, action: #selector(itemAction(_:)), keyEquivalent: "")
+            menuItem.target = self
+            menuItem.representedObject = ItemActionTarget(item: item, index: index)
+            menuItem.isEnabled = !commandConfig.disabled
+            menu.addItem(menuItem)
+            if case .refresh = action.kind {
+                hasConfiguredRefresh = true
+            }
+        }
+        if !commandConfig.actions.isEmpty {
+            menu.addItem(NSMenuItem.separator())
+        }
+        if !hasConfiguredRefresh {
+            let refresh = NSMenuItem(title: "Refresh Now", action: #selector(refreshAction(_:)), keyEquivalent: "")
+            refresh.target = self
+            refresh.representedObject = RefreshActionTarget(item: item)
+            refresh.isEnabled = !commandConfig.disabled
+            menu.addItem(refresh)
+            menu.addItem(NSMenuItem.separator())
+        }
+        let runtime = await item.runtimeSnapshot()
+        addRuntimeState(from: runtime, to: menu)
+        menu.addItem(NSMenuItem.separator())
+        addDiagnostics(from: runtime.runnerSnapshot, to: menu)
+        if let clickSnapshot = await item.clickSnapshot() {
+            menu.addItem(NSMenuItem.separator())
+            addClickDiagnostics(clickSnapshot, to: menu)
+        }
+        var actionSnapshots: [(index: Int, snapshot: CommandRunnerSnapshot?)] = []
+        for index in commandConfig.actions.indices {
+            actionSnapshots.append((index: index, snapshot: await item.actionSnapshot(at: index)))
+        }
+        if actionSnapshots.contains(where: { $0.snapshot != nil }) {
+            menu.addItem(NSMenuItem.separator())
+            addActionDiagnostics(actions: commandConfig.actions, snapshots: actionSnapshots, to: menu)
+        }
+        if commandConfig.disabled {
+            menu.addItem(NSMenuItem.separator())
+            menu.addItem(disabledItem(title: "Disabled: yes"))
+        }
+        menu.addItem(NSMenuItem.separator())
+    }
+
+    /// A group's own status item shows only the static, config-declared
+    /// `title` (see `ManagedGroupItem`) -- this menu is where its live
+    /// content lives instead. The header line is the one place the compact
+    /// join of member values (the "group summary title" from the grouped
+    /// status items design) appears; it is recomputed fresh every time this
+    /// menu is opened, so it never needs its own change-notification path
+    /// from a member back to its group(s). Each member then gets one row
+    /// with a submenu holding exactly what that member's own status-item
+    /// menu would show (actions, current value/state, diagnostics, manual
+    /// refresh) -- nothing about a member's presentation changes because it
+    /// is being shown inside a group instead of at the top level.
+    private func addGroupContent(_ group: GroupItemConfig, to menu: NSMenu) async {
+        var memberEntries: [(name: String, item: any ManagedItemLifecycle, valuePreview: String)] = []
+        for memberName in group.members {
+            guard let member = items[memberName] else { continue }
+            let preview: String
+            switch member.config {
+            case .command:
+                let snapshot = await member.runtimeSnapshot()
+                let value = snapshot.fullOutput.map { lastTrimmedLine(of: $0) } ?? ""
+                preview = value.isEmpty ? "\u{2013}" : value
+            case .group(let nested):
+                preview = nested.title
+            }
+            memberEntries.append((memberName, member, preview))
+        }
+
+        menu.addItem(disabledItem(title: groupSummaryTitle(group, entries: memberEntries)))
+        menu.addItem(NSMenuItem.separator())
+        for entry in memberEntries {
+            let submenu = NSMenu()
+            await addMenuContent(for: entry.item, to: submenu)
+            let memberItem = NSMenuItem(
+                title: "\(entry.name): \(truncateTitle(entry.valuePreview, maxLength: 40))",
+                action: nil,
+                keyEquivalent: ""
+            )
+            memberItem.submenu = submenu
+            menu.addItem(memberItem)
+        }
+        menu.addItem(NSMenuItem.separator())
+    }
+
+    private func groupSummaryTitle(
+        _ group: GroupItemConfig,
+        entries: [(name: String, item: any ManagedItemLifecycle, valuePreview: String)]
+    ) -> String {
+        guard !entries.isEmpty else { return group.title }
+        let joined = entries.map { truncateTitle($0.valuePreview, maxLength: 20) }.joined(separator: " \u{b7} ")
+        return "\(group.title): \(truncateTitle(joined, maxLength: 80))"
     }
 
     /// A light-touch, always-present line surfacing the one application-scoped

@@ -25,7 +25,14 @@ public struct ItemAction: Equatable, Sendable {
     }
 }
 
-public struct ItemConfig: Equatable, Sendable {
+/// A single `[item.<name>]` command module: everything needed to run a
+/// shell command on a schedule (or manually) and project its result onto a
+/// menu-bar title, tooltip, and diagnostics menu. This is the only item
+/// kind in v1; `GroupItemConfig` (see below) is the second kind added by
+/// the grouped-status-items feature, and `ItemConfig` is the sum type that
+/// lets `PinchosConfig.items` hold either without accumulating one kind's
+/// fields onto the other's model.
+public struct CommandItemConfig: Equatable, Sendable {
     public static let defaultShell = ["/bin/sh", "-c"]
     public static let defaultTimeout: TimeInterval = 15
     public static let defaultMaxOutputBytes = 64 * 1024
@@ -57,9 +64,9 @@ public struct ItemConfig: Equatable, Sendable {
         name: String,
         run: String,
         interval: RefreshInterval,
-        timeout: TimeInterval = ItemConfig.defaultTimeout,
-        maxOutputBytes: Int = ItemConfig.defaultMaxOutputBytes,
-        shell: [String] = ItemConfig.defaultShell,
+        timeout: TimeInterval = CommandItemConfig.defaultTimeout,
+        maxOutputBytes: Int = CommandItemConfig.defaultMaxOutputBytes,
+        shell: [String] = CommandItemConfig.defaultShell,
         workingDirectory: String? = nil,
         environment: [String: String] = [:],
         format: String? = nil,
@@ -102,6 +109,145 @@ public struct ItemConfig: Equatable, Sendable {
     }
 }
 
+/// A `[group.<name>]` module: one native status item that stands in for a
+/// list of member items (referenced by stable name, see README "Groups").
+/// `symbol` (SF Symbol) from the original proposal is deliberately not a
+/// field here -- SF Symbol catalog loading is out of scope until #14 lands;
+/// `icon` reuses the same file-path icon support every `CommandItemConfig`
+/// already has instead of inventing a second icon mechanism.
+public struct GroupItemConfig: Equatable, Sendable {
+    public let name: String
+    public let title: String
+    public let members: [String]
+    public let icon: String?
+
+    public init(name: String, title: String, members: [String], icon: String? = nil) {
+        self.name = name
+        self.title = title
+        self.members = members
+        self.icon = icon
+    }
+}
+
+public enum ItemKind: Equatable, Sendable {
+    case command
+    case group
+}
+
+/// The typed, extensible sum of every configured module kind. Adding a
+/// third kind in the future means adding a case here, not widening
+/// `CommandItemConfig` with fields that only make sense for the new kind.
+public enum ItemConfig: Equatable, Sendable {
+    case command(CommandItemConfig)
+    case group(GroupItemConfig)
+
+    public var name: String {
+        switch self {
+        case .command(let config): return config.name
+        case .group(let config): return config.name
+        }
+    }
+
+    public var kind: ItemKind {
+        switch self {
+        case .command: return .command
+        case .group: return .group
+        }
+    }
+
+    /// `nil` when `self` is `.group`; use this (rather than `command`) at
+    /// any call site that already handles a group gracefully, e.g. by
+    /// skipping it.
+    public var commandConfig: CommandItemConfig? {
+        guard case .command(let config) = self else { return nil }
+        return config
+    }
+
+    /// `nil` when `self` is `.command`.
+    public var groupConfig: GroupItemConfig? {
+        guard case .group(let config) = self else { return nil }
+        return config
+    }
+
+    /// Non-optional unwrap for call sites that have already established
+    /// (by construction or by switching on `kind`) that this is a command
+    /// item. Traps on a group, exactly like force-unwrapping an `Optional`
+    /// known to be non-nil -- this is not a place that should ever
+    /// fabricate a placeholder `CommandItemConfig` for a group.
+    public var command: CommandItemConfig {
+        guard case .command(let config) = self else {
+            preconditionFailure("ItemConfig.command accessed on a group item ('\(name)')")
+        }
+        return config
+    }
+
+    /// Non-optional unwrap symmetric with `command`, for call sites that have
+    /// already established this is a group item. Traps on a command item.
+    public var group: GroupItemConfig {
+        guard case .group(let config) = self else {
+            preconditionFailure("ItemConfig.group accessed on a command item ('\(name)')")
+        }
+        return config
+    }
+}
+
+extension ItemConfig {
+    /// Convenience initializer mirroring `CommandItemConfig.init` so every
+    /// existing "one flat command item" call site keeps working unchanged
+    /// against the now-typed `ItemConfig` sum type.
+    public init(
+        name: String,
+        run: String,
+        interval: RefreshInterval,
+        timeout: TimeInterval = CommandItemConfig.defaultTimeout,
+        maxOutputBytes: Int = CommandItemConfig.defaultMaxOutputBytes,
+        shell: [String] = CommandItemConfig.defaultShell,
+        workingDirectory: String? = nil,
+        environment: [String: String] = [:],
+        format: String? = nil,
+        click: String? = nil,
+        refreshOnClick: Bool = false,
+        errorText: String = "\u{2013}",
+        onError: ItemErrorPolicy = .replace,
+        staleAfter: TimeInterval? = nil,
+        tooltip: String? = nil,
+        actions: [ItemAction] = [],
+        icon: String? = nil,
+        maxLength: Int? = nil,
+        hideWhenEmpty: Bool = false,
+        hideOnError: Bool = false,
+        iconOnly: Bool = false,
+        disabled: Bool = false
+    ) {
+        self = .command(
+            CommandItemConfig(
+                name: name,
+                run: run,
+                interval: interval,
+                timeout: timeout,
+                maxOutputBytes: maxOutputBytes,
+                shell: shell,
+                workingDirectory: workingDirectory,
+                environment: environment,
+                format: format,
+                click: click,
+                refreshOnClick: refreshOnClick,
+                errorText: errorText,
+                onError: onError,
+                staleAfter: staleAfter,
+                tooltip: tooltip,
+                actions: actions,
+                icon: icon,
+                maxLength: maxLength,
+                hideWhenEmpty: hideWhenEmpty,
+                hideOnError: hideOnError,
+                iconOnly: iconOnly,
+                disabled: disabled
+            )
+        )
+    }
+}
+
 /// Optional, validated override of the application-wide `CommandScheduler`
 /// policy. `maxActiveSessions` is `nil` when the user did not configure
 /// `[scheduler]` at all, in which case `CommandScheduler.defaultMaxActiveSessions`
@@ -121,6 +267,26 @@ public struct PinchosConfig: Equatable, Sendable {
     public init(items: [ItemConfig], scheduler: SchedulerConfig = SchedulerConfig()) {
         self.items = items
         self.scheduler = scheduler
+    }
+
+    /// Every name that appears in some group's `members` list, at any
+    /// nesting depth. Policy: a name used as a group member never gets its
+    /// own top-level `NSStatusItem` -- it still runs on its own schedule
+    /// and appears (with its live value/state and actions) only inside the
+    /// menu of the group(s) that reference it. See README "Groups".
+    public var hiddenMemberNames: Set<String> {
+        Set(items.flatMap { item -> [String] in
+            guard case .group(let group) = item else { return [] }
+            return group.members
+        })
+    }
+
+    /// `items` filtered to the entries that get their own native status
+    /// item: everything except names hidden by `hiddenMemberNames`.
+    /// Declaration order is preserved.
+    public var topLevelItems: [ItemConfig] {
+        let hidden = hiddenMemberNames
+        return items.filter { !hidden.contains($0.name) }
     }
 }
 

@@ -243,8 +243,11 @@ struct PinchosCLI {
         }
 
         let config = try loadConfig()
-        guard let item = config.items.first(where: { $0.name == name }) else {
+        guard let matchedItem = config.items.first(where: { $0.name == name }) else {
             throw CLIError.config("item '\(name)' is not configured in \(configPath)")
+        }
+        guard case .command(let item) = matchedItem else {
+            throw CLIError.config("item '\(name)' is a group and has no command to run")
         }
 
         guard shutdownCoordinator?.isShutdownRequested != true else {
@@ -481,57 +484,62 @@ struct PinchosCLI {
                 reportFailure("config", "contains no items")
                 problemCount += 1
             }
-            for item in config.items {
-                if fileManager.isExecutableFile(atPath: item.shell[0]) {
-                    reportSuccess("item.\(item.name).shell", item.shell[0])
-                } else {
-                    reportFailure("item.\(item.name).shell", "executable cannot be resolved: \(item.shell[0])")
-                    problemCount += 1
-                }
-
-                if let workingDirectory = item.workingDirectory {
-                    var itemIsDirectory = ObjCBool(false)
-                    if fileManager.fileExists(atPath: workingDirectory, isDirectory: &itemIsDirectory), itemIsDirectory.boolValue {
-                        reportSuccess("item.\(item.name).working_directory", workingDirectory)
+            for entry in config.items {
+                switch entry {
+                case .group(let group):
+                    reportSuccess("group.\(group.name).members", "\(group.members.count) member\(group.members.count == 1 ? "" : "s")")
+                case .command(let item):
+                    if fileManager.isExecutableFile(atPath: item.shell[0]) {
+                        reportSuccess("item.\(item.name).shell", item.shell[0])
                     } else {
-                        reportFailure("item.\(item.name).working_directory", "directory cannot be resolved: \(workingDirectory)")
+                        reportFailure("item.\(item.name).shell", "executable cannot be resolved: \(item.shell[0])")
                         problemCount += 1
                     }
-                } else {
-                    reportSuccess("item.\(item.name).working_directory", "inherits Pinchos working directory")
-                }
 
-                if let icon = item.icon {
-                    if fileManager.isReadableFile(atPath: icon) {
-                        reportSuccess("item.\(item.name).icon", icon)
+                    if let workingDirectory = item.workingDirectory {
+                        var itemIsDirectory = ObjCBool(false)
+                        if fileManager.fileExists(atPath: workingDirectory, isDirectory: &itemIsDirectory), itemIsDirectory.boolValue {
+                            reportSuccess("item.\(item.name).working_directory", workingDirectory)
+                        } else {
+                            reportFailure("item.\(item.name).working_directory", "directory cannot be resolved: \(workingDirectory)")
+                            problemCount += 1
+                        }
                     } else {
-                        reportFailure("item.\(item.name).icon", "file is missing or unreadable: \(icon)")
+                        reportSuccess("item.\(item.name).working_directory", "inherits Pinchos working directory")
+                    }
+
+                    if let icon = item.icon {
+                        if fileManager.isReadableFile(atPath: icon) {
+                            reportSuccess("item.\(item.name).icon", icon)
+                        } else {
+                            reportFailure("item.\(item.name).icon", "file is missing or unreadable: \(icon)")
+                            problemCount += 1
+                        }
+                    } else {
+                        reportSuccess("item.\(item.name).icon", "not configured")
+                    }
+
+                    if item.environment.isEmpty {
+                        reportSuccess("item.\(item.name).env", "inherits process environment")
+                    } else {
+                        reportSuccess("item.\(item.name).env", "\(item.environment.count) configured variable\(item.environment.count == 1 ? "" : "s")")
+                    }
+
+                    if let command = commandName(from: item.run) {
+                        if let executablePath = executablePath(
+                            for: command,
+                            item: item,
+                            processEnvironment: processEnvironment
+                        ) {
+                            reportSuccess("item.\(item.name).run", executablePath)
+                        } else {
+                            reportFailure("item.\(item.name).run", "command '\(command)' is unavailable in the configured shell environment")
+                            problemCount += 1
+                        }
+                    } else {
+                        reportFailure("item.\(item.name).run", "could not identify a single command to check safely")
                         problemCount += 1
                     }
-                } else {
-                    reportSuccess("item.\(item.name).icon", "not configured")
-                }
-
-                if item.environment.isEmpty {
-                    reportSuccess("item.\(item.name).env", "inherits process environment")
-                } else {
-                    reportSuccess("item.\(item.name).env", "\(item.environment.count) configured variable\(item.environment.count == 1 ? "" : "s")")
-                }
-
-                if let command = commandName(from: item.run) {
-                    if let executablePath = executablePath(
-                        for: command,
-                        item: item,
-                        processEnvironment: processEnvironment
-                    ) {
-                        reportSuccess("item.\(item.name).run", executablePath)
-                    } else {
-                        reportFailure("item.\(item.name).run", "command '\(command)' is unavailable in the configured shell environment")
-                        problemCount += 1
-                    }
-                } else {
-                    reportFailure("item.\(item.name).run", "could not identify a single command to check safely")
-                    problemCount += 1
                 }
             }
         }
@@ -571,7 +579,7 @@ struct PinchosCLI {
 
     private func executablePath(
         for command: String,
-        item: ItemConfig,
+        item: CommandItemConfig,
         processEnvironment: [String: String]
     ) -> String? {
         if command.contains("/") {

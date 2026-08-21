@@ -10,7 +10,7 @@ final class ConfigParserTests: XCTestCase {
         """
         let config = try ConfigParser.parse(toml)
         XCTAssertEqual(config.items.count, 1)
-        let item = config.items[0]
+        let item = config.items[0].command
         XCTAssertEqual(item.name, "limits")
         XCTAssertEqual(item.run, "echo 42")
         XCTAssertEqual(item.interval, .scheduled(60))
@@ -49,7 +49,7 @@ final class ConfigParserTests: XCTestCase {
         disabled = true
         """
         let config = try ConfigParser.parse(toml)
-        let item = config.items[0]
+        let item = config.items[0].command
         XCTAssertEqual(item.interval, .scheduled(30))
         XCTAssertEqual(item.timeout, 2)
         XCTAssertEqual(item.maxOutputBytes, 64 * 1024)
@@ -542,8 +542,9 @@ final class ConfigParserTests: XCTestCase {
     }
 
     func testSupportedSchemaEnumeratesEveryCurrentItemAndActionKey() {
-        XCTAssertEqual(ConfigParser.supportedRootKeys, ["item", "scheduler"])
+        XCTAssertEqual(ConfigParser.supportedRootKeys, ["item", "scheduler", "group"])
         XCTAssertEqual(ConfigParser.supportedSchedulerKeys, ["max_active_sessions"])
+        XCTAssertEqual(ConfigParser.supportedGroupKeys, ["title", "members", "icon"])
         XCTAssertEqual(ConfigParser.supportedItemKeys, [
             "type",
             "run",
@@ -581,7 +582,7 @@ final class ConfigParserTests: XCTestCase {
         tooltip = "Updated {updated_at}"
         """
 
-        let item = try ConfigParser.parse(toml).items[0]
+        let item = try ConfigParser.parse(toml).items[0].command
 
         XCTAssertEqual(item.onError, .keepLast)
         XCTAssertEqual(item.staleAfter, 900)
@@ -634,7 +635,7 @@ final class ConfigParserTests: XCTestCase {
         run = "echo 42"
         """
         let config = try ConfigParser.parse(toml)
-        XCTAssertNil(config.items[0].icon)
+        XCTAssertNil(config.items[0].command.icon)
     }
 
     // TOMLKit's underlying store is alphabetically ordered, not insertion-ordered,
@@ -668,7 +669,7 @@ final class ConfigParserTests: XCTestCase {
         let config = try ConfigParser.parse(toml)
 
         XCTAssertEqual(config.items.map(\.name), ["clock"])
-        XCTAssertEqual(config.items[0].run, "date '+%H:%M'")
+        XCTAssertEqual(config.items[0].command.run, "date '+%H:%M'")
     }
 
     func testDottedKeyItemDeclarationReportsSourceLineForInvalidField() {
@@ -824,7 +825,7 @@ final class ConfigParserTests: XCTestCase {
 
         XCTAssertEqual(first.items.map(\.name), ["clock", "battery"])
         XCTAssertEqual(first.items.map(\.name), second.items.map(\.name))
-        XCTAssertEqual(first.items.map(\.run), second.items.map(\.run))
+        XCTAssertEqual(first.items.map(\.command.run), second.items.map(\.command.run))
     }
 
     func testEmptyConfigProducesNoItems() throws {
@@ -957,7 +958,7 @@ final class ConfigParserTests: XCTestCase {
         max_output = "\(maxAllowedOutputBytes / (1024 * 1024))MiB"
         """
         let config = try ConfigParser.parse(toml)
-        XCTAssertEqual(config.items[0].maxOutputBytes, maxAllowedOutputBytes)
+        XCTAssertEqual(config.items[0].command.maxOutputBytes, maxAllowedOutputBytes)
     }
 
     func testMalformedTomlSyntaxThrowsWithLineInfo() {
@@ -984,7 +985,7 @@ final class ConfigParserTests: XCTestCase {
         let codex = try XCTUnwrap(config.items.first(where: { $0.name == "codex" }))
 
         for item in [claude, codex] {
-            let click = try XCTUnwrap(item.click, "\(item.name) is missing a click line")
+            let click = try XCTUnwrap(item.command.click, "\(item.name) is missing a click line")
             XCTAssertTrue(click.hasPrefix("open https://"), "\(item.name) click line should open a usage page URL, got: \(click)")
         }
     }
@@ -1000,7 +1001,7 @@ final class ConfigParserTests: XCTestCase {
         let config = try ConfigParser.parse(toml)
 
         XCTAssertEqual(
-            config.items[0].icon,
+            config.items[0].command.icon,
             ("~/Pictures/pinchos.svg" as NSString).expandingTildeInPath
         )
     }
@@ -1088,7 +1089,7 @@ final class ConfigParserTests: XCTestCase {
         """
 
         let config = try ConfigParser.parse(toml, relativeTo: configDirectory.appendingPathComponent("pinchos.toml"))
-        let item = config.items[0]
+        let item = config.items[0].command
 
         XCTAssertEqual(item.shell, ["/bin/zsh", "-lc"])
         XCTAssertEqual(item.workingDirectory, workingDirectory.path)
@@ -1196,8 +1197,8 @@ final class ConfigParserTests: XCTestCase {
         let config = try ConfigParser.parse(toml)
 
         XCTAssertEqual(config.items.count, 1)
-        XCTAssertEqual(config.items[0].interval, .manual)
-        XCTAssertTrue(config.items[0].refreshOnClick)
+        XCTAssertEqual(config.items[0].command.interval, .manual)
+        XCTAssertTrue(config.items[0].command.refreshOnClick)
     }
 
     func testInvalidRefreshOnClickThrowsWithItemContext() {
@@ -1230,7 +1231,7 @@ final class ConfigParserTests: XCTestCase {
         refresh = true
         """
 
-        let item = try XCTUnwrap(ConfigParser.parse(toml).items.first)
+        let item = try XCTUnwrap(ConfigParser.parse(toml).items.first).command
 
         XCTAssertEqual(item.actions.map(\.title), ["Open usage", "Refresh now"])
         XCTAssertEqual(item.actions.map(\.kind), [
@@ -1338,7 +1339,7 @@ final class ConfigParserTests: XCTestCase {
         run = "echo 42"
         max_length = 12
         """
-        let item = try ConfigParser.parse(toml).items[0]
+        let item = try ConfigParser.parse(toml).items[0].command
         XCTAssertEqual(item.maxLength, 12)
 
         let withoutMaxLength = """
@@ -1346,7 +1347,7 @@ final class ConfigParserTests: XCTestCase {
         type = "command"
         run = "echo 42"
         """
-        XCTAssertNil(try ConfigParser.parse(withoutMaxLength).items[0].maxLength)
+        XCTAssertNil(try ConfigParser.parse(withoutMaxLength).items[0].command.maxLength)
     }
 
     func testVisibilityAndDisabledBooleansDefaultToFalse() throws {
@@ -1355,7 +1356,7 @@ final class ConfigParserTests: XCTestCase {
         type = "command"
         run = "echo 42"
         """
-        let item = try ConfigParser.parse(toml).items[0]
+        let item = try ConfigParser.parse(toml).items[0].command
         XCTAssertFalse(item.hideWhenEmpty)
         XCTAssertFalse(item.hideOnError)
         XCTAssertFalse(item.iconOnly)
@@ -1372,7 +1373,7 @@ final class ConfigParserTests: XCTestCase {
         icon_only = true
         disabled = true
         """
-        let item = try ConfigParser.parse(toml).items[0]
+        let item = try ConfigParser.parse(toml).items[0].command
         XCTAssertTrue(item.hideWhenEmpty)
         XCTAssertTrue(item.hideOnError)
         XCTAssertTrue(item.iconOnly)

@@ -19,12 +19,14 @@ final class HeadlessManagedItemFactory: ManagedItemFactory {
     func make(
         config: ItemConfig,
         menuDelegate: StatusItemMenuDelegate,
-        initiallyVisible: Bool
+        initiallyVisible: Bool,
+        isTopLevel: Bool
     ) -> any ManagedItemLifecycle {
         ManagedItem(
             config: config,
             menuDelegate: menuDelegate,
             initiallyVisible: initiallyVisible,
+            isTopLevel: isTopLevel,
             scheduler: scheduler,
             statusItemFactory: { nil }
         )

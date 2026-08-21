@@ -1062,7 +1062,7 @@ public actor CommandRunner {
         command: String,
         timeout: TimeInterval,
         maxOutputBytes: Int,
-        shell: [String] = ItemConfig.defaultShell,
+        shell: [String] = CommandItemConfig.defaultShell,
         workingDirectory: String? = nil,
         environment: [String: String] = [:]
     ) {
@@ -1086,7 +1086,7 @@ public actor CommandRunner {
         command: String,
         timeout: TimeInterval,
         maxOutputBytes: Int,
-        shell: [String] = ItemConfig.defaultShell,
+        shell: [String] = CommandItemConfig.defaultShell,
         workingDirectory: String? = nil,
         environment: [String: String] = [:],
         outputBudget: OutputMemoryBudget
