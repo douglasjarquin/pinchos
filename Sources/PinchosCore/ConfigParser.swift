@@ -28,8 +28,19 @@ public enum ConfigParser {
     ]
 
     static let supportedActionKeys: Set<String> = ["title", "run", "refresh"]
-    static let supportedRootKeys: Set<String> = ["item", "scheduler"]
+    static let supportedRootKeys: Set<String> = ["item", "scheduler", "group"]
     static let supportedSchedulerKeys: Set<String> = ["max_active_sessions"]
+    static let supportedGroupKeys: Set<String> = ["title", "members", "icon"]
+
+    /// Which top-level namespace a scanned declaration name belongs to.
+    /// Item and group names share one flat lookup space for membership
+    /// references, but come from two distinct TOML tables (`[item.*]` vs
+    /// `[group.*]`), so the scanner has to remember which table to read
+    /// each discovered name back out of.
+    private enum ItemNamespace: Equatable {
+        case item
+        case group
+    }
 
     private enum SourceLineKey: Hashable {
         case rootField(String)
@@ -42,7 +53,10 @@ public enum ConfigParser {
     private typealias SourceLineMap = [SourceLineKey: Int]
 
     public static func parse(_ text: String, relativeTo configURL: URL? = nil) throws -> PinchosConfig {
-        let (order, sourceLines) = try scanSource(text)
+        let scan = try scanSource(text)
+        let order = scan.order
+        let sourceLines = scan.lines
+        let namespace = scan.namespace
 
         let table: TOMLTable
         do {
@@ -60,46 +74,129 @@ public enum ConfigParser {
 
         let scheduler = try parseScheduler(table: table, sourceLines: sourceLines)
 
-        guard let itemValue = table["item"] else {
-            return PinchosConfig(items: [], scheduler: scheduler)
-        }
-        guard let itemSection = itemValue.table else {
-            throw typeError(
-                path: "item",
-                expected: "table",
-                value: itemValue,
-                line: sourceLines[.rootField("item")]
-            )
-        }
+        let itemNames = order.filter { namespace[$0] == .item }
+        let groupNames = order.filter { namespace[$0] == .group }
 
-        // The parsed TOML tree is authoritative for item existence: `order` (from the source
-        // scan) and `itemSection.keys` (from TOMLKit) must name exactly the same items, or a
-        // declaration form went unrecognized and would otherwise be silently dropped.
-        try crossCheckDiscoveredItems(order: order, itemSection: itemSection, sourceLines: sourceLines)
+        let itemSection = try namedSection(
+            "item",
+            table: table,
+            discoveredNames: itemNames,
+            sourceLines: sourceLines
+        )
+        let groupSection = try namedSection(
+            "group",
+            table: table,
+            discoveredNames: groupNames,
+            sourceLines: sourceLines
+        )
 
         let items = try order.map { name -> ItemConfig in
-            guard let itemValue = itemSection[name] else {
+            switch namespace[name] {
+            case .item:
+                let itemTable = try requiredTable(
+                    name: name,
+                    section: itemSection,
+                    sectionKey: "item",
+                    sourceLines: sourceLines
+                )
+                return .command(
+                    try parseItem(
+                        name: name,
+                        table: itemTable,
+                        relativeTo: configURL,
+                        sourceLines: sourceLines
+                    )
+                )
+            case .group:
+                let groupTable = try requiredTable(
+                    name: name,
+                    section: groupSection,
+                    sectionKey: "group",
+                    sourceLines: sourceLines
+                )
+                return .group(
+                    try parseGroup(
+                        name: name,
+                        table: groupTable,
+                        relativeTo: configURL,
+                        sourceLines: sourceLines
+                    )
+                )
+            case nil:
                 throw ConfigParseError(
-                    message: "item.\(name): expected item was not found in the parsed configuration",
-                    line: sourceLines[.item(name)] ?? sourceLines[.rootField("item")]
+                    message: "\(name): expected item was not found in the parsed configuration",
+                    line: sourceLines[.item(name)]
                 )
             }
-            guard let itemTable = itemValue.table else {
-                throw typeError(
-                    path: "item.\(name)",
-                    expected: "table",
-                    value: itemValue,
-                    line: sourceLines[.item(name)] ?? sourceLines[.rootField("item")]
-                )
+        }
+
+        try validateGroupMembership(items, sourceLines: sourceLines)
+
+        return PinchosConfig(items: items, scheduler: scheduler)
+    }
+
+    /// Fetches the `[<sectionKey>.*]` table (`item` or `group`), when the
+    /// scanner discovered at least one declaration in that namespace, and
+    /// cross-checks the scanned name set against TOMLKit's parsed keys --
+    /// mirroring `crossCheckDiscoveredItems`'s "the parsed tree is
+    /// authoritative for existence" contract for both namespaces.
+    private static func namedSection(
+        _ sectionKey: String,
+        table: TOMLTable,
+        discoveredNames: [String],
+        sourceLines: SourceLineMap
+    ) throws -> TOMLTable? {
+        guard let sectionValue = table[sectionKey] else {
+            if discoveredNames.isEmpty {
+                return nil
             }
-            return try parseItem(
-                name: name,
-                table: itemTable,
-                relativeTo: configURL,
-                sourceLines: sourceLines
+            // The scanner found declarations but TOMLKit has no matching
+            // root key at all; this should be unreachable given the
+            // scanner and TOMLKit agree on syntax, but fail loudly rather
+            // than silently dropping items if it ever happens.
+            throw ConfigParseError(
+                message: "\(sectionKey): expected declarations were not found in the parsed configuration",
+                line: sourceLines[.rootField(sectionKey)]
             )
         }
-        return PinchosConfig(items: items, scheduler: scheduler)
+        guard let sectionTable = sectionValue.table else {
+            throw typeError(
+                path: sectionKey,
+                expected: "table",
+                value: sectionValue,
+                line: sourceLines[.rootField(sectionKey)]
+            )
+        }
+        try crossCheckDiscoveredNames(
+            sectionKey: sectionKey,
+            discoveredNames: discoveredNames,
+            section: sectionTable,
+            sourceLines: sourceLines
+        )
+        return sectionTable
+    }
+
+    private static func requiredTable(
+        name: String,
+        section: TOMLTable?,
+        sectionKey: String,
+        sourceLines: SourceLineMap
+    ) throws -> TOMLTable {
+        guard let section, let value = section[name] else {
+            throw ConfigParseError(
+                message: "\(sectionKey).\(name): expected item was not found in the parsed configuration",
+                line: sourceLines[.item(name)] ?? sourceLines[.rootField(sectionKey)]
+            )
+        }
+        guard let itemTable = value.table else {
+            throw typeError(
+                path: "\(sectionKey).\(name)",
+                expected: "table",
+                value: value,
+                line: sourceLines[.item(name)] ?? sourceLines[.rootField(sectionKey)]
+            )
+        }
+        return itemTable
     }
 
     /// Parses the optional `[scheduler]` table, the sole advanced-user
@@ -154,46 +251,56 @@ public enum ConfigParser {
         return SchedulerConfig(maxActiveSessions: maxActiveSessions)
     }
 
-    private static func crossCheckDiscoveredItems(
-        order: [String],
-        itemSection: TOMLTable,
+    private static func crossCheckDiscoveredNames(
+        sectionKey: String,
+        discoveredNames: [String],
+        section: TOMLTable,
         sourceLines: SourceLineMap
     ) throws {
-        let parsedNames = Set(itemSection.keys)
-        let orderedNames = Set(order)
+        let parsedNames = Set(section.keys)
+        let orderedNames = Set(discoveredNames)
         guard parsedNames != orderedNames else { return }
 
         if let missing = parsedNames.subtracting(orderedNames).sorted().first {
             throw ConfigParseError(
-                message: "item.\(missing): item declaration form is not supported; "
-                    + "use [item.\(missing)] tables or item.\(missing).<key> dotted keys",
-                line: sourceLines[.rootField("item")]
+                message: "\(sectionKey).\(missing): declaration form is not supported; "
+                    + "use [\(sectionKey).\(missing)] tables or \(sectionKey).\(missing).<key> dotted keys",
+                line: sourceLines[.rootField(sectionKey)]
             )
         }
         if let extra = orderedNames.subtracting(parsedNames).sorted().first {
             throw ConfigParseError(
-                message: "item.\(extra): expected item was not found in the parsed configuration",
+                message: "\(sectionKey).\(extra): expected item was not found in the parsed configuration",
                 line: sourceLines[.item(extra)]
             )
         }
     }
 
-    /// Scans the raw source text for two things in a single left-to-right pass:
-    /// - `order`: the left-to-right declaration order of top-level items, used for deterministic
-    ///   native menu-bar placement (TOMLKit's `TOMLTable` iterates keys alphabetically, not in
-    ///   file order, and its parsed tree carries no distinguishable source-order metadata).
-    /// - `lines`: a map from semantic locations (item fields, actions, root keys) to the 1-based
-    ///   source line that declared them, used for diagnostics.
+    /// Scans the raw source text for three things in a single left-to-right pass:
+    /// - `order`: the left-to-right declaration order of top-level entries (both `[item.*]` and
+    ///   `[group.*]`), used for deterministic native menu-bar placement (TOMLKit's `TOMLTable`
+    ///   iterates keys alphabetically, not in file order, and its parsed tree carries no
+    ///   distinguishable source-order metadata).
+    /// - `namespace`: which table (`item` or `group`) each discovered name belongs to, so the
+    ///   caller knows where to look its value up in the TOMLKit-parsed tree.
+    /// - `lines`: a map from semantic locations (item/group fields, actions, root keys) to the
+    ///   1-based source line that declared them, used for diagnostics.
     ///
     /// Supported item-declaring forms are standard `[item.<name>]` / `[[item.<name>.<section>]]`
-    /// table headers and top-level dotted-key assignments (`item.<name>.<key> = value`). Inline
-    /// table declarations of an item or of the whole `item` namespace (`item = { ... }` or
-    /// `item.<name> = { ... }`) are rejected explicitly here rather than silently producing an
-    /// incomplete item list: TOMLKit can parse them, but this scanner cannot recover their source
-    /// order, and `PinchosConfig.parse` must never drop an item TOMLKit considers valid.
-    private static func scanSource(_ text: String) throws -> (order: [String], lines: SourceLineMap) {
+    /// table headers and top-level dotted-key assignments (`item.<name>.<key> = value`). Groups
+    /// support the same two forms minus array-of-tables (`[group.<name>]` / `group.<name>.<key> =
+    /// value`), since a group has no repeated sub-sections like an item's `action` array. Inline
+    /// table declarations of an item/group or of the whole `item`/`group` namespace (`item = {
+    /// ... }` or `item.<name> = { ... }`) are rejected explicitly here rather than silently
+    /// producing an incomplete list: TOMLKit can parse them, but this scanner cannot recover
+    /// their source order, and `PinchosConfig.parse` must never drop an entry TOMLKit considers
+    /// valid.
+    private static func scanSource(
+        _ text: String
+    ) throws -> (order: [String], namespace: [String: ItemNamespace], lines: SourceLineMap) {
         var lines: SourceLineMap = [:]
         var order: [String] = []
+        var namespace: [String: ItemNamespace] = [:]
         var seenItemNames = Set<String>()
         var currentItem: String?
         var currentSection: String?
@@ -202,7 +309,17 @@ public enum ConfigParser {
         var actionIndices: [String: Int] = [:]
         var currentActionIndex: Int?
 
-        func recordItemName(_ name: String, at lineNumber: Int) {
+        func recordItemName(_ name: String, at lineNumber: Int, namespace entryNamespace: ItemNamespace) throws {
+            if let existing = namespace[name], existing != entryNamespace {
+                let existingKey = existing == .item ? "item" : "group"
+                let newKey = entryNamespace == .item ? "item" : "group"
+                throw ConfigParseError(
+                    message: "\(newKey).\(name): name is already declared as \(existingKey).\(name); "
+                        + "item and group names share one namespace and must be unique",
+                    line: lineNumber
+                )
+            }
+            namespace[name] = entryNamespace
             if !seenItemNames.contains(name) {
                 seenItemNames.insert(name)
                 order.append(name)
@@ -228,7 +345,7 @@ public enum ConfigParser {
                 currentItem = name
                 let section = components.dropFirst(2).joined(separator: ".")
                 currentSection = section
-                recordItemName(name, at: lineNumber)
+                try recordItemName(name, at: lineNumber, namespace: .item)
                 if section == "action" {
                     let index = actionIndices[name, default: 0]
                     actionIndices[name] = index + 1
@@ -250,12 +367,13 @@ public enum ConfigParser {
             }
 
             if let components = headerComponents(in: line), components.count >= 2,
-               components[0] == "item" {
+               components[0] == "item" || components[0] == "group" {
+                let entryNamespace: ItemNamespace = components[0] == "item" ? .item : .group
                 let name = components[1]
                 currentItem = name
                 currentSection = components.count == 2 ? nil : components.dropFirst(2).joined(separator: ".")
                 currentActionIndex = nil
-                recordItemName(name, at: lineNumber)
+                try recordItemName(name, at: lineNumber, namespace: entryNamespace)
                 if let currentSection {
                     lines[.section(item: name, path: currentSection)] = lineNumber
                 }
@@ -289,15 +407,17 @@ public enum ConfigParser {
                     let sourceKey = SourceLineKey.field(item: currentItem, path: path, actionIndex: nil)
                     lines[sourceKey] = lines[sourceKey] ?? lineNumber
                 }
-            } else if keyComponents[0] == "item" {
+            } else if keyComponents[0] == "item" || keyComponents[0] == "group" {
+                let rootKey = keyComponents[0]
+                let entryNamespace: ItemNamespace = rootKey == "item" ? .item : .group
                 let rhs = String(line[line.index(after: equals)...]).trimmingCharacters(in: .whitespaces)
                 let isInlineTable = rhs.hasPrefix("{")
 
                 if keyComponents.count == 1 {
                     guard !isInlineTable else {
                         throw ConfigParseError(
-                            message: "item: inline table declarations are not supported; "
-                                + "declare items with [item.<name>] tables or item.<name>.<key> dotted keys",
+                            message: "\(rootKey): inline table declarations are not supported; "
+                                + "declare \(rootKey)s with [\(rootKey).<name>] tables or \(rootKey).<name>.<key> dotted keys",
                             line: lineNumber
                         )
                     }
@@ -309,12 +429,12 @@ public enum ConfigParser {
                     let fieldPath = Array(keyComponents.dropFirst(2))
                     guard !(fieldPath.isEmpty && isInlineTable) else {
                         throw ConfigParseError(
-                            message: "item.\(name): inline table item declarations are not supported; "
-                                + "declare this item with [item.\(name)] instead",
+                            message: "\(rootKey).\(name): inline table declarations are not supported; "
+                                + "declare this \(rootKey) with [\(rootKey).\(name)] instead",
                             line: lineNumber
                         )
                     }
-                    recordItemName(name, at: lineNumber)
+                    try recordItemName(name, at: lineNumber, namespace: entryNamespace)
                     for path in fieldPathPrefixes(fieldPath) {
                         let sourceKey = SourceLineKey.field(item: name, path: path, actionIndex: nil)
                         lines[sourceKey] = lines[sourceKey] ?? lineNumber
@@ -328,7 +448,7 @@ public enum ConfigParser {
             multilineDelimiter = openMultilineDelimiter(in: String(line[line.index(after: equals)...]))
         }
 
-        return (order, lines)
+        return (order, namespace, lines)
     }
 
     private static func fieldPathPrefixes(_ components: [String]) -> [String] {
@@ -569,7 +689,7 @@ public enum ConfigParser {
         table: TOMLTable,
         relativeTo configURL: URL?,
         sourceLines: SourceLineMap
-    ) throws -> ItemConfig {
+    ) throws -> CommandItemConfig {
         try validateUnknownKeys(
             in: table,
             allowedKeys: supportedItemKeys,
@@ -820,7 +940,7 @@ public enum ConfigParser {
             sourceLines: sourceLines
         ) ?? false
 
-        return ItemConfig(
+        return CommandItemConfig(
             name: name,
             run: run,
             interval: refreshInterval,
@@ -860,6 +980,167 @@ public enum ConfigParser {
             iconOnly: iconOnly,
             disabled: disabled
         )
+    }
+
+    /// Parses one `[group.<name>]` table. `members` existence, duplicate,
+    /// and cycle validation happens once for the whole config after every
+    /// item and group has been parsed (see `validateGroupMembership`), not
+    /// here, since a member declared later in the file (or a forward
+    /// reference to another group) is legal.
+    private static func parseGroup(
+        name: String,
+        table: TOMLTable,
+        relativeTo configURL: URL?,
+        sourceLines: SourceLineMap
+    ) throws -> GroupItemConfig {
+        if table["symbol"] != nil {
+            throw ConfigParseError(
+                message: "group.\(name).symbol: SF Symbol groups are not supported yet (see issue #14); "
+                    + "use icon with a local image file path instead",
+                line: sourceLine(item: name, key: "symbol", sourceLines: sourceLines)
+            )
+        }
+        try validateUnknownKeys(
+            in: table,
+            allowedKeys: supportedGroupKeys,
+            context: "group.\(name)",
+            lineForKey: { sourceLine(item: name, key: $0, sourceLines: sourceLines) }
+        )
+
+        let title = try requiredGroupString(name: name, key: "title", table: table, sourceLines: sourceLines)
+        let members = try parseGroupMembers(name: name, value: table["members"], sourceLines: sourceLines)
+
+        let icon: String?
+        if let iconValue = table["icon"] {
+            let rawIcon = try stringValue(
+                path: "group.\(name).icon",
+                value: iconValue,
+                requireNonEmpty: false,
+                line: sourceLine(item: name, key: "icon", sourceLines: sourceLines)
+            )
+            icon = resolvePath(rawIcon, relativeTo: configURL)
+        } else {
+            icon = nil
+        }
+
+        return GroupItemConfig(name: name, title: title, members: members, icon: icon)
+    }
+
+    private static func requiredGroupString(
+        name: String,
+        key: String,
+        table: TOMLTable,
+        sourceLines: SourceLineMap
+    ) throws -> String {
+        guard let value = table[key] else {
+            throw ConfigParseError(
+                message: "group.\(name): missing required field '\(key)'",
+                line: sourceLine(item: name, key: key, sourceLines: sourceLines)
+            )
+        }
+        return try stringValue(
+            path: "group.\(name).\(key)",
+            value: value,
+            requireNonEmpty: true,
+            line: sourceLine(item: name, key: key, sourceLines: sourceLines)
+        )
+    }
+
+    private static func parseGroupMembers(
+        name: String,
+        value: TOMLValueConvertible?,
+        sourceLines: SourceLineMap
+    ) throws -> [String] {
+        guard let value else {
+            throw ConfigParseError(
+                message: "group.\(name): missing required field 'members'",
+                line: sourceLine(item: name, key: "members", sourceLines: sourceLines)
+            )
+        }
+        guard let array = value.array else {
+            throw typeError(
+                path: "group.\(name).members",
+                expected: "array",
+                value: value,
+                line: sourceLine(item: name, key: "members", sourceLines: sourceLines)
+            )
+        }
+        guard !array.isEmpty else {
+            throw ConfigParseError(
+                message: "group.\(name).members must not be empty",
+                line: sourceLine(item: name, key: "members", sourceLines: sourceLines)
+            )
+        }
+
+        var members: [String] = []
+        var seen = Set<String>()
+        for (index, element) in array.enumerated() {
+            let member = try stringValue(
+                path: "group.\(name).members[\(index)]",
+                value: element,
+                requireNonEmpty: true,
+                line: sourceLine(item: name, key: "members", sourceLines: sourceLines)
+            )
+            guard seen.insert(member).inserted else {
+                throw ConfigParseError(
+                    message: "group.\(name).members: duplicate member '\(member)'",
+                    line: sourceLine(item: name, key: "members", sourceLines: sourceLines)
+                )
+            }
+            members.append(member)
+        }
+        return members
+    }
+
+    /// Validates cross-item invariants that only make sense once every
+    /// item and group in the file has been parsed: every group member
+    /// name must resolve to some other declared entry, and following
+    /// member references (through nested groups) must never cycle back to
+    /// an entry already being visited. Command items have no outgoing
+    /// membership edges, so they are always cycle-free leaves in this
+    /// graph; only a chain of group memberships can cycle.
+    private static func validateGroupMembership(_ items: [ItemConfig], sourceLines: SourceLineMap) throws {
+        let groups = items.compactMap(\.groupConfig)
+        guard !groups.isEmpty else { return }
+
+        let allNames = Set(items.map(\.name))
+        let groupsByName = Dictionary(uniqueKeysWithValues: groups.map { ($0.name, $0) })
+
+        for group in groups {
+            for member in group.members where !allNames.contains(member) {
+                throw ConfigParseError(
+                    message: "group.\(group.name).members: unknown member '\(member)'",
+                    line: sourceLine(item: group.name, key: "members", sourceLines: sourceLines)
+                )
+            }
+        }
+
+        enum VisitState {
+            case visiting
+            case done
+        }
+        var state: [String: VisitState] = [:]
+
+        func visit(_ name: String, path: [String]) throws {
+            if state[name] == .done { return }
+            if state[name] == .visiting {
+                let cycle = (path + [name]).joined(separator: " -> ")
+                throw ConfigParseError(
+                    message: "group membership cycle detected: \(cycle)",
+                    line: sourceLine(item: name, key: "members", sourceLines: sourceLines)
+                )
+            }
+            guard let group = groupsByName[name] else { return }
+            state[name] = .visiting
+            for member in group.members {
+                try visit(member, path: path + [name])
+            }
+            state[name] = .done
+        }
+
+        for group in groups {
+            try visit(group.name, path: [])
+        }
     }
 
     private static func parseActions(
@@ -956,7 +1237,7 @@ public enum ConfigParser {
         relativeTo configURL: URL?,
         sourceLines: SourceLineMap
     ) throws -> [String] {
-        guard let value else { return ItemConfig.defaultShell }
+        guard let value else { return CommandItemConfig.defaultShell }
         guard let array = value.array else {
             throw typeError(
                 path: "item.\(name).shell",

@@ -145,7 +145,7 @@ CLI exit codes are suitable for scripts.
 ### Strict schema compatibility
 
 Pinchos validates the current TOML schema strictly at every entry point.
-Unknown keys under `item.*`, including action keys, are configuration errors with the item path and source line.
+Unknown keys under `item.*` or `group.*`, including action keys, are configuration errors with the item/group path and source line.
 Present values must use the documented TOML type; integers, booleans, arrays, and tables are not silently coerced to strings or treated as absent.
 `run`, `click`, and action `run` commands must contain non-whitespace text.
 Environment variable names remain an explicitly dynamic set, but each name must be valid for the configured shell and each value must be a string without NUL bytes.
@@ -244,6 +244,23 @@ max_active_sessions = 4 # optional, default min(4, CPU cores). Range 1-32.
 - A command action's diagnostics offer their own **Copy "&lt;title&gt;" Output**/**Copy "&lt;title&gt;" Error** entries once that action has produced non-empty output/error, mirroring the click and primary sections.
 - An unresolvable shell or working directory is reported in the config warning; a launch failure during execution is retained in the item's diagnostics menu with the resolved path.
 
+### Groups
+
+A `[group.<name>]` table renders one native status item that stands in for a list of member items, referenced by name:
+
+```toml
+[group.ai]
+title = "AI"          # required, static text shown on the group's own status item
+members = ["claude", "codex"] # required, non-empty, references existing item/group names
+icon = "/path/to/icon.svg" # optional, same file-path icon support as `[item.<name>].icon` above
+```
+
+- `title` and `members` are required; `icon` is optional. Any other key (including `symbol`, from the original SF-Symbol proposal) is a configuration error — SF Symbol catalog loading is deferred to [#14](https://github.com/douglasjarquin/pinchos/issues/14); use `icon` with a file path instead.
+- **Membership**: `members` must be non-empty, must not contain duplicates, and every entry must name a declared `item.*` or `group.*`. A name may itself be another group, giving one level (or more) of nesting. Missing members, duplicates, and membership cycles (direct, indirect, or self-referencing) are configuration errors reported with the group and source line.
+- **Visibility policy**: a name used as a member of any group never gets its own top-level `NSStatusItem` — it keeps running on its own schedule and stays fully functional (actions, manual refresh, diagnostics), but appears only inside the menu of the group(s) that reference it, never as a second, independent menu-bar item. A name not referenced by any group's `members` is unaffected and stays top-level exactly as in v1. This is a hard rule, not a per-group opt-out: there is deliberately no way to make a member also show up on its own.
+- **Group menu**: the group's own status item shows only the static `title` (a group never scripts a dynamic menu-bar title). Right-clicking (or left-clicking, since a group has no primary command of its own) opens a menu whose first line is a compact summary — `title: value1 · value2 · …` — joining each member's current bounded preview value (or, for a nested group member, its own `title`), truncated safely the same way every other diagnostics preview is (see "Diagnostics previews vs. retained output"). This summary is recomputed fresh every time the menu opens, so it is always current without any change-notification plumbing between a member and its group. Below the summary, each member gets its own row with a submenu that is exactly that member's normal right-click menu (actions, current value/state, diagnostics, **Refresh Now**) — nothing about a member's own presentation changes because it is being shown inside a group instead of at the top level.
+- **Reload**: adding/removing a group, changing its `title`, or changing its `members` list all apply live. A membership change that flips a name's top-level/hidden status recreates that one status item (since `NSStatusItem` has no in-place "become a member" transition); everything else updates in place exactly as any other incremental reload does.
+
 ### Scheduler
 
 Every Pinchos-managed command session — a scheduled tick, a manual **Refresh Now**, a left-click, or a declarative command action — is admitted through one application-scoped `CommandScheduler` (`Sources/PinchosCore/CommandScheduler.swift`), not through per-item timers or an unbounded thread pool. `StatusItemController` owns a single instance for the app's lifetime and every `ManagedItem` shares it.
@@ -331,4 +348,4 @@ See [`docs/performance.md`](docs/performance.md) for the performance budgets and
 
 ## Out of scope for v1
 
-No additional module types beyond `command`, no nested/JSON-path format placeholders, no preferences UI, no code signing/notarization/distribution pipeline, no Homebrew formula, no multi-bar layout engine. `pinchos service` (see "Launch at login" above) covers per-user launch-at-login for today's standalone binary; `SMAppService`/Login Items integration for a packaged `.app` is deferred to [#15](https://github.com/douglasjarquin/pinchos/issues/15). See the project brief for the full list.
+No nested/JSON-path format placeholders, no preferences UI, no code signing/notarization/distribution pipeline, no Homebrew formula, no general multi-bar layout engine (groups add exactly one fixed layout: a static title plus a flat list of member submenus, not arbitrary nesting/positioning control), no SF Symbol catalog for `icon`/group `symbol` (deferred to [#14](https://github.com/douglasjarquin/pinchos/issues/14)). `pinchos service` (see "Launch at login" above) covers per-user launch-at-login for today's standalone binary; `SMAppService`/Login Items integration for a packaged `.app` is deferred to [#15](https://github.com/douglasjarquin/pinchos/issues/15). See the project brief for the full list.

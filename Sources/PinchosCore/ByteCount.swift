@@ -14,7 +14,7 @@ public enum ByteCountParseError: Error, Equatable {
 /// still can't reserve unbounded memory on its own, and `OutputMemoryBudget`
 /// separately bounds many-item/many-action configurations beneath the sum
 /// of their individually-valid per-stream limits. The per-stream default
-/// (`ItemConfig.defaultMaxOutputBytes`, 64 KiB) is far below this ceiling
+/// (`CommandItemConfig.defaultMaxOutputBytes`, 64 KiB) is far below this ceiling
 /// and is unaffected.
 public let maxAllowedOutputBytes = 4 * 1024 * 1024
 

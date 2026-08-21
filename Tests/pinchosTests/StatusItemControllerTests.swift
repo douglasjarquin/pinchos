@@ -9,6 +9,7 @@ private final class FakeManagedItem: ManagedItemLifecycle {
     private var pendingConfig: ItemConfig?
     private(set) var config: ItemConfig
     let initiallyVisible: Bool
+    let isTopLevel: Bool
     let ownedStatusItem: NSStatusItem?
     var runtimeSnapshotValue: ItemRuntimeSnapshot?
     var actionSnapshotValues: [CommandRunnerSnapshot?] = []
@@ -23,11 +24,13 @@ private final class FakeManagedItem: ManagedItemLifecycle {
         config: ItemConfig,
         eventLog: EventLog,
         initiallyVisible: Bool,
+        isTopLevel: Bool,
         ownedStatusItem: NSStatusItem?
     ) {
         self.config = config
         self.eventLog = eventLog
         self.initiallyVisible = initiallyVisible
+        self.isTopLevel = isTopLevel
         self.ownedStatusItem = ownedStatusItem
     }
 
@@ -126,12 +129,14 @@ private final class FakeManagedItemFactory: ManagedItemFactory {
     func make(
         config: ItemConfig,
         menuDelegate: StatusItemMenuDelegate,
-        initiallyVisible: Bool
+        initiallyVisible: Bool,
+        isTopLevel: Bool
     ) -> any ManagedItemLifecycle {
         let item = FakeManagedItem(
             config: config,
             eventLog: eventLog,
             initiallyVisible: initiallyVisible,
+            isTopLevel: isTopLevel,
             ownedStatusItem: statusItemToOwn
         )
         statusItemToOwn = nil
@@ -597,7 +602,7 @@ final class StatusItemControllerTests: XCTestCase {
             "prepare-update:beta",
             "commit-update:beta"
         ])
-        XCTAssertEqual(beta.config.run, "echo changed")
+        XCTAssertEqual(beta.config.commandConfig?.run, "echo changed")
     }
 
     func testAddAndRemoveCommitAfterAllPreparation() async {

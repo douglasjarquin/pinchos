@@ -39,7 +39,8 @@ final class RecipeCatalogTests: XCTestCase {
         for recipeURL in try recipeFiles() {
             let text = try String(contentsOf: recipeURL, encoding: .utf8)
             let config = try ConfigParser.parse(text, relativeTo: recipeURL)
-            for item in config.items {
+            for entry in config.items {
+                guard case .command(let item) = entry else { continue }
                 XCTAssertFalse(
                     item.run.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
                     "\(recipeURL.lastPathComponent): item.\(item.name) has an empty run command"
