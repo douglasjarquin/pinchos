@@ -17,7 +17,40 @@ Pinchos exists to make that class of widget cost two orders of magnitude less.
 No Electron, no webview, no Dock icon.
 Idle RSS with 3 items at 60s intervals stays under 15MB, and idle CPU is effectively zero between ticks.
 
-## Install / build
+## Install
+
+Pinchos v1.2+ ships a Developer ID-signed, notarized `Pinchos.app` for Apple Silicon (arm64) Macs on macOS 14+. Every release, its signing/notarization pipeline, and its required secrets are documented in [`docs/releasing.md`](docs/releasing.md).
+
+### Homebrew (cask)
+
+This repository is the Homebrew tap. It isn't named `homebrew-pinchos`, so tap it with an explicit URL rather than the `user/repo` shortcut:
+
+```sh
+brew tap douglasjarquin/pinchos https://github.com/douglasjarquin/pinchos
+brew install --cask pinchos
+```
+
+This installs `Pinchos.app` into `/Applications` and links its `pinchos` CLI onto your `PATH`.
+
+- **Upgrade:** `brew update && brew upgrade --cask pinchos`.
+- **Uninstall:** `brew uninstall --cask pinchos`. This removes `Pinchos.app` and the linked CLI only; it never touches your config at `~/.config/pinchos/pinchos.toml` (or `$XDG_CONFIG_HOME`).
+
+### Direct download
+
+Download `Pinchos-<version>-macos-arm64.zip` from the [Releases page](https://github.com/douglasjarquin/pinchos/releases), verify it against the published checksum, then unzip and move `Pinchos.app` into `/Applications`:
+
+```sh
+shasum -a 256 -c Pinchos-<version>-macos-arm64.zip.sha256
+unzip Pinchos-<version>-macos-arm64.zip
+mv Pinchos.app /Applications/
+```
+
+Every release is signed with a Developer ID and stapled with its notarization ticket, so Gatekeeper accepts it on a clean Mac with no extra steps.
+
+- **Upgrade:** download the new version's zip and replace `/Applications/Pinchos.app`.
+- **Uninstall:** quit Pinchos, then delete `/Applications/Pinchos.app`. Your config is left in place unless you remove it yourself.
+
+### From source (contributors)
 
 Requires macOS 14+ and Xcode 15+ (or a standalone Swift 5.10+ toolchain).
 
@@ -33,7 +66,13 @@ The binary lands at `.build/release/pinchos`. Run it directly:
 .build/release/pinchos
 ```
 
-It has no Dock icon and no main window (`NSApp.setActivationPolicy(.accessory)`) — it lives entirely in the menu bar.
+`scripts/package-app.sh` assembles an **unsigned** `Pinchos.app` from a source build, for local bundle-structure smoke testing only (see [`docs/releasing.md`](docs/releasing.md)). Never distribute that unsigned bundle to normal users — it will fail Gatekeeper by design; use the Homebrew or direct-download paths above instead.
+
+### Architecture support
+
+v1.2 is **arm64-only** (Apple Silicon). There is no Intel or universal2 build. The cask and `scripts/package-app.sh` both refuse to install or package on non-arm64 hardware rather than silently falling back to Rosetta translation. Contributors on Intel Macs can still build and run from source with SwiftPM; only the packaged/released artifact is restricted to arm64.
+
+It has no Dock icon and no main window (`NSApp.setActivationPolicy(.accessory)`, reinforced by `LSUIElement` in the packaged app's `Info.plist`) — it lives entirely in the menu bar.
 Quit it from any item's right-click menu, or `killall pinchos`.
 `killall pinchos` sends SIGTERM to each matching Pinchos process, and each process runs the same bounded cleanup used by the native Quit action.
 
@@ -62,16 +101,23 @@ The raw POSIX signal disposition does no async work, actor calls, locking, or al
 .build/release/pinchos service install    # install and enable
 .build/release/pinchos service status     # report configuration, enabled, and running state
 .build/release/pinchos service uninstall  # disable and remove
+
+# Or, using the CLI linked by the Homebrew cask (or an installed Pinchos.app directly):
+pinchos service install --executable /Applications/Pinchos.app/Contents/MacOS/pinchos
 ```
 
 `pinchos service install` writes and loads a per-user `launchd` LaunchAgent at
 `~/Library/LaunchAgents/com.pinchos.agent.plist`, targeting the currently
 running binary's absolute path (pass `--executable <absolute-path>` to target
 a different one, for example after copying a new build to
-`~/.local/bin/pinchos`). This is a plain per-user LaunchAgent, not `SMAppService`:
-Pinchos today ships as a standalone SwiftPM binary rather than a signed `.app`
-bundle, and `SMAppService`'s login-item registration is keyed by bundle
-identifier, so it doesn't apply until the `.app` packaging work in [#15](https://github.com/douglasjarquin/pinchos/issues/15).
+`~/.local/bin/pinchos`, or the CLI inside an installed `Pinchos.app`). This is
+a plain per-user LaunchAgent, not `SMAppService`: `SMAppService`'s login-item
+registration is keyed by bundle identifier and by the process having actually
+been launched through Launch Services as that bundle, and this command
+predates the `.app` packaging added in [#15](https://github.com/douglasjarquin/pinchos/issues/15).
+It still works against an installed `Pinchos.app`'s CLI path today; migrating
+it to `SMAppService` for the bundled distribution is tracked as a follow-up
+(see the caveat in [`docs/releasing.md`](docs/releasing.md)).
 No root privileges are required or used.
 
 - **Idempotent**: running `install` again with the same target executable
@@ -378,6 +424,7 @@ See [`example/pinchos.toml`](example/pinchos.toml) for a full working config wit
   The supervisor remains alive until its descendants have exited or cancellation terminates the group, so every signal is made through the live session owner rather than a reusable numeric process-group ID.
 - `Sources/pinchos` — the AppKit executable: one `NSStatusItem` per configured item, a single application-scoped `CommandScheduler` (see "Scheduler" below) shared by every item's scheduled refresh, manual refresh, click, and command actions, declarative per-item menu actions, menu and lifecycle projection of `PinchosCore` runner snapshots, a shared `ShutdownCoordinator` for GUI and CLI lifecycle convergence, and a `ConfigWatcher` (`DispatchSourceFileSystemObject`) for live reload.
 - Config file reads and TOML parsing run off the AppKit main actor through `ConfigLoadCoordinator`, which tags each reload with a generation number so a superseded parse — success or failure — is never applied over a newer one, and coalesces reload bursts into a single pending load instead of an unbounded backlog.
+- `Packaging/` and `scripts/` — app-bundle assembly (`Info.plist.template`, entitlements, `package-app.sh`, `smoke-app-bundle.sh`) and the CI-only signing/notarization helpers (`scripts/ci/`) used by `.github/workflows/release.yml`. This layer only ever wraps the existing `pinchos` executable; it adds no new source targets and changes no runtime behavior. See [`docs/releasing.md`](docs/releasing.md).
 
 ### Why TOMLKit
 
@@ -395,9 +442,10 @@ See `docs/manual-qa/` for the evidence captured for v1: the example config runni
 
 ## CI
 
-`.github/workflows/verify.yml` (`Verify changes`) runs `swift build`, `swift test`, and `swift build -c release` on a macOS runner for every PR and every push to `main`.
+`.github/workflows/verify.yml` (`Verify changes`) runs `swift build`, `swift test`, and `swift build -c release` on a macOS runner for every PR and every push to `main`, plus a separate `packaging-smoke` job that assembles an unsigned `Pinchos.app` and checks its bundle structure and `Info.plist` metadata - no Apple credentials involved.
+`.github/workflows/release.yml` is tag-only (`v*.*.*`): it re-runs the test suite and release build from a clean checkout, packages, signs, notarizes, staples, checksums, and publishes to the tag's GitHub release, and fails closed if the required signing secrets aren't configured. See [`docs/releasing.md`](docs/releasing.md) for the full pipeline, the exact secrets it needs, and how to cut a release.
 See [`docs/performance.md`](docs/performance.md) for the performance budgets and benchmark profiles behind the claims above, including the deterministic timer/output-budget invariant tests `swift test` enforces and how to run a controlled release-binary measurement locally.
 
-## Out of scope for v1
+## Out of scope for v1.2
 
-No nested/JSON-path format placeholders, no preferences UI, no code signing/notarization/distribution pipeline, no Homebrew formula, no general multi-bar layout engine (groups add exactly one fixed layout: a static title plus a flat list of member submenus, not arbitrary nesting/positioning control), no bundled SF Symbols catalog (names resolve against the running macOS catalog only), no per-item icon size key, no symbol palettes/multicolor/animation. `pinchos service` (see "Launch at login" above) covers per-user launch-at-login for today's standalone binary; `SMAppService`/Login Items integration for a packaged `.app` is deferred to [#15](https://github.com/douglasjarquin/pinchos/issues/15). See the project brief for the full list.
+No additional module types beyond `command`, no nested/JSON-path format placeholders, no preferences UI, no Sparkle/auto-updater, no App Store distribution, no Intel or universal2 build, no DMG installer, no Homebrew formula (a cask ships instead - see [Install](#install)), no general multi-bar layout engine (groups add exactly one fixed layout: a static title plus a flat list of member submenus, not arbitrary nesting/positioning control), no bundled SF Symbols catalog (names resolve against the running macOS catalog only), no per-item icon size key, no symbol palettes/multicolor/animation. `pinchos service` (see "Launch at login" above) covers per-user launch-at-login for both the standalone binary and an installed `Pinchos.app`; migrating it to `SMAppService`/Login Items for the bundled distribution is a documented follow-up (see the caveat in [`docs/releasing.md`](docs/releasing.md)), not part of [#15](https://github.com/douglasjarquin/pinchos/issues/15)'s scope. See the project brief for the full list.

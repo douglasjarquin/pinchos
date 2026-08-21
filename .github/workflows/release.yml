@@ -1,0 +1,196 @@
+name: Release
+
+# Tag-only: this workflow never runs on pull requests or ordinary branch
+# pushes. It only reacts to an approved `vMAJOR.MINOR.PATCH` tag, so a
+# release is always tied to one immutable tag and the exact commit it
+# points at.
+on:
+  push:
+    tags:
+      - "v*.*.*"
+
+# One release run per tag at a time; a second push of the same tag queues
+# behind the first instead of racing it, but is never silently dropped.
+concurrency:
+  group: release-${{ github.ref_name }}
+  cancel-in-progress: false
+
+jobs:
+  build-test-package:
+    runs-on: macos-14
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Derive and validate version from tag
+        id: version
+        run: |
+          TAG="${GITHUB_REF_NAME}"
+          if [[ ! "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "error: tag '$TAG' does not match the approved vMAJOR.MINOR.PATCH pattern" >&2
+            exit 1
+          fi
+          VERSION="${TAG#v}"
+          echo "Tag: $TAG -> version: $VERSION"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Confirm arm64 runner (v1.2 is arm64-only, no silent translation)
+        run: |
+          ARCH="$(uname -m)"
+          if [[ "$ARCH" != "arm64" ]]; then
+            echo "error: release runner reports '$ARCH'; pinchos v1.2 packaging requires an arm64 runner" >&2
+            exit 1
+          fi
+
+      - name: Record toolchain and source inputs
+        run: |
+          echo "macOS: $(sw_vers -productVersion)"
+          echo "Xcode: $(xcodebuild -version | tr '\n' ' ')"
+          swift --version
+          echo "Source commit: ${GITHUB_SHA}"
+          echo "Architecture: $(uname -m)"
+
+      - name: Resolve dependencies from the committed Package.resolved
+        run: |
+          swift package resolve
+          git diff --exit-code Package.resolved || {
+            echo "error: 'swift package resolve' changed the committed Package.resolved; release builds must use the locked versions" >&2
+            exit 1
+          }
+
+      - name: swift test
+        run: swift test
+
+      - name: swift build -c release
+        run: swift build -c release
+
+      - name: Package unsigned app bundle
+        run: scripts/package-app.sh --version "${{ steps.version.outputs.version }}" --skip-build --output-dir dist
+
+      - name: Smoke test bundle structure
+        run: scripts/smoke-app-bundle.sh dist/Pinchos.app "${{ steps.version.outputs.version }}"
+
+      - name: Upload unsigned bundle for the signing job
+        uses: actions/upload-artifact@v4
+        with:
+          name: pinchos-app-unsigned
+          path: dist/Pinchos.app
+          retention-days: 1
+
+  sign-notarize-publish:
+    needs: build-test-package
+    runs-on: macos-14
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Verify signing secrets are configured (fail closed)
+        env:
+          APPLE_DEVELOPER_ID_CERTIFICATE_P12: ${{ secrets.APPLE_DEVELOPER_ID_CERTIFICATE_P12 }}
+          APPLE_DEVELOPER_ID_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_DEVELOPER_ID_CERTIFICATE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+          APPLE_API_ISSUER_ID: ${{ secrets.APPLE_API_ISSUER_ID }}
+          APPLE_API_KEY_P8: ${{ secrets.APPLE_API_KEY_P8 }}
+        run: |
+          missing=()
+          for name in APPLE_DEVELOPER_ID_CERTIFICATE_P12 APPLE_DEVELOPER_ID_CERTIFICATE_PASSWORD APPLE_TEAM_ID APPLE_API_KEY_ID APPLE_API_ISSUER_ID APPLE_API_KEY_P8; do
+            if [[ -z "${!name:-}" ]]; then
+              missing+=("$name")
+            fi
+          done
+          if [[ ${#missing[@]} -gt 0 ]]; then
+            echo "::error::Release signing secrets are not configured: ${missing[*]}" >&2
+            echo "error: refusing to publish an unsigned build as the normal-user artifact." >&2
+            echo "error: add the missing repository secrets (see docs/releasing.md) and re-run this workflow for the same tag." >&2
+            exit 1
+          fi
+          echo "All required signing secrets are present."
+
+      - name: Download unsigned bundle
+        uses: actions/download-artifact@v4
+        with:
+          name: pinchos-app-unsigned
+          path: dist
+
+      - name: Import Developer ID certificate into a per-run keychain
+        env:
+          APPLE_DEVELOPER_ID_CERTIFICATE_P12: ${{ secrets.APPLE_DEVELOPER_ID_CERTIFICATE_P12 }}
+          APPLE_DEVELOPER_ID_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_DEVELOPER_ID_CERTIFICATE_PASSWORD }}
+        run: scripts/ci/import-signing-identity.sh
+
+      - name: Codesign Pinchos.app with Developer ID
+        env:
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: scripts/ci/codesign-app.sh dist/Pinchos.app
+
+      - name: Zip app for notarization submission
+        run: ditto -c -k --keepParent dist/Pinchos.app dist/Pinchos-notarize-submission.zip
+
+      - name: Submit for notarization and wait
+        env:
+          APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+          APPLE_API_ISSUER_ID: ${{ secrets.APPLE_API_ISSUER_ID }}
+          APPLE_API_KEY_P8: ${{ secrets.APPLE_API_KEY_P8 }}
+        run: scripts/ci/notarize.sh dist/Pinchos-notarize-submission.zip
+
+      - name: Staple and validate the notarization ticket
+        run: |
+          xcrun stapler staple dist/Pinchos.app
+          xcrun stapler validate dist/Pinchos.app
+
+      - name: Gatekeeper assessment
+        run: spctl --assess --type execute --verbose=4 dist/Pinchos.app
+
+      - name: Verify final signature
+        run: |
+          codesign --verify --deep --strict --verbose=2 dist/Pinchos.app
+          codesign -dv --verbose=4 dist/Pinchos.app
+
+      - name: Re-run structure smoke checks on the signed, stapled bundle
+        run: |
+          VERSION="${{ needs.build-test-package.outputs.version }}"
+          scripts/smoke-app-bundle.sh dist/Pinchos.app "$VERSION"
+
+      - name: Create the distribution zip (post-staple, so checksums cover the final bytes)
+        run: |
+          VERSION="${{ needs.build-test-package.outputs.version }}"
+          ARTIFACT_NAME="Pinchos-${VERSION}-macos-arm64.zip"
+          ditto -c -k --keepParent dist/Pinchos.app "dist/${ARTIFACT_NAME}"
+          echo "ARTIFACT_NAME=${ARTIFACT_NAME}" >> "$GITHUB_ENV"
+
+      - name: Generate SHA-256 checksums
+        run: |
+          cd dist
+          shasum -a 256 "${ARTIFACT_NAME}" > "${ARTIFACT_NAME}.sha256"
+          cat "${ARTIFACT_NAME}.sha256"
+
+      - name: Publish to the GitHub release for this tag
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG="${GITHUB_REF_NAME}"
+          EXISTING_TARGET="$(gh release view "$TAG" --json targetCommitish --jq .targetCommitish 2>/dev/null || true)"
+          if [[ -n "$EXISTING_TARGET" ]]; then
+            if [[ "$EXISTING_TARGET" != "$GITHUB_SHA" ]]; then
+              echo "::error::A release for tag $TAG already exists and points at commit $EXISTING_TARGET, not this run's commit $GITHUB_SHA." >&2
+              echo "error: the tag must have moved after the release was first published; refusing to silently overwrite a different commit's artifacts." >&2
+              echo "error: delete the existing release/tag deliberately and re-tag if this is intentional." >&2
+              exit 1
+            fi
+            echo "Release for $TAG already exists at this exact commit; updating its artifacts idempotently."
+          else
+            # --target is ignored by GitHub once a tag exists (true here, since
+            # this workflow only runs on an already-pushed tag); the release
+            # is tied to whatever commit the tag itself points to.
+            gh release create "$TAG" \
+              --title "Pinchos $TAG" \
+              --notes "Automated release for $TAG (commit ${GITHUB_SHA})."
+          fi
+          gh release upload "$TAG" "dist/${ARTIFACT_NAME}" "dist/${ARTIFACT_NAME}.sha256" --clobber

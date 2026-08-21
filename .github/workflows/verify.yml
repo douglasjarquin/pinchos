@@ -31,16 +31,34 @@ jobs:
       - name: swift build (release)
         run: swift build -c release
 
+  packaging-smoke:
+    needs: changes
+    # Structure-only: packages an UNSIGNED app bundle and checks its layout
+    # and Info.plist metadata. No Apple credentials involved or required.
+    # The signed/notarized artifact users install is produced only by the
+    # tag-only .github/workflows/release.yml.
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+      - name: swift build -c release
+        run: swift build -c release
+      - name: Package unsigned app bundle
+        run: scripts/package-app.sh --version 0.0.0 --skip-build --output-dir dist
+      - name: Smoke test bundle structure
+        run: scripts/smoke-app-bundle.sh dist/Pinchos.app 0.0.0
+
   gate:
     name: gate
     needs:
       - changes
       - build-and-test
+      - packaging-smoke
     if: always()
     runs-on: ubuntu-latest
     steps:
       - name: Require all checks to pass
         if: >-
           needs.changes.result != 'success' ||
-          (needs.build-and-test.result != 'success' && needs.build-and-test.result != 'skipped')
+          (needs.build-and-test.result != 'success' && needs.build-and-test.result != 'skipped') ||
+          (needs.packaging-smoke.result != 'success' && needs.packaging-smoke.result != 'skipped')
         run: exit 1
