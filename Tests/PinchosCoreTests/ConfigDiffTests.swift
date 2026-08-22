@@ -107,6 +107,53 @@ final class ConfigDiffTests: XCTestCase {
         XCTAssertTrue(diff.removed.isEmpty)
     }
 
+    func testDetectsChangedIconSourceFromFileToSymbol() {
+        let old = PinchosConfig(items: [
+            ItemConfig(name: "a", run: "echo x", interval: .scheduled(60), icon: "/tmp/a.svg")
+        ])
+        let new = PinchosConfig(items: [
+            ItemConfig(name: "a", run: "echo x", interval: .scheduled(60), symbol: "chart.bar.fill")
+        ])
+
+        let diff = ConfigDiffEngine.diff(old: old, new: new)
+
+        XCTAssertEqual(diff.changed.map(\.name), ["a"])
+        XCTAssertTrue(diff.added.isEmpty)
+        XCTAssertTrue(diff.removed.isEmpty)
+        XCTAssertFalse(diff.requiresNativeRebuild)
+    }
+
+    func testDetectsChangedIconSourceToNone() {
+        let old = PinchosConfig(items: [
+            ItemConfig(name: "a", run: "echo x", interval: .scheduled(60), symbol: "chart.bar.fill")
+        ])
+        let new = PinchosConfig(items: [item("a")])
+
+        let diff = ConfigDiffEngine.diff(old: old, new: new)
+
+        XCTAssertEqual(diff.changed.map(\.name), ["a"])
+        XCTAssertTrue(diff.added.isEmpty)
+        XCTAssertTrue(diff.removed.isEmpty)
+    }
+
+    func testDetectsChangedGroupIconSource() {
+        let old = PinchosConfig(items: [
+            item("claude"),
+            .group(GroupItemConfig(name: "ai", title: "AI", members: ["claude"], icon: "/tmp/a.svg"))
+        ])
+        let new = PinchosConfig(items: [
+            item("claude"),
+            .group(GroupItemConfig(name: "ai", title: "AI", members: ["claude"], symbol: "brain"))
+        ])
+
+        let diff = ConfigDiffEngine.diff(old: old, new: new)
+
+        XCTAssertEqual(diff.changed.map(\.name), ["ai"])
+        XCTAssertTrue(diff.added.isEmpty)
+        XCTAssertTrue(diff.removed.isEmpty)
+        XCTAssertFalse(diff.requiresNativeRebuild)
+    }
+
     func testDetectsChangedVisibilityAndDisabledPolicy() {
         let old = PinchosConfig(items: [item("a")])
         let new = PinchosConfig(items: [

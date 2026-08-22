@@ -22,7 +22,9 @@ final class ManagedItem: ManagedItemLifecycle {
     private(set) var isVisible = true
     private(set) var commandConfig: CommandItemConfig
     var config: ItemConfig { .command(commandConfig) }
-    private var iconIsLoaded = false
+    private(set) var iconIsLoaded = false
+    private(set) var iconDiagnosticNote: String?
+    private let iconRenderer: StatusItemIconRenderer
     private var runner: CommandRunner
     private var clickRunner: CommandRunner?
     private var actionRunners: [Int: CommandRunner]
@@ -107,6 +109,7 @@ final class ManagedItem: ManagedItemLifecycle {
         isTopLevel: Bool = true,
         scheduler: CommandScheduler = .shared,
         now: @escaping () -> Date = Date.init,
+        iconRenderer: StatusItemIconRenderer = .system,
         statusItemFactory: @escaping () -> NSStatusItem? = {
             NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         }
@@ -116,6 +119,7 @@ final class ManagedItem: ManagedItemLifecycle {
         self.menuDelegate = menuDelegate
         self.scheduler = scheduler
         self.now = now
+        self.iconRenderer = iconRenderer
         self.renderedTitle = commandConfig.errorText
         self.renderedToolTip = nil
         self.runner = CommandRunner(
@@ -168,18 +172,14 @@ final class ManagedItem: ManagedItemLifecycle {
 
     private func applyIcon() {
         // Loading is intentionally independent of `statusItem` (nil in headless
-        // tests) so `iconIsLoaded` reflects whether the configured file actually
-        // resolved, not whether there is a real status item to paint it onto.
-        guard let path = commandConfig.icon, let image = NSImage(contentsOfFile: path) else {
-            statusItem?.button?.image = nil
-            iconIsLoaded = false
-            return
-        }
-        image.size = NSSize(width: 16, height: 16)
-        image.isTemplate = true
-        statusItem?.button?.image = image
-        statusItem?.button?.imagePosition = .imageLeft
-        iconIsLoaded = true
+        // tests) so `iconIsLoaded` reflects whether the configured source
+        // actually resolved, not whether there is a real status item to paint
+        // it onto. An unavailable SF Symbol name stays a valid config and
+        // falls back to text-only with a diagnostic note.
+        let rendered = iconRenderer.render(commandConfig.iconSource)
+        iconRenderer.apply(rendered, to: statusItem?.button)
+        iconIsLoaded = rendered.isLoaded
+        iconDiagnosticNote = rendered.diagnosticNote
     }
 
     func prepareUpdate(
@@ -212,7 +212,7 @@ final class ManagedItem: ManagedItemLifecycle {
             || previousConfig.hideOnError != newCommandConfig.hideOnError
             || previousConfig.iconOnly != newCommandConfig.iconOnly
             || previousConfig.disabled != newCommandConfig.disabled
-            || previousConfig.icon != newCommandConfig.icon
+            || previousConfig.iconSource != newCommandConfig.iconSource
         let becameDisabled = !previousConfig.disabled && newCommandConfig.disabled
         if timerNeedsRestart {
             cancelRefreshTimer()
@@ -910,7 +910,8 @@ final class ManagedItem: ManagedItemLifecycle {
     }
 
     /// `icon_only` clears the status-bar button's text once an icon has actually
-    /// loaded, so a missing/unreadable icon quietly falls back to showing the text
+    /// loaded, so a missing/unreadable file or an unavailable SF Symbol quietly
+    /// falls back to showing the text title instead of leaving the item blank.
     /// title instead of leaving the item blank. `renderedTitle` itself (already
     /// `max_length`-truncated and marker-suffixed) is unaffected either way; only
     /// the button-facing `renderedButtonTitle` is blanked. The tooltip and

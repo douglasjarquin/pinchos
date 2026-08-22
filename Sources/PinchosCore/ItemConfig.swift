@@ -25,6 +25,34 @@ public struct ItemAction: Equatable, Sendable {
     }
 }
 
+/// One effective status-item icon source. `symbol` and `icon` are mutually
+/// exclusive at parse time (a config that sets both is rejected); the runtime
+/// model therefore never has to rank them.
+public enum ItemIconSource: Equatable, Sendable {
+    case file(String)
+    case symbol(String)
+
+    public var filePath: String? {
+        if case .file(let path) = self { return path }
+        return nil
+    }
+
+    public var symbolName: String? {
+        if case .symbol(let name) = self { return name }
+        return nil
+    }
+
+    static func make(icon: String?, symbol: String?) -> ItemIconSource? {
+        if let symbol {
+            return .symbol(symbol)
+        }
+        if let icon {
+            return .file(icon)
+        }
+        return nil
+    }
+}
+
 /// A single `[item.<name>]` command module: everything needed to run a
 /// shell command on a schedule (or manually) and project its result onto a
 /// menu-bar title, tooltip, and diagnostics menu. This is the only item
@@ -53,7 +81,7 @@ public struct CommandItemConfig: Equatable, Sendable {
     public let staleAfter: TimeInterval?
     public let tooltip: String?
     public let actions: [ItemAction]
-    public let icon: String?
+    public let iconSource: ItemIconSource?
     public let maxLength: Int?
     public let hideWhenEmpty: Bool
     public let hideOnError: Bool
@@ -78,6 +106,7 @@ public struct CommandItemConfig: Equatable, Sendable {
         tooltip: String? = nil,
         actions: [ItemAction] = [],
         icon: String? = nil,
+        symbol: String? = nil,
         maxLength: Int? = nil,
         hideWhenEmpty: Bool = false,
         hideOnError: Bool = false,
@@ -100,33 +129,48 @@ public struct CommandItemConfig: Equatable, Sendable {
         self.staleAfter = staleAfter
         self.tooltip = tooltip
         self.actions = actions
-        self.icon = icon
+        self.iconSource = ItemIconSource.make(icon: icon, symbol: symbol)
         self.maxLength = maxLength
         self.hideWhenEmpty = hideWhenEmpty
         self.hideOnError = hideOnError
         self.iconOnly = iconOnly
         self.disabled = disabled
     }
+
+    /// Local-file path when `iconSource` is `.file`; `nil` for a symbol or
+    /// a text-only item. Kept as a named field so existing call sites and
+    /// docs that talk about `icon` keep working.
+    public var icon: String? { iconSource?.filePath }
+
+    /// SF Symbol name when `iconSource` is `.symbol`; `nil` otherwise.
+    public var symbol: String? { iconSource?.symbolName }
 }
 
 /// A `[group.<name>]` module: one native status item that stands in for a
 /// list of member items (referenced by stable name, see README "Groups").
-/// `symbol` (SF Symbol) from the original proposal is deliberately not a
-/// field here -- SF Symbol catalog loading is out of scope until #14 lands;
-/// `icon` reuses the same file-path icon support every `CommandItemConfig`
-/// already has instead of inventing a second icon mechanism.
+/// Icon sources reuse `ItemIconSource`: a local `icon` file or a native
+/// `symbol` name, never both.
 public struct GroupItemConfig: Equatable, Sendable {
     public let name: String
     public let title: String
     public let members: [String]
-    public let icon: String?
+    public let iconSource: ItemIconSource?
 
-    public init(name: String, title: String, members: [String], icon: String? = nil) {
+    public init(
+        name: String,
+        title: String,
+        members: [String],
+        icon: String? = nil,
+        symbol: String? = nil
+    ) {
         self.name = name
         self.title = title
         self.members = members
-        self.icon = icon
+        self.iconSource = ItemIconSource.make(icon: icon, symbol: symbol)
     }
+
+    public var icon: String? { iconSource?.filePath }
+    public var symbol: String? { iconSource?.symbolName }
 }
 
 public enum ItemKind: Equatable, Sendable {
@@ -189,6 +233,13 @@ public enum ItemConfig: Equatable, Sendable {
         }
         return config
     }
+
+    public var iconSource: ItemIconSource? {
+        switch self {
+        case .command(let config): return config.iconSource
+        case .group(let config): return config.iconSource
+        }
+    }
 }
 
 extension ItemConfig {
@@ -213,6 +264,7 @@ extension ItemConfig {
         tooltip: String? = nil,
         actions: [ItemAction] = [],
         icon: String? = nil,
+        symbol: String? = nil,
         maxLength: Int? = nil,
         hideWhenEmpty: Bool = false,
         hideOnError: Bool = false,
@@ -238,6 +290,7 @@ extension ItemConfig {
                 tooltip: tooltip,
                 actions: actions,
                 icon: icon,
+                symbol: symbol,
                 maxLength: maxLength,
                 hideWhenEmpty: hideWhenEmpty,
                 hideOnError: hideOnError,

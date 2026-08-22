@@ -9,7 +9,7 @@ import PinchosCore
 /// `addGroupContent`), reading each member's live `ManagedItemLifecycle`
 /// directly out of its own `items` dictionary rather than this class
 /// knowing anything about its siblings. This keeps `ManagedGroupItem`'s own
-/// lifecycle trivial: its config only ever changes `title`/`members`/`icon`,
+/// lifecycle trivial: its config only ever changes `title`/`members`/`icon`/`symbol`,
 /// none of which require quiescing any in-flight work, so `prepareUpdate`
 /// has nothing to await before `commitPreparedUpdate` can apply it.
 ///
@@ -19,6 +19,8 @@ final class ManagedGroupItem: ManagedItemLifecycle {
     let statusItem: NSStatusItem?
     private(set) var groupConfig: GroupItemConfig
     var config: ItemConfig { .group(groupConfig) }
+    private(set) var iconDiagnosticNote: String?
+    private let iconRenderer: StatusItemIconRenderer
     private weak var menuDelegate: StatusItemMenuDelegate?
     private var isActive = true
     private var pendingGroupConfig: GroupItemConfig?
@@ -28,6 +30,7 @@ final class ManagedGroupItem: ManagedItemLifecycle {
         menuDelegate: StatusItemMenuDelegate,
         initiallyVisible: Bool = true,
         isTopLevel: Bool = true,
+        iconRenderer: StatusItemIconRenderer = .system,
         statusItemFactory: @escaping () -> NSStatusItem? = {
             NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         }
@@ -35,6 +38,7 @@ final class ManagedGroupItem: ManagedItemLifecycle {
         let groupConfig = config.group
         self.groupConfig = groupConfig
         self.menuDelegate = menuDelegate
+        self.iconRenderer = iconRenderer
         // A group that is itself a hidden member of some other group (nested
         // groups) gets no real backing `NSStatusItem` at all, mirroring
         // `ManagedItem`'s `isTopLevel` handling -- there is nothing to ever
@@ -128,13 +132,8 @@ final class ManagedGroupItem: ManagedItemLifecycle {
     }
 
     private func applyIcon() {
-        guard let path = groupConfig.icon, let image = NSImage(contentsOfFile: path) else {
-            statusItem?.button?.image = nil
-            return
-        }
-        image.size = NSSize(width: 16, height: 16)
-        image.isTemplate = true
-        statusItem?.button?.image = image
-        statusItem?.button?.imagePosition = .imageLeft
+        let rendered = iconRenderer.render(groupConfig.iconSource)
+        iconRenderer.apply(rendered, to: statusItem?.button)
+        iconDiagnosticNote = rendered.diagnosticNote
     }
 }

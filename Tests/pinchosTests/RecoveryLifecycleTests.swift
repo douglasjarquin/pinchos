@@ -1451,6 +1451,133 @@ final class RecoveryLifecycleTests: XCTestCase {
         XCTAssertEqual(item.renderedButtonTitle, "value")
     }
 
+    @MainActor
+    func testUnavailableSymbolFallsBackToTextWithoutCrashingIncludingIconOnly() async throws {
+        let renderer = StatusItemIconRenderer(
+            loadFileImage: { NSImage(contentsOfFile: $0) },
+            loadSymbolImage: { _ in nil }
+        )
+        let item = ManagedItem(
+            config: ItemConfig(
+                name: "missing-symbol",
+                run: "printf value",
+                interval: .manual,
+                symbol: "pinchos.definitely.not.a.real.symbol",
+                iconOnly: true
+            ),
+            menuDelegate: NoopStatusItemMenuDelegate(),
+            initiallyVisible: false,
+            scheduler: CommandScheduler(),
+            iconRenderer: renderer,
+            statusItemFactory: { nil }
+        )
+        addTeardownBlock { @MainActor in
+            await item.tearDown()
+        }
+
+        item.refreshNow()
+        _ = try await waitForRuntimeSnapshot(item) { snapshot in
+            snapshot.fullOutput == "value"
+        }
+
+        XCTAssertFalse(item.iconIsLoaded)
+        XCTAssertEqual(item.renderedButtonTitle, "value")
+        XCTAssertTrue(item.iconDiagnosticNote?.contains("unavailable") == true)
+    }
+
+    @MainActor
+    func testKnownSymbolWithIconOnlyClearsDisplayedTitleThroughRendererSeam() async throws {
+        let renderer = StatusItemIconRenderer(
+            loadFileImage: { _ in nil },
+            loadSymbolImage: { name in
+                XCTAssertEqual(name, "chart.bar.fill")
+                return NSImage(size: NSSize(width: 32, height: 32))
+            }
+        )
+        let item = ManagedItem(
+            config: ItemConfig(
+                name: "symbol-only",
+                run: "printf value",
+                interval: .manual,
+                symbol: "chart.bar.fill",
+                iconOnly: true
+            ),
+            menuDelegate: NoopStatusItemMenuDelegate(),
+            initiallyVisible: false,
+            scheduler: CommandScheduler(),
+            iconRenderer: renderer,
+            statusItemFactory: { nil }
+        )
+        addTeardownBlock { @MainActor in
+            await item.tearDown()
+        }
+
+        item.refreshNow()
+        _ = try await waitForRuntimeSnapshot(item) { snapshot in
+            snapshot.fullOutput == "value"
+        }
+
+        XCTAssertTrue(item.iconIsLoaded)
+        XCTAssertEqual(item.renderedTitle, "value")
+        XCTAssertEqual(item.renderedButtonTitle, "")
+        XCTAssertNil(item.iconDiagnosticNote)
+    }
+
+    @MainActor
+    func testIconSourceReloadPreservesIdentityTimerRunnerAndLastOutput() async throws {
+        let scheduler = CommandScheduler()
+        let iconURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("pinchos-icon-reload-\(UUID().uuidString).png")
+        try writeTestIcon(to: iconURL)
+        let renderer = StatusItemIconRenderer(
+            loadFileImage: { NSImage(contentsOfFile: $0) },
+            loadSymbolImage: { _ in NSImage(size: NSSize(width: 16, height: 16)) }
+        )
+        let item = ManagedItem(
+            config: ItemConfig(
+                name: "reload-icon",
+                run: "printf value",
+                interval: .manual,
+                icon: iconURL.path
+            ),
+            menuDelegate: NoopStatusItemMenuDelegate(),
+            initiallyVisible: false,
+            scheduler: scheduler,
+            iconRenderer: renderer,
+            statusItemFactory: { nil }
+        )
+        addTeardownBlock { @MainActor in
+            await item.tearDown()
+            try? FileManager.default.removeItem(at: iconURL)
+        }
+
+        item.activate()
+        _ = try await waitForRuntimeSnapshot(item) { snapshot in
+            snapshot.fullOutput == "value"
+        }
+        let outputBefore = try await waitForRuntimeSnapshot(item) { $0.fullOutput != nil }
+        let executionBefore = await item.runnerSnapshot()
+        let timersBefore = await scheduler.diagnostics().registeredTimers
+
+        await item.prepareUpdate(config: ItemConfig(
+            name: "reload-icon",
+            run: "printf value",
+            interval: .manual,
+            symbol: "chart.bar.fill"
+        ))
+        item.commitPreparedUpdate()
+
+        let outputAfter = await item.runtimeSnapshot()
+        let executionAfter = await item.runnerSnapshot()
+        let timersAfter = await scheduler.diagnostics().registeredTimers
+
+        XCTAssertEqual(outputAfter.fullOutput, outputBefore.fullOutput)
+        XCTAssertEqual(executionAfter.lastExecution?.stdout, executionBefore.lastExecution?.stdout)
+        XCTAssertEqual(timersAfter, timersBefore)
+        XCTAssertTrue(item.iconIsLoaded)
+        XCTAssertEqual(item.commandConfig.iconSource, .symbol("chart.bar.fill"))
+    }
+
     private func writeTestIcon(to url: URL) throws {
         guard let bitmap = NSBitmapImageRep(
             bitmapDataPlanes: nil,

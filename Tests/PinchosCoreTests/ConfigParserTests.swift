@@ -57,6 +57,7 @@ final class ConfigParserTests: XCTestCase {
         XCTAssertEqual(item.click, "open https://example.com")
         XCTAssertEqual(item.errorText, "n/a")
         XCTAssertEqual(item.icon, "/path/to/icon.svg")
+        XCTAssertNil(item.symbol)
         XCTAssertEqual(item.maxLength, 24)
         XCTAssertTrue(item.hideWhenEmpty)
         XCTAssertTrue(item.hideOnError)
@@ -82,6 +83,7 @@ final class ConfigParserTests: XCTestCase {
             (key: "tooltip", value: "42", expectedMessage: "must be a string"),
             (key: "action", value: "\"not an array\"", expectedMessage: "must be an array"),
             (key: "icon", value: "false", expectedMessage: "must be a string"),
+            (key: "symbol", value: "false", expectedMessage: "must be a string"),
             (key: "max_length", value: "\"24\"", expectedMessage: "must be an integer"),
             (key: "hide_when_empty", value: "\"yes\"", expectedMessage: "must be a boolean"),
             (key: "hide_on_error", value: "\"yes\"", expectedMessage: "must be a boolean"),
@@ -544,7 +546,7 @@ final class ConfigParserTests: XCTestCase {
     func testSupportedSchemaEnumeratesEveryCurrentItemAndActionKey() {
         XCTAssertEqual(ConfigParser.supportedRootKeys, ["item", "scheduler", "group"])
         XCTAssertEqual(ConfigParser.supportedSchedulerKeys, ["max_active_sessions"])
-        XCTAssertEqual(ConfigParser.supportedGroupKeys, ["title", "members", "icon"])
+        XCTAssertEqual(ConfigParser.supportedGroupKeys, ["title", "members", "icon", "symbol"])
         XCTAssertEqual(ConfigParser.supportedItemKeys, [
             "type",
             "run",
@@ -563,6 +565,7 @@ final class ConfigParserTests: XCTestCase {
             "tooltip",
             "action",
             "icon",
+            "symbol",
             "max_length",
             "hide_when_empty",
             "hide_on_error",
@@ -636,6 +639,81 @@ final class ConfigParserTests: XCTestCase {
         """
         let config = try ConfigParser.parse(toml)
         XCTAssertNil(config.items[0].command.icon)
+        XCTAssertNil(config.items[0].command.symbol)
+        XCTAssertNil(config.items[0].command.iconSource)
+    }
+
+    func testParsesNonEmptySymbolAsNativeSource() throws {
+        let toml = """
+        [item.limits]
+        type = "command"
+        run = "echo 42"
+        symbol = "chart.bar.fill"
+        """
+        let item = try ConfigParser.parse(toml).items[0].command
+        XCTAssertEqual(item.symbol, "chart.bar.fill")
+        XCTAssertNil(item.icon)
+        XCTAssertEqual(item.iconSource, .symbol("chart.bar.fill"))
+    }
+
+    func testRejectsEmptySymbolWithItemKeyAndSourceLine() {
+        let toml = """
+        [item.clock]
+        type = "command"
+        run = "date"
+        symbol = ""
+        """
+        XCTAssertThrowsError(try ConfigParser.parse(toml)) { error in
+            let parseError = error as? ConfigParseError
+            XCTAssertTrue(parseError?.message.contains("item.clock.symbol") == true)
+            XCTAssertTrue(parseError?.message.contains("non-empty") == true)
+            XCTAssertEqual(parseError?.line, 4)
+        }
+    }
+
+    func testRejectsWhitespaceOnlySymbolWithItemKeyAndSourceLine() {
+        let toml = """
+        [item.clock]
+        type = "command"
+        run = "date"
+        symbol = "   "
+        """
+        XCTAssertThrowsError(try ConfigParser.parse(toml)) { error in
+            let parseError = error as? ConfigParseError
+            XCTAssertTrue(parseError?.message.contains("item.clock.symbol") == true)
+            XCTAssertTrue(parseError?.message.contains("non-empty") == true)
+            XCTAssertEqual(parseError?.line, 4)
+        }
+    }
+
+    func testRejectsSymbolAndIconTogetherWithItemKeyAndSourceLine() {
+        let toml = """
+        [item.clock]
+        type = "command"
+        run = "date"
+        icon = "/path/to/icon.svg"
+        symbol = "chart.bar.fill"
+        """
+        XCTAssertThrowsError(try ConfigParser.parse(toml)) { error in
+            let parseError = error as? ConfigParseError
+            XCTAssertTrue(parseError?.message.contains("item.clock.symbol") == true)
+            XCTAssertTrue(parseError?.message.contains("icon") == true)
+            XCTAssertTrue(parseError?.message.contains("cannot be combined") == true)
+            XCTAssertEqual(parseError?.line, 5)
+        }
+    }
+
+    func testIconOnlyPathResolutionStaysUnchangedWhenSymbolIsAbsent() throws {
+        let toml = """
+        [item.limits]
+        type = "command"
+        run = "echo 42"
+        icon = "/path/to/icon.svg"
+        """
+        let item = try ConfigParser.parse(toml).items[0].command
+        XCTAssertEqual(item.icon, "/path/to/icon.svg")
+        XCTAssertNil(item.symbol)
+        XCTAssertEqual(item.iconSource, .file("/path/to/icon.svg"))
     }
 
     // TOMLKit's underlying store is alphabetically ordered, not insertion-ordered,
@@ -1004,6 +1082,21 @@ final class ConfigParserTests: XCTestCase {
             config.items[0].command.icon,
             ("~/Pictures/pinchos.svg" as NSString).expandingTildeInPath
         )
+        XCTAssertNil(config.items[0].command.symbol)
+    }
+
+    func testSymbolIsNotTildeExpandedOrResolvedRelativeToConfig() throws {
+        let toml = """
+        [item.limits]
+        type = "command"
+        run = "echo 42"
+        symbol = "~/chart.bar.fill"
+        """
+
+        let config = try ConfigParser.parse(toml, relativeTo: URL(fileURLWithPath: "/tmp/pinchos.toml"))
+        XCTAssertEqual(config.items[0].command.symbol, "~/chart.bar.fill")
+        XCTAssertNil(config.items[0].command.icon)
+        XCTAssertEqual(config.items[0].command.iconSource, .symbol("~/chart.bar.fill"))
     }
 
     func testRejectsUnresolvableConfiguredShell() {

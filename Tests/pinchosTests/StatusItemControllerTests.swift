@@ -8,6 +8,7 @@ private final class FakeManagedItem: ManagedItemLifecycle {
     private let eventLog: EventLog
     private var pendingConfig: ItemConfig?
     private(set) var config: ItemConfig
+    var iconDiagnosticNote: String?
     let initiallyVisible: Bool
     let isTopLevel: Bool
     let ownedStatusItem: NSStatusItem?
@@ -603,6 +604,50 @@ final class StatusItemControllerTests: XCTestCase {
             "commit-update:beta"
         ])
         XCTAssertEqual(beta.config.commandConfig?.run, "echo changed")
+    }
+
+    func testIconSourceChangeUpdatesExistingItemInPlace() async {
+        let factory = FakeManagedItemFactory()
+        let controller = makeController(factory: factory)
+        addTeardownBlock { @MainActor in
+            await controller.shutdown()
+        }
+
+        await controller.apply(config: PinchosConfig(items: [
+            ItemConfig(name: "alpha", run: "echo alpha", interval: .scheduled(60), icon: "/tmp/a.svg")
+        ]))
+        let original = factory.created[0]
+        factory.eventLog.clear()
+
+        await controller.apply(config: PinchosConfig(items: [
+            ItemConfig(name: "alpha", run: "echo alpha", interval: .scheduled(60), symbol: "chart.bar.fill")
+        ]))
+
+        XCTAssertTrue(factory.created[0] === original)
+        XCTAssertEqual(factory.created.count, 1)
+        XCTAssertEqual(factory.eventLog.events, [
+            "prepare-update:alpha",
+            "commit-update:alpha"
+        ])
+        XCTAssertEqual(original.config.command.iconSource, .symbol("chart.bar.fill"))
+    }
+
+    func testLifecycleMenuSurfacesUnavailableSymbolDiagnostic() async throws {
+        let factory = FakeManagedItemFactory()
+        let controller = makeController(factory: factory)
+        addTeardownBlock { @MainActor in
+            await controller.shutdown()
+        }
+
+        await controller.apply(config: PinchosConfig(items: [
+            ItemConfig(name: "alpha", run: "echo alpha", interval: .manual, symbol: "missing.symbol")
+        ]))
+        factory.created[0].iconDiagnosticNote = "symbol 'missing.symbol' is unavailable on this macOS version; rendering text-only"
+
+        let menu = await controller.makeLifecycleMenu(forManagedItem: factory.created[0])
+        XCTAssertTrue(menu.items.contains(where: {
+            $0.title.contains("unavailable") && $0.title.contains("missing.symbol")
+        }))
     }
 
     func testAddAndRemoveCommitAfterAllPreparation() async {

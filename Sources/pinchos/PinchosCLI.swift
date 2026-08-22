@@ -488,6 +488,11 @@ struct PinchosCLI {
                 switch entry {
                 case .group(let group):
                     reportSuccess("group.\(group.name).members", "\(group.members.count) member\(group.members.count == 1 ? "" : "s")")
+                    problemCount += reportIconSource(
+                        path: "group.\(group.name)",
+                        source: group.iconSource,
+                        reportAbsentAsIconNotConfigured: false
+                    )
                 case .command(let item):
                     if fileManager.isExecutableFile(atPath: item.shell[0]) {
                         reportSuccess("item.\(item.name).shell", item.shell[0])
@@ -508,16 +513,11 @@ struct PinchosCLI {
                         reportSuccess("item.\(item.name).working_directory", "inherits Pinchos working directory")
                     }
 
-                    if let icon = item.icon {
-                        if fileManager.isReadableFile(atPath: icon) {
-                            reportSuccess("item.\(item.name).icon", icon)
-                        } else {
-                            reportFailure("item.\(item.name).icon", "file is missing or unreadable: \(icon)")
-                            problemCount += 1
-                        }
-                    } else {
-                        reportSuccess("item.\(item.name).icon", "not configured")
-                    }
+                    problemCount += reportIconSource(
+                        path: "item.\(item.name)",
+                        source: item.iconSource,
+                        reportAbsentAsIconNotConfigured: true
+                    )
 
                     if item.environment.isEmpty {
                         reportSuccess("item.\(item.name).env", "inherits process environment")
@@ -655,6 +655,43 @@ struct PinchosCLI {
         output.stdout("[FAIL] \(check): \(detail)\n")
     }
 
+    /// Reports the configured icon source. Missing files and unavailable
+    /// symbols are doctor failures (the item itself stays valid and renders
+    /// text-only). `reportAbsentAsIconNotConfigured` preserves the historical
+    /// command-item "icon: not configured" line; groups omit the absent case
+    /// so existing doctor output for icon-free groups stays unchanged.
+    @discardableResult
+    private func reportIconSource(
+        path: String,
+        source: ItemIconSource?,
+        reportAbsentAsIconNotConfigured: Bool
+    ) -> Int {
+        switch source {
+        case .file(let icon):
+            if fileManager.isReadableFile(atPath: icon) {
+                reportSuccess("\(path).icon", icon)
+                return 0
+            }
+            reportFailure("\(path).icon", "file is missing or unreadable: \(icon)")
+            return 1
+        case .symbol(let name):
+            if StatusItemIconRenderer.isSymbolAvailable(name) {
+                reportSuccess("\(path).symbol", name)
+                return 0
+            }
+            reportFailure(
+                "\(path).symbol",
+                "unavailable on this macOS version; rendering text-only: \(name)"
+            )
+            return 1
+        case nil:
+            if reportAbsentAsIconNotConfigured {
+                reportSuccess("\(path).icon", "not configured")
+            }
+            return 0
+        }
+    }
+
     private func commandName(from run: String) -> String? {
         var tokens = [String]()
         var token = ""
@@ -776,7 +813,7 @@ struct PinchosCLI {
     }
 
     private func printDoctorHelp() {
-        output.stdout("Usage: pinchos doctor\n\nInspect config accessibility, shells, commands, working directories, icons, environment, and launch-at-login state when available.\n")
+        output.stdout("Usage: pinchos doctor\n\nInspect config accessibility, shells, commands, working directories, icons and SF Symbols, environment, and launch-at-login state when available.\n")
     }
 
     private func printConfigPathHelp() {
