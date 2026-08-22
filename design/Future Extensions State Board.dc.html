@@ -1,0 +1,159 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<meta name="design_doc_mode" content="canvas">
+<style>html,body{margin:0}body{background:#111114}a{color:#0a84ff}a:hover{color:#3f9cff}</style>
+</helmet>
+<div style="font-family:-apple-system,BlinkMacSystemFont,'SF Pro Text','Helvetica Neue',sans-serif;-webkit-font-smoothing:antialiased;padding:36px;display:flex;flex-direction:column;gap:44px;color:#e8e8ec;min-width:1480px">
+  <div style="font:12px 'SF Mono',ui-monospace,monospace;color:#8e8e93">PINCHOS — FUTURE EXTENSIONS STATE BOARD · issues #14 #19 #20 #21 mapped into existing native primitives · nothing becomes a dashboard · unresolved decisions marked ⏳ (owner approval required, see decision-log.md)</div>
+
+  <div data-screen-label="SF Symbols #14" style="display:flex;flex-direction:column;gap:14px">
+    <div style="font-size:13px;font-weight:600;color:#c9c9ce">1 · SF Symbols (#14) — a second icon source, same 16×16 contract</div>
+    <div style="display:grid;grid-template-columns:260px 330px 330px 1fr;gap:10px 18px;align-items:center">
+      <sc-for list="{{ symbolStates }}" as="st" hint-placeholder-count="6">
+        <div style="font-size:12.5px;color:#c9c9ce">{{ st.label }}</div>
+        <sc-for list="{{ schemes }}" as="scheme" hint-placeholder-count="2">
+          <div style="color-scheme: {{ scheme.name }}">
+            <div style="display:inline-flex;align-items:stretch;height:25px;border-radius:5px;padding:0 14px;background: {{ scheme.barBg }};font-size:13px;color:light-dark(#1d1d1f,#f5f5f7)">
+              <div style="display:flex;align-items:center;gap:5px;padding:0 9px;margin:2px 0">
+                <sc-if value="{{ st.sym }}" hint-placeholder-val="{{ false }}"><svg width="15" height="15" viewBox="0 0 16 16"><rect x="2" y="8" width="3" height="6" rx="1" fill="currentColor"></rect><rect x="6.5" y="4" width="3" height="10" rx="1" fill="currentColor"></rect><rect x="11" y="6" width="3" height="8" rx="1" fill="currentColor"></rect></svg></sc-if>
+                <sc-if value="{{ st.text }}" hint-placeholder-val="{{ false }}"><span style="font-variant-numeric:tabular-nums">{{ st.text }}</span></sc-if>
+              </div>
+            </div>
+          </div>
+        </sc-for>
+        <div style="font:10.5px/1.5 'SF Mono',ui-monospace,monospace;color:#8e8e93">{{ st.note }}</div>
+      </sc-for>
+    </div>
+    <div style="display:grid;grid-template-columns:150px 1fr 1fr 130px;gap:8px 16px;margin-top:6px;padding:16px;border-radius:10px;background:#1a1a1e;font:11px/1.5 'SF Mono',ui-monospace,monospace">
+      <div style="color:#5c5c61">DECISION</div><div style="color:#5c5c61">OPTIONS</div><div style="color:#5c5c61">RECOMMENDATION</div><div style="color:#5c5c61">STATUS</div>
+      <sc-for list="{{ decisions }}" as="d" hint-placeholder-count="3">
+        <div style="color:#c9c9ce">{{ d.id }}</div>
+        <div style="color:#8e8e93">{{ d.options }}</div>
+        <div style="color:#c9c9ce">{{ d.rec }}</div>
+        <div style="color:#e0a34e">⏳ owner approval</div>
+      </sc-for>
+    </div>
+  </div>
+
+  <div data-screen-label="json-v1 #19" style="display:flex;flex-direction:column;gap:14px">
+    <div style="font-size:13px;font-weight:600;color:#c9c9ce">2 · Structured output (#19) — json-v1 maps to state, never to layout</div>
+    <div style="display:flex;gap:28px;align-items:flex-start;flex-wrap:wrap">
+      <sc-for list="{{ payloads }}" as="p" hint-placeholder-count="4">
+        <div style="display:flex;flex-direction:column;gap:10px;width:330px">
+          <div style="font:11px 'SF Mono',ui-monospace,monospace;color:#8e8e93">{{ p.label }}</div>
+          <pre style="margin:0;padding:12px 14px;border-radius:8px;background:#1a1a1e;font:10.5px/1.6 'SF Mono',ui-monospace,monospace;color:#a8c7a4;white-space:pre-wrap">{{ p.json }}</pre>
+          <div style="display:flex;align-items:center;gap:10px">
+            <span style="font:10px 'SF Mono',ui-monospace,monospace;color:#5c5c61">→</span>
+            <sc-if value="{{ p.gone }}" hint-placeholder-val="{{ false }}">
+              <div style="display:inline-flex;align-items:center;height:25px;padding:0 12px;border-radius:5px;border:1px dashed rgba(255,255,255,.28);color:#98989d;font:11px 'SF Mono',ui-monospace,monospace">no status item — {{ p.gone }}</div>
+            </sc-if>
+            <sc-if value="{{ p.text }}" hint-placeholder-val="{{ true }}">
+              <div style="color-scheme:dark;display:inline-flex;align-items:stretch;height:25px;border-radius:5px;padding:0 14px;background:rgba(28,28,32,.92);font-size:13px;color:#f5f5f7"><div style="display:flex;align-items:center;padding:0 9px;margin:2px 0;font-variant-numeric:tabular-nums">{{ p.text }}</div></div>
+            </sc-if>
+          </div>
+          <div style="font:10.5px/1.55 'SF Mono',ui-monospace,monospace;color:#8e8e93">{{ p.note }}</div>
+        </div>
+      </sc-for>
+    </div>
+    <div style="font:10.5px/1.6 'SF Mono',ui-monospace,monospace;color:#5c5c61;max-width:1100px">precedence (D4–D6, ⏳): state ∈ neutral | warning | failure (unknown = malformed) · runtime actions listed after static actions, capped at 8 · runtime icon/symbol overrides configured source while present · version required; unknown version = malformed; unknown extra fields ignored · churn: title updates in place, tabular digits bound width jitter, menus are built on open so menu churn cannot occur · payload bounded by max_output like any stream</div>
+  </div>
+
+  <div data-screen-label="Event triggers #20" style="display:flex;flex-direction:column;gap:14px">
+    <div style="font-size:13px;font-weight:600;color:#c9c9ce">3 · Event-driven refresh (#20) — invisible while working, two Diagnostics rows when you look</div>
+    <div style="display:flex;gap:28px;align-items:flex-start;flex-wrap:wrap">
+      <sc-for list="{{ triggerPanels }}" as="tp" hint-placeholder-count="2">
+        <div style="display:flex;flex-direction:column;gap:10px;width:400px">
+          <div style="font:11px 'SF Mono',ui-monospace,monospace;color:#8e8e93">{{ tp.label }}</div>
+          <div style="color-scheme:dark;border-radius:6px;padding:5px 0;background:rgba(45,45,48,.98);box-shadow:0 10px 34px rgba(0,0,0,.35),0 0 0 1px rgba(255,255,255,.14);font-size:13px;color:#f5f5f7">
+            <sc-for list="{{ tp.rows }}" as="row" hint-placeholder-count="5">
+              <sc-if value="{{ row.sep }}" hint-placeholder-val="{{ false }}"><div style="height:1px;margin:5px 10px;background:rgba(255,255,255,.14)"></div></sc-if>
+              <sc-if value="{{ row.label }}" hint-placeholder-val="{{ true }}">
+                <div style="display:flex;align-items:center;height:22px;margin:0 5px;padding:0 10px;border-radius:5px;color: {{ row.color }};font-variant-numeric:tabular-nums"><span style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{{ row.label }}</span></div>
+              </sc-if>
+            </sc-for>
+          </div>
+          <div style="font:10.5px/1.55 'SF Mono',ui-monospace,monospace;color:#8e8e93">{{ tp.note }}</div>
+        </div>
+      </sc-for>
+    </div>
+  </div>
+
+  <div data-screen-label="Notifications #21" style="display:flex;flex-direction:column;gap:14px">
+    <div style="font-size:13px;font-weight:600;color:#c9c9ce">4 · Failure + recovery notifications (#21) — native banners, transitions only</div>
+    <div style="display:flex;gap:24px;align-items:flex-start">
+      <sc-for list="{{ schemes }}" as="scheme" hint-placeholder-count="2">
+        <div style="color-scheme: {{ scheme.name }};flex:1;border-radius:12px;padding:20px;background:light-dark(#d8d9de,#1f2024);display:flex;flex-direction:column;gap:12px">
+          <sc-for list="{{ notifs }}" as="n" hint-placeholder-count="3">
+            <div style="width:356px;display:flex;gap:11px;align-items:center;padding:11px 14px;border-radius:14px;background:light-dark(rgba(248,248,250,.92),rgba(46,46,50,.92));box-shadow:0 8px 28px rgba(0,0,0,.22),0 0 0 1px light-dark(rgba(0,0,0,.08),rgba(255,255,255,.1))">
+              <div style="width:38px;height:38px;flex:none;border-radius:9px;background:#f2ede3;box-shadow:inset 0 0 0 1px rgba(0,0,0,.08);display:flex;align-items:center;justify-content:center">
+                <svg width="26" height="26" viewBox="0 0 32 32"><circle cx="17.6" cy="13.8" r="4.6" fill="#6b7f3e"></circle><circle cx="12.6" cy="20.4" r="3.4" fill="#c4593a"></circle><line x1="8.6" y1="26" x2="23.4" y2="6.6" stroke="#2b2a28" stroke-width="2.4" stroke-linecap="round"></line><circle cx="23.4" cy="6.6" r="1.9" fill="#2b2a28"></circle></svg>
+              </div>
+              <div style="flex:1;min-width:0;display:flex;flex-direction:column;gap:1px">
+                <div style="display:flex;align-items:baseline;gap:8px"><span style="font-size:13px;font-weight:600;color:light-dark(#1d1d1f,#f5f5f7)">{{ n.title }}</span><span style="flex:1"></span><span style="font-size:11px;color:light-dark(#8e8e93,#98989d)">now</span></div>
+                <div style="font-size:12.5px;line-height:1.35;color:light-dark(#3c3c43,#d1d1d6);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ n.body }}</div>
+              </div>
+            </div>
+          </sc-for>
+        </div>
+      </sc-for>
+    </div>
+    <div style="display:flex;gap:28px;flex-wrap:wrap;font:10.5px/1.7 'SF Mono',ui-monospace,monospace;color:#8e8e93;max-width:1200px">
+      <div style="flex:1;min-width:340px">rules (D11): opt-in per item (notify_on) · transitions only: healthy→failure, failure→recovery · zero repeats while the same failure persists · notify_cooldown (proposal: 15 m default) gates repeated distinct failures · body = exact cause + at most one bounded stderr line — never a dump · identity = Pinchos.app icon (#15); item name is the title · click = no-op v1 ⏳ (no dashboard exists to open)</div>
+      <div style="flex:1;min-width:340px">permission denied: no alert, no nagging — `pinchos doctor` reports it and the item’s Diagnostics submenu carries “Notifications: permission denied — enable in System Settings”. Notifications are an add-on: the item keeps refreshing and the bar keeps telling the truth without them.</div>
+    </div>
+  </div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props="{&quot;$preview&quot;:{&quot;width&quot;:&quot;1520px&quot;,&quot;height&quot;:&quot;1750px&quot;}}">
+class Component extends DCLogic {
+  renderVals() {
+    const dis = (label) => ({ label, color: 'rgba(235,235,245,.45)' });
+    const en = (label) => ({ label, color: '#f5f5f7' });
+    const warn = (label) => ({ label, color: '#f5f5f7' });
+    return {
+      schemes: [
+        { name: 'light', barBg: 'light-dark(rgba(248,248,250,.92),rgba(28,28,32,.92))' },
+        { name: 'dark', barBg: 'light-dark(rgba(248,248,250,.92),rgba(28,28,32,.92))' }
+      ],
+      symbolStates: [
+        { label: 'symbol = "chart.bar.fill" + text', sym: true, text: '81%', note: 'native symbol image · automatic template tint in light/dark/contrast · aligned to the existing 16×16 local-icon target' },
+        { label: 'Symbol-only (icon_only = true)', sym: true, text: '', note: 'VoiceOver: “claude, 81 percent, fresh” — the configured name, value, and state; never an unlabeled image' },
+        { label: 'Group icon (16×16 template)', sym: true, text: 'AI: 81% · 43%', note: 'groups take the same icon contract; summary stays text' },
+        { label: 'Unavailable symbol on this macOS (U2 rec.)', sym: false, text: '81%', note: 'config stays valid → text-only render + Diagnostics row “Symbol: unavailable on this macOS” + doctor warning · never a crash, never a rejected config for a machine-dependent catalog' },
+        { label: 'Invalid symbol name (empty / non-string)', sym: false, text: '—', note: 'parse-time config error with item/key/line context — strict schema, same as unknown keys today' }
+      ],
+      decisions: [
+        { id: 'U1 · symbol + icon both set', options: 'reject · prefer symbol · prefer icon', rec: 'reject — “specify either symbol or icon, not both” (smallest strict contract)' },
+        { id: 'U2 · symbol unavailable at runtime', options: 'reject config, keep last good · valid, text-only + diagnostic', rec: 'valid config, text-only render + diagnostic + doctor warning (availability is per-machine)' },
+        { id: 'U3 · icon size contract', options: 'keep 16×16, no key · modest size key', rec: 'keep 16×16, no new key — revisit only with concrete demand' }
+      ],
+      payloads: [
+        { label: 'neutral', json: '{ "version": 1,\n  "text": "3 checks ok",\n  "tooltip": "api · web · db" }', text: '3 checks ok', note: 'presentation identical to plain text — the protocol adds state, not looks' },
+        { label: 'warning', json: '{ "version": 1,\n  "text": "2 failing",\n  "state": "warning",\n  "actions": [ { "title": "Open Incident #4821",\n    "run": "open https://…" } ] }', text: '2 failing ⚠︎', note: '⚠︎ + “Warning” headline in the menu · NOT a failure: no notification, no on_error policy · runtime actions appear after static actions (D5)' },
+        { label: 'failure', json: '{ "version": 1,\n  "text": "db down",\n  "state": "failure" }', text: '– ', note: 'enters the existing failure pipeline: on_error policy (replace shown), promoted error line, #21 failure transition · Diagnostics: “State: failure (reported by command)”' },
+        { label: 'hidden', json: '{ "version": 1,\n  "text": "",\n  "hidden": true }', gone: 'hidden: true', note: 'behaves like hide_when_empty · doctor: “hidden by structured output” · group member rows keep an annotated row' },
+        { label: 'malformed', json: '{ "version": 2,\n  "layout": "<table>…" }', text: '– ⚠︎', note: 'unknown version / unparseable / unknown state = a failed run: bar per on_error + ⚠︎ · Diagnostics: “Invalid json-v1 output” + bounded raw preview + Copy Full Output · never rendered raw in the bar' }
+      ],
+      triggerPanels: [
+        { label: 'Diagnostics ▸ — healthy event-driven item', note: 'policy summary + last cause; cause vocabulary: interval, manual, click, startup, wake, network, file, coalesced. Watchers reconfigure incrementally on reload; observers unregister with the item (no idle cost while the menu is closed — rows are read on open).', rows: [dis('State: fresh'), dis('Refresh: every 5 m + wake, network'), dis('Watching: ~/.config/vpn/state'), dis('Last refresh: 2:41:07 PM (network change)'), dis('Debounced: 2 events → 1 run'), { sep: true }, en('Copy Full Output')] },
+        { label: 'first level — watcher currently broken (only then promoted)', note: 'a broken watcher is actionable, so one line surfaces at the first level while broken — then returns to Diagnostics. No trigger dashboard, no event log.', rows: [en('Refresh Now'), { sep: true }, dis('on · updated 4 m ago'), warn('Watching: ~/status.json — unavailable ⚠︎'), dis('Diagnostics ▸'), { sep: true }, en('Open Config'), en('Reload Config'), en('Quit Pinchos')] }
+      ],
+      notifs: [
+        { title: 'claude', body: 'Failed · exit 1 — jq: parse error near line 2' },
+        { title: 'deploy-watch', body: 'Timed out after 15 s' },
+        { title: 'claude', body: 'Recovered · 81%' }
+      ]
+    };
+  }
+}
+</script>
+</body>
+</html>
