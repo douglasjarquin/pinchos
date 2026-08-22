@@ -1,0 +1,214 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<style>html,body{margin:0}body{background:#0e0e10}a{color:#0a84ff}a:hover{color:#3f9cff}</style>
+</helmet>
+<div style="font-family:-apple-system,BlinkMacSystemFont,'SF Pro Text','Helvetica Neue',sans-serif;-webkit-font-smoothing:antialiased">
+  <div style="display:flex;align-items:center;gap:16px;padding:10px 16px;background:#161619;color:#c9c9ce;font:11px/1.4 'SF Mono',ui-monospace,monospace;border-bottom:1px solid #2a2a2e;flex-wrap:wrap">
+    <span style="color:#8e8e93">PINCHOS PROTOTYPE · groups + recovery — simulated NSMenu, production is native AppKit · click member rows to open submenus</span>
+    <span style="flex:1"></span>
+    <span style="display:flex;gap:4px;align-items:center">
+      <button onClick="{{ setLight }}" style="font:11px 'SF Mono',monospace;padding:3px 10px;border-radius:5px;border:1px solid #3a3a3f;background: {{ lightBtnBg }};color: {{ lightBtnFg }};cursor:pointer">Light</button>
+      <button onClick="{{ setDark }}" style="font:11px 'SF Mono',monospace;padding:3px 10px;border-radius:5px;border:1px solid #3a3a3f;background: {{ darkBtnBg }};color: {{ darkBtnFg }};cursor:pointer">Dark</button>
+    </span>
+    <span style="display:flex;gap:6px;align-items:center"><span style="color:#8e8e93">group</span>
+      <select onChange="{{ setGroup }}" value="{{ groupId }}" style="font:11px 'SF Mono',monospace;padding:3px 6px;border-radius:5px;border:1px solid #3a3a3f;background:#222226;color:#e5e5ea;max-width:250px">{{ groupOptionEls }}</select>
+    </span>
+    <span style="display:flex;gap:6px;align-items:center"><span style="color:#8e8e93">recovery</span>
+      <select onChange="{{ setRecovery }}" value="{{ recoveryId }}" style="font:11px 'SF Mono',monospace;padding:3px 6px;border-radius:5px;border:1px solid #3a3a3f;background:#222226;color:#e5e5ea;max-width:250px">{{ recoveryOptionEls }}</select>
+    </span>
+  </div>
+
+  <div data-screen-label="Group menu stage" style="color-scheme: {{ scheme }};display:flex;align-items:stretch;min-height:560px;background: {{ stageBgTop }}">
+    <div style="flex:1;position:relative;padding:0 0 30px">
+      <div style="display:flex;align-items:stretch;height:25px;padding:0 12px;background:light-dark(rgba(248,248,250,.88),rgba(28,28,32,.88));font-size:13px;color:light-dark(#1d1d1f,#f5f5f7)">
+        <div style="display:flex;align-items:center;gap:18px"><span style="width:13px;height:13px;border-radius:4px;background:light-dark(#1d1d1f,#f5f5f7);opacity:.9"></span><span style="font-weight:700">Finder</span><span>File</span><span>Edit</span></div>
+        <span style="flex:1"></span>
+        <div style="display:flex;align-items:stretch">
+          <div style="display:flex;align-items:center;padding:0 9px;margin:2px 0;border-radius:4px;background:light-dark(rgba(0,0,0,.14),rgba(255,255,255,.18));font-variant-numeric:tabular-nums;white-space:nowrap">{{ groupBarText }}</div>
+          <div style="display:flex;align-items:center;padding:0 9px;margin:2px 0;white-space:nowrap;font-variant-numeric:tabular-nums">Wed Aug 21&nbsp; 9:41 AM</div>
+        </div>
+      </div>
+      <div style="position:absolute;top:27px;right:96px;width:296px">
+        <div style="border-radius:6px;padding:5px 0;background:light-dark(rgba(238,238,240,.97),rgba(45,45,48,.97));box-shadow:0 10px 34px rgba(0,0,0,.35),0 0 0 1px light-dark(rgba(0,0,0,.12),rgba(255,255,255,.14));font-size:13px;color:light-dark(#1d1d1f,#f5f5f7)">
+          <sc-for list="{{ groupRows }}" as="row" hint-placeholder-count="8">
+            <sc-if value="{{ row.sep }}" hint-placeholder-val="{{ false }}"><div style="height:1px;margin:5px 10px;background:light-dark(rgba(0,0,0,.1),rgba(255,255,255,.14))"></div></sc-if>
+            <sc-if value="{{ row.label }}" hint-placeholder-val="{{ true }}">
+              <div onClick="{{ row.click }}" style="display:flex;align-items:center;gap:8px;height:22px;margin:0 5px;padding:0 10px;border-radius:5px;color: {{ row.color }};background: {{ row.bg }};font-variant-numeric:tabular-nums" style-hover="background: {{ row.hoverBg }};color: {{ row.hoverColor }}">
+                <span style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:170px">{{ row.label }}</span>
+                <span style="flex:1"></span>
+                <sc-if value="{{ row.value }}" hint-placeholder-val="{{ false }}"><span style="white-space:nowrap;opacity:.75;font-size:12.5px">{{ row.value }}</span></sc-if>
+                <sc-if value="{{ row.right }}" hint-placeholder-val="{{ false }}"><span style="font-size:11px;opacity:.8">{{ row.right }}</span></sc-if>
+              </div>
+            </sc-if>
+          </sc-for>
+        </div>
+        <sc-if value="{{ memberShown }}" hint-placeholder-val="{{ false }}">
+          <div style="position:absolute;left:290px;width:280px;border-radius:6px;padding:5px 0;background:light-dark(rgba(238,238,240,.98),rgba(45,45,48,.98));box-shadow:0 10px 34px rgba(0,0,0,.35),0 0 0 1px light-dark(rgba(0,0,0,.12),rgba(255,255,255,.14));font-size:13px;color:light-dark(#1d1d1f,#f5f5f7);top: {{ memberTop }}">
+            <sc-for list="{{ memberRows }}" as="row" hint-placeholder-count="6">
+              <sc-if value="{{ row.sep }}" hint-placeholder-val="{{ false }}"><div style="height:1px;margin:5px 10px;background:light-dark(rgba(0,0,0,.1),rgba(255,255,255,.14))"></div></sc-if>
+              <sc-if value="{{ row.label }}" hint-placeholder-val="{{ true }}">
+                <div style="display:flex;align-items:center;height:22px;margin:0 5px;padding:0 10px;border-radius:5px;color: {{ row.color }};font-variant-numeric:tabular-nums" style-hover="background: {{ row.hoverBg }};color: {{ row.hoverColor }}">
+                  <span style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-family: {{ row.font }}">{{ row.label }}</span>
+                  <span style="flex:1"></span>
+                  <sc-if value="{{ row.right }}" hint-placeholder-val="{{ false }}"><span style="font-size:11px;opacity:.8">{{ row.right }}</span></sc-if>
+                </div>
+              </sc-if>
+            </sc-for>
+          </div>
+        </sc-if>
+      </div>
+    </div>
+    <div style="width:330px;flex:none;padding:20px;display:flex;flex-direction:column;gap:12px;background:light-dark(rgba(255,255,255,.4),rgba(0,0,0,.25));border-left:1px solid light-dark(rgba(0,0,0,.08),rgba(255,255,255,.08))">
+      <div style="font:11px 'SF Mono',ui-monospace,monospace;color:light-dark(#5c5c61,#8e8e93)">GROUP — {{ groupName }}</div>
+      <div style="font:11px/1.7 'SF Mono',ui-monospace,monospace;color:light-dark(#5c5c61,#98989d);white-space:pre-line">{{ groupNote }}</div>
+      <div style="margin-top:auto;font:10px/1.6 'SF Mono',ui-monospace,monospace;color:light-dark(#8e8e93,#6e6e73)">one native status item per group · summary recomputed on menu open · member submenu = the member’s normal menu minus the global zone (D2) · left or right click both open this menu</div>
+    </div>
+  </div>
+
+  <div data-screen-label="Recovery stage" style="color-scheme: {{ scheme }};display:flex;align-items:stretch;min-height:480px;border-top:1px solid #2a2a2e;background: {{ stageBgBottom }}">
+    <div style="flex:1;position:relative;padding:0 0 30px">
+      <div style="display:flex;align-items:stretch;height:25px;padding:0 12px;background:light-dark(rgba(248,248,250,.88),rgba(28,28,32,.88));font-size:13px;color:light-dark(#1d1d1f,#f5f5f7)">
+        <div style="display:flex;align-items:center;gap:18px"><span style="width:13px;height:13px;border-radius:4px;background:light-dark(#1d1d1f,#f5f5f7);opacity:.9"></span><span style="font-weight:700">Finder</span><span>File</span><span>Edit</span></div>
+        <span style="flex:1"></span>
+        <div style="display:flex;align-items:stretch">
+          <sc-for list="{{ recoveryBarItems }}" as="it" hint-placeholder-count="3">
+            <div style="display:flex;align-items:center;padding:0 9px;margin:2px 0;border-radius:4px;background: {{ it.plate }};white-space:nowrap;font-variant-numeric:tabular-nums">{{ it.text }}</div>
+          </sc-for>
+          <div style="display:flex;align-items:center;padding:0 9px;margin:2px 0;white-space:nowrap;font-variant-numeric:tabular-nums">Wed Aug 21&nbsp; 9:41 AM</div>
+        </div>
+      </div>
+      <sc-if value="{{ recoveryMenuShown }}" hint-placeholder-val="{{ true }}">
+        <div style="position:absolute;top:27px;right:96px;width:312px;border-radius:6px;padding:5px 0;background:light-dark(rgba(238,238,240,.97),rgba(45,45,48,.97));box-shadow:0 10px 34px rgba(0,0,0,.35),0 0 0 1px light-dark(rgba(0,0,0,.12),rgba(255,255,255,.14));font-size:13px;color:light-dark(#1d1d1f,#f5f5f7)">
+          <sc-for list="{{ recoveryRows }}" as="row" hint-placeholder-count="8">
+            <sc-if value="{{ row.sep }}" hint-placeholder-val="{{ false }}"><div style="height:1px;margin:5px 10px;background:light-dark(rgba(0,0,0,.1),rgba(255,255,255,.14))"></div></sc-if>
+            <sc-if value="{{ row.label }}" hint-placeholder-val="{{ true }}">
+              <div style="display:flex;align-items:center;min-height:22px;margin:0 5px;padding:0 10px;border-radius:5px;color: {{ row.color }};font-variant-numeric:tabular-nums" style-hover="background: {{ row.hoverBg }};color: {{ row.hoverColor }}">
+                <span style="white-space:normal;line-height:1.4;padding:2px 0;font-family: {{ row.font }}">{{ row.label }}</span>
+              </div>
+            </sc-if>
+          </sc-for>
+        </div>
+      </sc-if>
+      <sc-if value="{{ recoveryAnnotation }}" hint-placeholder-val="{{ false }}">
+        <div style="position:absolute;top:44px;right:96px;width:320px;padding:12px 14px;border-radius:8px;border:1px dashed light-dark(rgba(0,0,0,.3),rgba(255,255,255,.3));font:11px/1.6 'SF Mono',ui-monospace,monospace;color:light-dark(#5c5c61,#98989d);white-space:pre-line">{{ recoveryAnnotation }}</div>
+      </sc-if>
+    </div>
+    <div style="width:330px;flex:none;padding:20px;display:flex;flex-direction:column;gap:12px;background:light-dark(rgba(255,255,255,.4),rgba(0,0,0,.25));border-left:1px solid light-dark(rgba(0,0,0,.08),rgba(255,255,255,.08))">
+      <div style="font:11px 'SF Mono',ui-monospace,monospace;color:light-dark(#5c5c61,#8e8e93)">RECOVERY — {{ recoveryName }}</div>
+      <div style="font:11px/1.7 'SF Mono',ui-monospace,monospace;color:light-dark(#5c5c61,#98989d);white-space:pre-line">{{ recoveryNote }}</div>
+      <div style="margin-top:auto;font:10px/1.6 'SF Mono',ui-monospace,monospace;color:light-dark(#8e8e93,#6e6e73)">the recovery item is the entire first-run + recovery experience · no onboarding window, no wizard · bounded error previews use the existing formatter · Copy Error is always complete</div>
+    </div>
+  </div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props="{&quot;$preview&quot;:{&quot;width&quot;:&quot;1500px&quot;,&quot;height&quot;:&quot;1080px&quot;},&quot;appearance&quot;:{&quot;editor&quot;:&quot;enum&quot;,&quot;default&quot;:&quot;light&quot;,&quot;options&quot;:[&quot;light&quot;,&quot;dark&quot;],&quot;tsType&quot;:&quot;string&quot;,&quot;section&quot;:&quot;Stage&quot;}}">
+class Component extends DCLogic {
+  state = { scheme: this.props.appearance ?? 'light', groupId: 'mixed', recoveryId: 'syntax', openMember: 'claude' };
+  renderVals() {
+    const s = this.state;
+    const SEP = { sep: true };
+    const en = (label) => ({ label, en: true });
+    const dis = (label) => ({ label });
+    const mono = (label) => ({ label, mono: true });
+    const mem = (name, value, subRows) => ({ label: name, value, right: '▸', en: true, member: name, subRows });
+    const memMenu = (actions, summary, diag) => [...actions.map(en), en('Refresh Now'), SEP, dis(summary), { label: 'Diagnostics', right: '▸' , en: true }, ...(diag ? [dis(diag)] : [])];
+    const claudeSub = memMenu(['Open Usage'], '81% · updated 2 m ago');
+    const codexFailSub = [en('Refresh Now'), SEP, dis('Failed · exit 1 · 12 m ago'), mono('curl: (6) could not resolve host'), en('Copy Full Error'), { label: 'Diagnostics', right: '▸', en: true }];
+    const G = [
+      { id: 'healthy', name: '1 · Healthy members', bar: 'AI: 81% · 43%',
+        rows: [dis('AI: 81% · 43%'), SEP, mem('claude', '81%', claudeSub), mem('codex', '43%', memMenu([], '43% · updated 4 m ago')), SEP, en('Open Config'), en('Reload Config'), en('Quit Pinchos')],
+        note: 'Disabled compact summary first — the same string as the bar, so the menu confirms what the slot shows.\n\nMember rows: name left, compact value right, native submenu arrow. One global zone at the bottom (not repeated per member).' },
+      { id: 'mixed', name: '2 · Mixed health', bar: 'AI: 81% · – · 12ms ~',
+        rows: [dis('AI: 81% · – · 12ms ~'), SEP, mem('claude', '81%', claudeSub), mem('codex', '– ⚠︎', codexFailSub), mem('ping', '12ms ~', memMenu([], '12ms · stale · last success 22 m ago')), SEP, en('Open Config'), en('Reload Config'), en('Quit Pinchos')],
+        note: 'Markers ride along in member rows: ⚠︎ failed, ~ stale — the group summary carries them too, so one glance at the bar shows degraded members.\n\nOpen codex to see the promoted failure inside its submenu.' },
+      { id: 'unavailable', name: '3 · Member unavailable', bar: 'AI: 81% · –',
+        rows: [dis('AI: 81% · –'), SEP, mem('claude', '81%', claudeSub), mem('codex', '–', [en('Refresh Now'), SEP, dis('Unavailable · no result yet'), { label: 'Diagnostics', right: '▸', en: true }]), SEP, en('Open Config'), en('Reload Config'), en('Quit Pinchos')],
+        note: 'Before its first successful run a member contributes error_text (“–”) to the summary — quiet, monochrome, honest.' },
+      { id: 'hidden', name: '4 · Hidden + disabled members', bar: 'AI: 81%',
+        rows: [dis('AI: 81%'), SEP, mem('claude', '81%', claudeSub), dis('codex — hidden (empty output)'), dis('backup — disabled'), SEP, en('Open Config'), en('Reload Config'), en('Quit Pinchos')],
+        note: 'Hidden and disabled members keep annotated, disabled rows inside the group menu — this is where a hidden item stays diagnosable without a menu-bar slot.\n\nThey contribute nothing to the summary.' },
+      { id: 'nested', name: '5 · Nested group', bar: 'Ops: up · 81% · 43%',
+        rows: [dis('Ops: up · 81% · 43%'), SEP, mem('vpn', 'up', memMenu([], 'up · updated 8 s ago')), mem('AI', '81% · 43%', [dis('AI: 81% · 43%'), SEP, mem('claude', '81%'), mem('codex', '43%')]), SEP, en('Open Config'), en('Reload Config'), en('Quit Pinchos')],
+        note: 'A group may contain a group (validated acyclic). The nested row carries the nested summary as its value and its whole menu as the submenu — plain NSMenu nesting, no custom widget.' },
+      { id: 'long', name: '6 · Long names + values', bar: 'Fleet: 4 of 12 regions de…',
+        rows: [dis('Fleet: 4 of 12 regions degraded…'), SEP, mem('eu-central-failover-check', '4 degraded ⚠︎', codexFailSub), mem('us-east-deploy-pipeline-status', 'build 4821 succe…', memMenu([], 'build 4821 succeeded in 4 m 12 s')), SEP, en('Open Config'), en('Reload Config'), en('Quit Pinchos')],
+        note: 'Long member names ellipsize in the row; full strings live in the submenu summary and tooltip. The bar summary is truncated by the normal max_length rules.' },
+      { id: 'many', name: '7 · Many members', bar: 'Checks: 9 ok',
+        rows: [dis('Checks: ok · ok · ok · ok · ok · …'), SEP, ...['api', 'web', 'db', 'cache', 'queue', 'dns', 'cdn', 'auth', 'billing'].map(n => mem(n, 'ok', memMenu([], 'ok · updated 1 m ago'))), SEP, en('Open Config'), en('Reload Config'), en('Quit Pinchos')],
+        note: 'Many members = a long native menu that scrolls like any macOS menu. No pagination, no grid, no custom widget — the summary keeps the bar cheap.' }
+    ];
+    const R = [
+      { id: 'absent', name: '1 · Config file absent', bar: [{ text: 'pinchos', plate: 'open' }],
+        rows: [dis('No configuration found'), mono('~/.config/pinchos/pinchos.toml'), SEP, en('Create Example Config'), en('Open Config Directory'), en('Reload Config'), SEP, en('Quit Pinchos')],
+        note: 'First run = this menu. Primary action first: Create Example Config writes the documented example, then a reload picks it up.\n\nBar title is plain “pinchos” — setup, not an error.' },
+      { id: 'empty', name: '2 · Empty config', bar: [{ text: 'pinchos', plate: 'open' }],
+        rows: [dis('Config is empty — no items defined'), mono('~/.config/pinchos/pinchos.toml'), SEP, en('Create Example Config'), en('Open Config'), en('Open Config Directory'), en('Reload Config'), SEP, en('Quit Pinchos')],
+        note: 'An empty file is treated as setup, not failure: plain title, example offered, existing file opened rather than overwritten.' },
+      { id: 'syntax', name: '3 · TOML syntax error', bar: [{ text: 'pinchos ⚠︎', plate: 'open' }],
+        rows: [dis('Config error · line 12'), mono('expected value, found “]” (line 12, column 18)'), en('Copy Error'), SEP, en('Open Config'), en('Open Config Directory'), en('Reload Config'), SEP, en('Quit Pinchos')],
+        note: 'Bounded parse error with line context as a disabled mono row; Copy Error carries the full text. Open Config is primary — the fix is an edit.' },
+      { id: 'semantic', name: '4 · Semantic validation error', bar: [{ text: 'pinchos ⚠︎', plate: 'open' }],
+        rows: [dis('Config error — validation failed'), mono('group “ai”: member “claud” not found'), en('Copy Error'), SEP, en('Open Config'), en('Open Config Directory'), en('Reload Config'), SEP, en('Quit Pinchos')],
+        note: 'Semantic errors read exactly like the CLI’s validate output — same wording in menu, doctor, and validate.' },
+      { id: 'broken_running', name: '5 · Broken reload, last good config running', bar: [{ text: '81%' }, { text: '43%' }, { text: 'pinchos ⚠︎', plate: 'open' }],
+        rows: [dis('Config error · line 3 — last good config still running'), mono('unknown key “symbal” in item “claude” (line 3)'), en('Copy Error'), SEP, en('Open Config'), en('Open Config Directory'), en('Reload Config'), SEP, en('Quit Pinchos')],
+        note: 'A failed reload never kills working items: the last good configuration keeps running beside “pinchos ⚠︎”.\n\nThe headline says both facts — broken file, running items.' },
+      { id: 'openfail', name: '6 · Cannot open or create config', bar: [{ text: 'pinchos ⚠︎', plate: 'open' }],
+        rows: [dis('Could not create example config'), mono('permission denied — ~/.config/pinchos'), en('Copy Error'), SEP, en('Create Example Config'), en('Open Config Directory'), en('Reload Config'), SEP, en('Quit Pinchos')],
+        note: 'Filesystem failures surface as the same bounded-error pattern; actions stay available for retry after the user fixes permissions.' },
+      { id: 'recovered', name: '7 · Successful recovery', bar: [{ text: '81%' }, { text: '43%' }, { text: '14:32' }],
+        rows: null,
+        annotation: 'reload succeeded →\n\n· the pinchos recovery item disappears\n· configured items appear (or update in place)\n· no confirmation dialog, no notification, no celebration\n\nthe menu bar returning to normal IS the confirmation.',
+        note: 'Recovery is silent by design. State is visible where it lives — the bar itself.' }
+    ];
+    const g = G.find(x => x.id === s.groupId) || G[0];
+    const r = R.find(x => x.id === s.recoveryId) || R[0];
+    const label = 'light-dark(#1d1d1f,#f5f5f7)';
+    const dimC = 'light-dark(rgba(60,60,67,.45),rgba(235,235,245,.45))';
+    const decorate = (row) => row.sep ? { sep: true } : {
+      label: row.label, value: row.value || '', right: row.right || '',
+      color: row.en ? label : dimC,
+      bg: row.member && row.member === s.openMember ? 'light-dark(rgba(0,0,0,.08),rgba(255,255,255,.1))' : 'transparent',
+      hoverBg: row.en ? 'light-dark(#0064e1,#0a84ff)' : 'transparent',
+      hoverColor: row.en ? '#ffffff' : dimC,
+      font: row.mono ? "'SF Mono',ui-monospace,monospace" : 'inherit',
+      click: row.member ? () => this.setState(p => ({ openMember: p.openMember === row.member ? null : row.member })) : undefined
+    };
+    let memberTop = 5, found = false, memberRows = [];
+    for (const row of g.rows) {
+      if (row.member === s.openMember) { found = !!row.subRows; memberRows = (row.subRows || []).map(decorate); break; }
+      memberTop += row.sep ? 11 : 22;
+    }
+    return {
+      stageBgTop: s.scheme === 'light' ? 'linear-gradient(135deg,#c9cdd6,#b4bac7)' : 'linear-gradient(135deg,#2a2c33,#1f2126)',
+      stageBgBottom: s.scheme === 'light' ? 'linear-gradient(135deg,#c6cad3,#b0b6c3)' : 'linear-gradient(135deg,#26282f,#1c1e23)',
+      scheme: s.scheme,
+      setLight: () => this.setState({ scheme: 'light' }), setDark: () => this.setState({ scheme: 'dark' }),
+      lightBtnBg: s.scheme === 'light' ? '#e5e5ea' : 'transparent', lightBtnFg: s.scheme === 'light' ? '#1d1d1f' : '#c9c9ce',
+      darkBtnBg: s.scheme === 'dark' ? '#e5e5ea' : 'transparent', darkBtnFg: s.scheme === 'dark' ? '#1d1d1f' : '#c9c9ce',
+      groupId: s.groupId, recoveryId: s.recoveryId,
+      groupOptionEls: G.map(x => React.createElement('option', { value: x.id, key: x.id }, x.name)),
+      recoveryOptionEls: R.map(x => React.createElement('option', { value: x.id, key: x.id }, x.name)),
+      setGroup: e => this.setState({ groupId: e.target.value, openMember: null }),
+      setRecovery: e => this.setState({ recoveryId: e.target.value }),
+      groupName: g.name, groupNote: g.note, groupBarText: g.bar,
+      groupRows: g.rows.map(decorate),
+      memberShown: found, memberTop: memberTop + 'px', memberRows,
+      recoveryName: r.name, recoveryNote: r.note,
+      recoveryBarItems: r.bar.map(b => ({ text: b.text, plate: b.plate === 'open' ? 'light-dark(rgba(0,0,0,.14),rgba(255,255,255,.18))' : 'transparent' })),
+      recoveryMenuShown: !!r.rows, recoveryRows: (r.rows || []).map(decorate),
+      recoveryAnnotation: r.annotation || false
+    };
+  }
+}
+</script>
+</body>
+</html>

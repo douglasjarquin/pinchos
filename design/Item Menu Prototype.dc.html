@@ -1,0 +1,243 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<style>html,body{margin:0}body{background:#0e0e10}a{color:#0a84ff}a:hover{color:#3f9cff}</style>
+</helmet>
+<div style="font-family:-apple-system,BlinkMacSystemFont,'SF Pro Text','Helvetica Neue',sans-serif;-webkit-font-smoothing:antialiased">
+  <div style="display:flex;align-items:center;gap:16px;padding:10px 16px;background:#161619;color:#c9c9ce;font:11px/1.4 'SF Mono',ui-monospace,monospace;border-bottom:1px solid #2a2a2e;flex-wrap:wrap">
+    <span style="color:#8e8e93">PINCHOS PROTOTYPE · command-item menu — simulated NSMenu, production is native AppKit · click ▸ rows to open submenus</span>
+    <span style="flex:1"></span>
+    <span style="display:flex;gap:4px;align-items:center">
+      <button onClick="{{ setLight }}" style="font:11px 'SF Mono',monospace;padding:3px 10px;border-radius:5px;border:1px solid #3a3a3f;background: {{ lightBtnBg }};color: {{ lightBtnFg }};cursor:pointer">Light</button>
+      <button onClick="{{ setDark }}" style="font:11px 'SF Mono',monospace;padding:3px 10px;border-radius:5px;border:1px solid #3a3a3f;background: {{ darkBtnBg }};color: {{ darkBtnFg }};cursor:pointer">Dark</button>
+    </span>
+    <span style="display:flex;gap:6px;align-items:center">
+      <span style="color:#8e8e93">scenario</span>
+      <select onChange="{{ setScenario }}" value="{{ scenarioId }}" style="font:11px 'SF Mono',monospace;padding:3px 6px;border-radius:5px;border:1px solid #3a3a3f;background:#222226;color:#e5e5ea;max-width:290px">{{ scenarioOptionEls }}</select>
+    </span>
+  </div>
+  <div data-screen-label="Item menu stage" style="color-scheme: {{ scheme }};display:flex;gap:0;align-items:stretch;min-height:720px;background: {{ stageBg }}">
+    <div style="flex:1;position:relative;padding:0 0 40px">
+      <div style="display:flex;align-items:stretch;height:25px;padding:0 12px;background:light-dark(rgba(248,248,250,.88),rgba(28,28,32,.88));font-size:13px;color:light-dark(#1d1d1f,#f5f5f7)">
+        <div style="display:flex;align-items:center;gap:18px"><span style="width:13px;height:13px;border-radius:4px;background:light-dark(#1d1d1f,#f5f5f7);opacity:.9"></span><span style="font-weight:700">Finder</span><span>File</span><span>Edit</span><span>View</span></div>
+        <span style="flex:1"></span>
+        <div style="display:flex;align-items:stretch">
+          <div style="display:flex;align-items:center;gap:5px;padding:0 9px;margin:2px 0;border-radius:4px;background: {{ itemPlate }};font-variant-numeric:tabular-nums;white-space:nowrap">
+            <sc-if value="{{ barIcon }}" hint-placeholder-val="{{ false }}"><svg width="15" height="15" viewBox="0 0 16 16"><rect x="2" y="8" width="3" height="6" rx="1" fill="currentColor"></rect><rect x="6.5" y="4" width="3" height="10" rx="1" fill="currentColor"></rect><rect x="11" y="6" width="3" height="8" rx="1" fill="currentColor"></rect></svg></sc-if>
+            <sc-if value="{{ barText }}" hint-placeholder-val="{{ true }}"><span>{{ barText }}</span></sc-if>
+          </div>
+          <div style="display:flex;align-items:center;padding:0 9px;margin:2px 0;font-variant-numeric:tabular-nums;white-space:nowrap">Wed Aug 21&nbsp; 9:41 AM</div>
+        </div>
+      </div>
+      <sc-if value="{{ menuShown }}" hint-placeholder-val="{{ true }}">
+        <div style="position:absolute;top:27px;right:96px;width:284px">
+          <div style="border-radius:6px;padding:5px 0;background:light-dark(rgba(238,238,240,.97),rgba(45,45,48,.97));box-shadow:0 10px 34px rgba(0,0,0,.35),0 0 0 1px light-dark(rgba(0,0,0,.12),rgba(255,255,255,.14));font-size:13px;color:light-dark(#1d1d1f,#f5f5f7)">
+            <sc-for list="{{ rows }}" as="row" hint-placeholder-count="10">
+              <sc-if value="{{ row.sep }}" hint-placeholder-val="{{ false }}"><div style="height:1px;margin:5px 10px;background:light-dark(rgba(0,0,0,.1),rgba(255,255,255,.14))"></div></sc-if>
+              <sc-if value="{{ row.label }}" hint-placeholder-val="{{ true }}">
+                <div onClick="{{ row.click }}" style="display:flex;align-items:center;height:22px;margin:0 5px;padding:0 10px;border-radius:5px;cursor: {{ row.cursor }};color: {{ row.color }};background: {{ row.bg }};font-variant-numeric:tabular-nums" style-hover="background: {{ row.hoverBg }};color: {{ row.hoverColor }}">
+                  <span style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-family: {{ row.font }}">{{ row.label }}</span>
+                  <span style="flex:1"></span>
+                  <sc-if value="{{ row.right }}" hint-placeholder-val="{{ false }}"><span style="font-size:11px;opacity:.8">{{ row.right }}</span></sc-if>
+                </div>
+              </sc-if>
+            </sc-for>
+          </div>
+          <sc-if value="{{ subShown }}" hint-placeholder-val="{{ false }}">
+            <div style="position:absolute;left:278px;width:312px;border-radius:6px;padding:5px 0;background:light-dark(rgba(238,238,240,.98),rgba(45,45,48,.98));box-shadow:0 10px 34px rgba(0,0,0,.35),0 0 0 1px light-dark(rgba(0,0,0,.12),rgba(255,255,255,.14));font-size:13px;color:light-dark(#1d1d1f,#f5f5f7);top: {{ subTop }}">
+              <sc-for list="{{ subRows }}" as="row" hint-placeholder-count="8">
+                <sc-if value="{{ row.sep }}" hint-placeholder-val="{{ false }}"><div style="height:1px;margin:5px 10px;background:light-dark(rgba(0,0,0,.1),rgba(255,255,255,.14))"></div></sc-if>
+                <sc-if value="{{ row.label }}" hint-placeholder-val="{{ true }}">
+                  <div style="display:flex;align-items:center;min-height:22px;margin:0 5px;padding:0 10px;border-radius:5px;cursor: {{ row.cursor }};color: {{ row.color }};font-variant-numeric:tabular-nums" style-hover="background: {{ row.hoverBg }};color: {{ row.hoverColor }}">
+                    <span style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-family: {{ row.font }}">{{ row.label }}</span>
+                  </div>
+                </sc-if>
+              </sc-for>
+            </div>
+          </sc-if>
+        </div>
+      </sc-if>
+      <sc-if value="{{ annotation }}" hint-placeholder-val="{{ false }}">
+        <div style="position:absolute;top:44px;right:96px;width:300px;padding:12px 14px;border-radius:8px;border:1px dashed light-dark(rgba(0,0,0,.3),rgba(255,255,255,.3));font:11px/1.6 'SF Mono',ui-monospace,monospace;color:light-dark(#5c5c61,#98989d)">{{ annotation }}</div>
+      </sc-if>
+    </div>
+    <div style="width:330px;flex:none;padding:20px;display:flex;flex-direction:column;gap:14px;background:light-dark(rgba(255,255,255,.4),rgba(0,0,0,.25));border-left:1px solid light-dark(rgba(0,0,0,.08),rgba(255,255,255,.08))">
+      <div style="font:11px 'SF Mono',ui-monospace,monospace;color:light-dark(#5c5c61,#8e8e93)">SPEC — {{ scenarioName }}</div>
+      <div style="display:flex;flex-direction:column;gap:3px"><div style="font:10px 'SF Mono',ui-monospace,monospace;color:light-dark(#8e8e93,#6e6e73)">TOOLTIP</div><div style="font-size:12px;line-height:1.5;color:light-dark(#3c3c43,#d1d1d6)">{{ specTooltip }}</div></div>
+      <div style="display:flex;flex-direction:column;gap:3px"><div style="font:10px 'SF Mono',ui-monospace,monospace;color:light-dark(#8e8e93,#6e6e73)">VOICEOVER</div><div style="font-size:12px;line-height:1.5;color:light-dark(#3c3c43,#d1d1d6)">{{ specVoice }}</div></div>
+      <div style="display:flex;flex-direction:column;gap:3px"><div style="font:10px 'SF Mono',ui-monospace,monospace;color:light-dark(#8e8e93,#6e6e73)">NOTES</div><div style="font:11px/1.6 'SF Mono',ui-monospace,monospace;color:light-dark(#5c5c61,#98989d)">{{ specNote }}</div></div>
+      <div style="margin-top:auto;font:10px/1.6 'SF Mono',ui-monospace,monospace;color:light-dark(#8e8e93,#6e6e73)">first level target 6–10 rows · diagnostics one level down · failures promoted · globals last · lifecycle: menu built on open, released on close</div>
+    </div>
+  </div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props="{&quot;$preview&quot;:{&quot;width&quot;:&quot;1500px&quot;,&quot;height&quot;:&quot;780px&quot;},&quot;scenario&quot;:{&quot;editor&quot;:&quot;enum&quot;,&quot;default&quot;:&quot;healthy_actions&quot;,&quot;options&quot;:[&quot;healthy_noact&quot;,&quot;healthy_actions&quot;,&quot;manual&quot;,&quot;running&quot;,&quot;firstrun&quot;,&quot;stale&quot;,&quot;fail_replace&quot;,&quot;fail_keep&quot;,&quot;timeout&quot;,&quot;launch&quot;,&quot;disabled&quot;,&quot;click_never&quot;,&quot;click_running&quot;,&quot;click_failed&quot;,&quot;action_diag&quot;,&quot;truncated&quot;,&quot;saturated&quot;,&quot;event&quot;,&quot;runtime_actions&quot;,&quot;notify&quot;,&quot;notify_denied&quot;],&quot;tsType&quot;:&quot;string&quot;,&quot;section&quot;:&quot;Scenario&quot;},&quot;appearance&quot;:{&quot;editor&quot;:&quot;enum&quot;,&quot;default&quot;:&quot;light&quot;,&quot;options&quot;:[&quot;light&quot;,&quot;dark&quot;],&quot;tsType&quot;:&quot;string&quot;,&quot;section&quot;:&quot;Scenario&quot;}}">
+class Component extends DCLogic {
+  state = { scheme: this.props.appearance ?? 'light', scenarioId: this.props.scenario ?? 'healthy_actions', openSub: 'diag' };
+  renderVals() {
+    const s = this.state;
+    const SEP = { sep: true };
+    const en = (label, right) => ({ label, right, en: true });
+    const dis = (label) => ({ label });
+    const mono = (label) => ({ label, mono: true });
+    const sub = (label, key) => ({ label, right: '▸', en: true, sub: key });
+    const GLOBALS = [SEP, en('Open Config'), en('Reload Config'), en('Quit Pinchos')];
+    const diagBase = (state, extra) => [
+      dis('State: ' + state), dis('Last attempt: 2:41:07 PM'), dis('Last success: 2:41:07 PM'),
+      dis('Duration: 0.42 s'), dis('Exit: 0'), dis('Skipped: 0 · Coalesced: 0'),
+      dis('Output: 4 bytes / 1 line'), dis('Error: empty'), SEP, en('Copy Full Output'),
+      SEP, dis('Refresh: every 5 m'), dis('Scheduler: 1/4 active')
+    ].concat(extra || []);
+    const clickIdle = [dis('Click: open https://claude.ai/usage'), dis('State: completed'), dis('Last run: 2:12 PM · 0.9 s · exit 0'), dis('Output: 0 bytes'), SEP, en('Copy Click Output')];
+    const SC = [
+      { id: 'healthy_noact', name: '1 · Healthy — no configured actions', bar: { text: '14:32' },
+        rows: [en('Refresh Now'), SEP, dis('14:32 · updated 30 s ago'), sub('Diagnostics', 'diag'), ...GLOBALS],
+        subs: { diag: diagBase('fresh') },
+        tip: 'clock — date +%H:%M · updated 30 s ago', voice: '“clock, 14:32, fresh.” Menu rows announced natively by NSMenu.',
+        note: '7 rows. Refresh Now present because no refresh action exists. Summary = value + relative freshness; exact timestamps live in Diagnostics — never duplicated.' },
+      { id: 'healthy_actions', name: '2 · Healthy — multiple configured actions', bar: { icon: true, text: '81%' },
+        rows: [en('Open Usage'), en('Copy Quota Report'), en('Refresh Now'), SEP, dis('81% · updated 2 m ago'), sub('Diagnostics', 'diag'), sub('Click Action', 'click'), ...GLOBALS],
+        subs: { diag: diagBase('fresh'), click: clickIdle },
+        tip: 'Weekly quota resets Monday 3:00 PM · Click: open usage', voice: '“claude, 81 percent, fresh.”',
+        note: '10 rows with 2 actions + click diagnostics. [[item.action]] rows first — native title case. Per-action diagnostics submenus appear only after an action has run (scenario 15).' },
+      { id: 'manual', name: '3 · Manual interval', bar: { text: 'backup: ok' },
+        rows: [en('Refresh Now'), SEP, dis('ok · manual · last run 1 h ago'), sub('Diagnostics', 'diag'), ...GLOBALS],
+        subs: { diag: [dis('State: fresh'), dis('Interval: manual'), dis('Last attempt: 1:41:07 PM'), dis('Last success: 1:41:07 PM'), dis('Duration: 8.1 s'), dis('Exit: 0'), dis('Output: 12 bytes / 1 line'), SEP, en('Copy Full Output')] },
+        tip: 'backup — runs only on demand', voice: '“backup, ok, fresh.”',
+        note: 'interval = "manual": Refresh Now is the only scheduler. Summary says so — no stale marker can apply without stale_after.' },
+      { id: 'running', name: '4 · Running — prior value retained', bar: { text: '81%' },
+        rows: [en('Open Usage'), { label: 'Refresh Now' }, SEP, dis('81% · refreshing…'), sub('Diagnostics', 'diag'), ...GLOBALS],
+        subs: { diag: [dis('State: running'), dis('Started: 2:46:02 PM'), dis('Last success: 2:41:07 PM'), dis('Previous duration: 0.42 s'), SEP, en('Copy Full Output'), SEP, dis('Scheduler: 2/4 active')] },
+        tip: 'claude — running, showing last value', voice: '“claude, 81 percent, refreshing.”',
+        note: 'Bar unchanged — no spinner, no marker. Refresh Now disabled while a run is in flight (runner never overlaps). Value stays useful.' },
+      { id: 'firstrun', name: '5 · First run not yet completed', bar: { text: '…' },
+        rows: [{ label: 'Refresh Now' }, SEP, dis('Running… · first run · started 2 s ago'), sub('Diagnostics', 'diag'), ...GLOBALS],
+        subs: { diag: [dis('State: running'), dis('Started: 2:46:02 PM'), dis('Last success: never'), dis('Output: none yet')] },
+        tip: 'claude — waiting for first result', voice: '“claude, running, no result yet.”',
+        note: 'Bar shows “…” until the first result. Before the first attempt the state is “unavailable” and the bar shows error_text (default “–”).' },
+      { id: 'stale', name: '6 · Stale', bar: { text: '81% ~' },
+        rows: [en('Open Usage'), en('Refresh Now'), SEP, dis('81% · stale · last success 22 m ago'), sub('Diagnostics', 'diag'), ...GLOBALS],
+        subs: { diag: [dis('State: stale'), dis('Stale after: 10 m'), dis('Last attempt: 2:41:07 PM'), dis('Last success: 2:24:11 PM'), dis('Duration: 0.42 s'), dis('Exit: 0'), SEP, en('Copy Full Output')] },
+        tip: 'claude — stale since 2:34 PM', voice: '“claude, 81 percent, stale.”',
+        note: 'Trailing ~ marker (D3) — text, not color. Value keeps earning its slot; menu explains its age.' },
+      { id: 'fail_replace', name: '7 · Failure — replaces the value', bar: { text: '–' },
+        rows: [en('Open Usage'), en('Refresh Now'), SEP, dis('Failed · exit 1 · 12 m ago'), mono('jq: parse error near line 2'), en('Copy Full Error'), sub('Diagnostics', 'diag'), ...GLOBALS],
+        subs: { diag: [dis('State: failed'), dis('Last attempt: 2:29:31 PM'), dis('Last success: 1:12:04 PM'), dis('Duration: 0.9 s'), dis('Exit: 1'), dis('Output: 0 bytes'), dis('Error: 812 bytes / 4 lines'), SEP, en('Copy Full Error'), SEP, dis('Scheduler: 1/4 active')] },
+        tip: 'claude — failed, exit 1', voice: '“claude, failed, exit 1.” Bounded preview row has accessibilityHelp pointing to Copy Full Error.',
+        note: 'on_error = "replace" → bar shows error_text. The reason is promoted: headline + one bounded stderr line (control chars → ␉␛, newlines → ␊) + Copy Full Error at first level.' },
+      { id: 'fail_keep', name: '8 · Failure — keeps last good value', bar: { text: '81% ⚠︎' },
+        rows: [en('Open Usage'), en('Refresh Now'), SEP, dis('Failed · exit 1 · 12 m ago'), dis('Showing last good: 81% · 2:41 PM'), mono('curl: (6) could not resolve host'), en('Copy Full Error'), sub('Diagnostics', 'diag'), ...GLOBALS],
+        subs: { diag: [dis('State: failed (value retained)'), dis('Last attempt: 2:29:31 PM'), dis('Last success: 2:41:07 PM'), dis('Exit: 1'), dis('Error: 44 bytes / 1 line'), SEP, en('Copy Full Output'), en('Copy Full Error')] },
+        tip: 'claude — failed, showing last good value', voice: '“claude, failed, showing last good value 81 percent.”',
+        note: 'on_error = "keep_last" → value + ⚠︎ (U+26A0 U+FE0E, text presentation — renders monochrome in the template pipeline).' },
+      { id: 'timeout', name: '9 · Timeout', bar: { text: '81% ⚠︎' },
+        rows: [en('Refresh Now'), SEP, dis('Timed out after 15 s · 3 m ago'), sub('Diagnostics', 'diag'), ...GLOBALS],
+        subs: { diag: [dis('State: timed out'), dis('Last attempt: 2:43:00 PM'), dis('Last success: 2:41:07 PM'), dis('Duration: 15.0 s (limit)'), dis('Output: 0 bytes · Error: 0 bytes')] },
+        tip: 'healthcheck — timed out after 15 s', voice: '“healthcheck, timed out.”',
+        note: 'Copy commands are omitted when a stream is empty — no dead rows. Replace policy would show “–” instead of the kept value.' },
+      { id: 'launch', name: '10 · Launch failure', bar: { text: '–' },
+        rows: [en('Refresh Now'), SEP, dis('Launch failed · 1 m ago'), mono('/opt/bin/zx: no such file'), en('Copy Full Error'), sub('Diagnostics', 'diag'), ...GLOBALS],
+        subs: { diag: [dis('State: failed (launch)'), dis('Exit: 127 (not found)'), dis('Shell: /bin/sh -c'), dis('Working directory: ~/ops'), SEP, en('Copy Full Error')] },
+        tip: 'deploy — could not launch', voice: '“deploy, launch failed.”',
+        note: 'The exact reason the process never started — shell + cwd in Diagnostics because launch failures are usually environment problems.' },
+      { id: 'disabled', name: '11 · Disabled item', bar: null,
+        annotation: 'disabled = true\n\nno status item is created — no slot, no menu, no timers, no runner.\n\nvisible in `pinchos doctor` output; re-enable by editing the config (live reload applies it in place).',
+        tip: '—', voice: '— (nothing to focus)', note: 'Annotated system behavior — an invisible control is not drawn.' },
+      { id: 'click_never', name: '12 · Click command never run', bar: { icon: true, text: '81%' },
+        rows: [en('Open Usage'), en('Refresh Now'), SEP, dis('81% · updated 2 m ago'), sub('Diagnostics', 'diag'), sub('Click Action', 'click'), ...GLOBALS],
+        subs: { diag: diagBase('fresh'), click: [dis('Click: open https://claude.ai/usage'), dis('State: never run')] },
+        tip: '81% · Click: open usage', voice: '“claude, 81 percent, fresh.” Click command exposed as an accessibility action.',
+        note: 'Left-click semantics stay silent in the bar; the tooltip line “Click: open usage” (H4) is the discoverability affordance.' },
+      { id: 'click_running', name: '13 · Click command running', bar: { icon: true, text: '81%' },
+        rows: [en('Open Usage'), en('Refresh Now'), SEP, dis('81% · updated 2 m ago'), sub('Diagnostics', 'diag'), sub('Click Action', 'click'), ...GLOBALS],
+        subs: { diag: diagBase('fresh'), click: [dis('Click: open https://claude.ai/usage'), dis('State: running'), dis('Started: 2:46:10 PM')] },
+        tip: '81%', voice: 'unchanged — click runs do not alter the item value',
+        note: 'No bar change for click activity: the value is the item’s meaning; the click command is a side task.' },
+      { id: 'click_failed', name: '14 · Click command failed', bar: { icon: true, text: '81%' },
+        rows: [en('Open Usage'), en('Refresh Now'), SEP, dis('81% · updated 2 m ago'), dis('Click command failed · exit 3 · 1 m ago'), en('Copy Click Error'), sub('Diagnostics', 'diag'), sub('Click Action', 'click'), ...GLOBALS],
+        subs: { diag: diagBase('fresh'), click: [dis('Click: open https://claude.ai/usage'), dis('State: failed'), dis('Exit: 3'), dis('Error: 96 bytes / 1 line'), mono('open: unable to open URL'), SEP, en('Copy Click Error')] },
+        tip: '81% · Click: open usage (last click failed)', voice: '“claude, 81 percent, fresh. Click command failed, exit 3.”',
+        note: 'A failed click is actionable → promoted line + Copy Click Error at first level. The item value itself stays healthy and unmarked.' },
+      { id: 'action_diag', name: '15 · Per-action diagnostics', bar: { icon: true, text: '81%' },
+        rows: [en('Open Usage'), en('Copy Quota Report'), en('Refresh Now'), SEP, dis('81% · updated 2 m ago'), sub('Diagnostics', 'diag'), sub('“Copy Quota Report”', 'a1'), ...GLOBALS],
+        subs: { diag: diagBase('fresh'), a1: [dis('Run: quota --report | pbcopy'), dis('State: completed'), dis('Last run: 2:31 PM · 1.2 s · exit 0'), dis('Output: 2,048 bytes / 12 lines (truncated preview)'), mono('quota report 2026-08-21␊total: 81%␊…'), SEP, en('Copy “Copy Quota Report” Output')] },
+        tip: '81%', voice: 'submenu rows read naturally: “Run, quota report, completed.”',
+        note: 'A per-action diagnostics submenu appears once that action has run. Copy commands name the action to stay unambiguous.' },
+      { id: 'truncated', name: '16 · Truncated stdout + stderr', bar: { text: 'Deploy build 4821 succe…' },
+        rows: [en('Refresh Now'), SEP, dis('Deploy build 4821 succeeded in 4 m…'), sub('Diagnostics', 'diag'), ...GLOBALS],
+        subs: { diag: [dis('State: fresh'), dis('Output: 65,536 bytes / 214 lines'), mono('▸ built target api␊▸ built target web␊… (truncated, 65,536 bytes / 214 lines total)'), SEP, en('Copy Full Output'), SEP, dis('Error: 4,096 bytes / 31 lines'), mono('warning: dep pinned␊… (truncated)'), en('Copy Full Error')] },
+        tip: 'full output (capped) with real line breaks', voice: 'value + “truncated, full output available in the menu” (accessibilityHelp)',
+        note: 'max_length truncates the bar by grapheme clusters + …. Previews are bounded; ␊ marks escaped newlines; Copy commands are always complete.' },
+      { id: 'saturated', name: '17 · Scheduler saturated', bar: { text: '81%' },
+        rows: [en('Refresh Now'), SEP, dis('81% · updated 9 m ago'), sub('Diagnostics', 'diag'), SEP, dis('Scheduler: 4/4 active, 2 queued, 1 coalesced'), ...GLOBALS],
+        subs: { diag: [dis('State: fresh'), dis('Skipped: 3 (runner busy)'), dis('Coalesced: 1'), dis('Delayed: 2'), dis('Last attempt: 2:32:07 PM'), SEP, en('Copy Full Output')] },
+        tip: '81% · updates delayed — scheduler busy', voice: '“claude, 81 percent, fresh. Updates delayed, scheduler busy.”',
+        note: 'The scheduler line is promoted only while saturated (queued/coalesced/delayed > 0). Otherwise it lives in Diagnostics — a healthy menu never shows it.' },
+      { id: 'event', name: '18 · Event-triggered item (#20)', bar: { text: 'vpn: on' },
+        rows: [en('Refresh Now'), SEP, dis('on · updated 8 s ago'), sub('Diagnostics', 'diag'), ...GLOBALS],
+        subs: { diag: [dis('State: fresh'), dis('Refresh: every 5 m + wake, network'), dis('Watching: ~/.config/vpn/state'), dis('Last refresh: 2:41:07 PM (network change)'), dis('Debounced: 2 events → 1 run'), SEP, en('Copy Full Output')] },
+        tip: 'vpn — refreshes on network change', voice: '“vpn, on, fresh.”',
+        note: 'Triggers stay invisible while working (D10): policy + last cause live in Diagnostics. A broken watcher would promote one ⚠︎ line to the first level while broken.' },
+      { id: 'runtime_actions', name: '19 · json-v1 runtime actions (#19)', bar: { text: '2 failing ⚠︎' },
+        rows: [en('Open Dashboard'), SEP, en('Open Incident #4821'), en('Silence for 1 h'), en('Refresh Now'), SEP, dis('Warning · 2 failing · updated 1 m ago'), sub('Diagnostics', 'diag'), ...GLOBALS],
+        subs: { diag: [dis('State: warning (reported by command)'), dis('Output: json-v1'), dis('Runtime actions: 2 (cap 8)'), dis('Last attempt: 2:45:12 PM'), SEP, en('Copy Full Output')] },
+        tip: 'checks — 2 of 14 failing (from payload tooltip)', voice: '“checks, 2 failing, warning.”',
+        note: 'D5: static [[item.action]] first, separator, then runtime actions from the latest payload (capped). D4: warning ≠ failure — ⚠︎ + headline, but no notification, no on_error.' },
+      { id: 'notify', name: '20 · Notification-enabled item (#21)', bar: { text: 'db: ok' },
+        rows: [en('Refresh Now'), SEP, dis('ok · updated 1 m ago'), sub('Diagnostics', 'diag'), ...GLOBALS],
+        subs: { diag: [dis('State: fresh'), dis('Notifications: failure, recovery'), dis('Cooldown: 15 m'), dis('Last notified: never'), SEP, en('Copy Full Output')] },
+        tip: 'db healthcheck', voice: '“db, ok, fresh.”',
+        note: 'notify_on is invisible until it matters — one Diagnostics block documents the contract. Transitions only; no per-refresh noise.' },
+      { id: 'notify_denied', name: '21 · Notification permission denied (#21)', bar: { text: 'db: ok' },
+        rows: [en('Refresh Now'), SEP, dis('ok · updated 1 m ago'), sub('Diagnostics', 'diag'), ...GLOBALS],
+        subs: { diag: [dis('State: fresh'), dis('Notifications: permission denied'), dis('Enable in System Settings › Notifications'), dis('Configured: failure, recovery · cooldown 15 m'), SEP, en('Copy Full Output')] },
+        tip: 'db healthcheck', voice: '“db, ok, fresh.” Diagnostics rows read the denial and the fix.',
+        note: 'No alert, no nagging (D11): the denial lives in Diagnostics + pinchos doctor. The item keeps working — notifications are an add-on, not a dependency.' }
+      ];
+    const sc = SC.find(x => x.id === s.scenarioId) || SC[1];
+    const label = 'light-dark(#1d1d1f,#f5f5f7)';
+    const dim = 'light-dark(rgba(60,60,67,.45),rgba(235,235,245,.45))';
+    const decorate = (row) => row.sep ? { sep: true } : {
+      label: row.label, right: row.right || '', sep: false,
+      color: row.en ? label : dim,
+      bg: row.sub && row.sub === s.openSub ? 'light-dark(rgba(0,0,0,.08),rgba(255,255,255,.1))' : 'transparent',
+      hoverBg: row.en ? 'light-dark(#0064e1,#0a84ff)' : 'transparent',
+      hoverColor: row.en ? '#ffffff' : dim,
+      cursor: row.en ? 'default' : 'default',
+      font: row.mono ? "'SF Mono',ui-monospace,monospace" : 'inherit',
+      click: row.sub ? () => this.setState(p => ({ openSub: p.openSub === row.sub ? null : row.sub })) : undefined
+    };
+    const rows = (sc.rows || []).map(decorate);
+    let subTop = 5, found = false;
+    for (const r of (sc.rows || [])) {
+      if (r.sub === s.openSub) { found = true; break; }
+      subTop += r.sep ? 11 : 22;
+    }
+    const subShown = found && !!(sc.subs && sc.subs[s.openSub]);
+    return {
+      stageBg: s.scheme === 'light' ? 'linear-gradient(135deg,#c9cdd6,#b4bac7)' : 'linear-gradient(135deg,#2a2c33,#1f2126)',
+      scheme: s.scheme, scenarioId: s.scenarioId, scenarioName: sc.name,
+      scenarioOptionEls: SC.map(x => React.createElement('option', { value: x.id, key: x.id }, x.name)),
+      setLight: () => this.setState({ scheme: 'light' }), setDark: () => this.setState({ scheme: 'dark' }),
+      lightBtnBg: s.scheme === 'light' ? '#e5e5ea' : 'transparent', lightBtnFg: s.scheme === 'light' ? '#1d1d1f' : '#c9c9ce',
+      darkBtnBg: s.scheme === 'dark' ? '#e5e5ea' : 'transparent', darkBtnFg: s.scheme === 'dark' ? '#1d1d1f' : '#c9c9ce',
+      setScenario: e => this.setState({ scenarioId: e.target.value, openSub: 'diag' }),
+      menuShown: !!sc.rows, annotation: sc.annotation || false,
+      barIcon: !!(sc.bar && sc.bar.icon), barText: sc.bar ? sc.bar.text : '',
+      itemPlate: sc.rows ? 'light-dark(rgba(0,0,0,.14),rgba(255,255,255,.18))' : 'transparent',
+      rows, subShown, subTop: subTop + 'px',
+      subRows: subShown ? sc.subs[s.openSub].map(decorate) : [],
+      specTooltip: sc.tip, specVoice: sc.voice, specNote: sc.note
+    };
+  }
+}
+</script>
+</body>
+</html>

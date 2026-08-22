@@ -1,0 +1,135 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,400;12..96,500;12..96,600;12..96,700&family=IBM+Plex+Mono:wght@400;500;600&family=Source+Serif+4:ital,opsz,wght@0,8..60,400;0,8..60,600;1,8..60,400&display=swap">
+<style>html,body{margin:0}body{background:#F2EDE3;color:#2B2A28}a{color:#B14E33}a:hover{color:#96422B}::selection{background:rgba(196,89,58,.22)}</style>
+</helmet>
+<div style="font-family:'Bricolage Grotesque',system-ui,sans-serif;-webkit-font-smoothing:antialiased;min-height:100vh;display:flex;flex-direction:column">
+  <nav data-screen-label="Nav" style="max-width:1080px;width:100%;margin:0 auto;box-sizing:border-box;padding:26px 32px;display:flex;align-items:center;gap:12px">
+    <svg width="22" height="22" viewBox="0 0 32 32"><line x1="8.5" y1="26" x2="8.5" y2="14" stroke="#2B2A28" stroke-width="2.4" stroke-linecap="round"></line><circle cx="8.5" cy="11.6" r="3.1" fill="#6B7F3E"></circle><line x1="16" y1="26" x2="16" y2="9.5" stroke="#2B2A28" stroke-width="2.4" stroke-linecap="round"></line><circle cx="16" cy="6.9" r="3.1" fill="#C4593A"></circle><line x1="23.5" y1="26" x2="23.5" y2="16.5" stroke="#2B2A28" stroke-width="2.4" stroke-linecap="round"></line><circle cx="23.5" cy="14.1" r="3.1" fill="#6B7F3E"></circle></svg>
+    <span style="font-weight:700;font-size:18px;letter-spacing:-.01em">pinchos</span>
+    <span style="flex:1"></span>
+    <div style="display:flex;gap:26px;align-items:center;font-family:'IBM Plex Mono',monospace;font-size:12.5px">
+      <a href="#how" style="text-decoration:none">how it works</a>
+      <a href="https://github.com/douglasjarquin/pinchos" style="text-decoration:none">github ↗</a>
+    </div>
+  </nav>
+
+  <header data-screen-label="Hero" style="max-width:1080px;width:100%;margin:0 auto;box-sizing:border-box;padding:64px 32px 92px;display:grid;grid-template-columns:1.02fr .98fr;gap:60px;align-items:center">
+    <div style="display:flex;flex-direction:column;gap:22px">
+      <div style="font-family:'IBM Plex Mono',monospace;font-size:12px;font-weight:500;letter-spacing:.09em;text-transform:uppercase;color:#6B7F3E">macOS menu bar utility</div>
+      <h1 style="margin:0;font-family:'Source Serif 4',Georgia,serif;font-weight:600;font-size:54px;line-height:1.06;letter-spacing:-.015em;text-wrap:balance">Pin your scripts to the menu bar.</h1>
+      <p style="margin:0;font-size:17.5px;line-height:1.62;color:#5C574E;max-width:44ch;text-wrap:pretty">pinchos runs the commands you give it and pins their output where you can see it. Quiet while everything is healthy — unmissable the moment something fails.</p>
+      <div style="display:flex;gap:18px;align-items:center;margin-top:6px">
+        <sc-if value="{{ ctaSolid }}" hint-placeholder-val="{{ true }}">
+          <a href="https://github.com/douglasjarquin/pinchos" style="text-decoration:none;background:#B14E33;color:#F6F1E7;font-weight:600;font-size:15px;padding:13px 22px;border-radius:8px;display:inline-flex;align-items:center;gap:9px" style-hover="background:#96422B;color:#F6F1E7">View on GitHub<span style="font-family:'IBM Plex Mono',monospace">→</span></a>
+        </sc-if>
+        <sc-if value="{{ ctaOutline }}" hint-placeholder-val="{{ false }}">
+          <a href="https://github.com/douglasjarquin/pinchos" style="text-decoration:none;background:transparent;color:#B14E33;font-weight:600;font-size:15px;padding:12px 21px;border-radius:8px;border:1.5px solid #B14E33;display:inline-flex;align-items:center;gap:9px" style-hover="background:rgba(177,78,51,.08)">View on GitHub<span style="font-family:'IBM Plex Mono',monospace">→</span></a>
+        </sc-if>
+        <a href="#install" style="font-size:14.5px;font-weight:500">Build it yourself ↓</a>
+      </div>
+      <div style="font-family:'IBM Plex Mono',monospace;font-size:12px;color:#8A8377;margin-top:2px">free · open source · native AppKit · no Electron</div>
+    </div>
+    <div style="display:flex;flex-direction:column;gap:0;align-items:stretch;min-width:0">
+      <div style="display:flex;justify-content:flex-end">
+        <div style="color-scheme:dark;display:flex;align-items:center;height:27px;border-radius:7px;padding:0 10px;background:rgba(28,28,32,.95);box-shadow:0 10px 30px rgba(43,42,40,.18);font-family:-apple-system,BlinkMacSystemFont,'Helvetica Neue',sans-serif;font-size:13px;color:#f5f5f7;white-space:nowrap">
+          <span style="padding:0 9px">disk 82%</span>
+          <span style="padding:0 9px">vpn up</span>
+          <sc-if value="{{ failing }}" hint-placeholder-val="{{ true }}">
+            <span style="padding:2px 9px;border-radius:4px;background:rgba(255,255,255,.22)">deploy ⚠︎</span>
+          </sc-if>
+          <sc-if value="{{ healthy }}" hint-placeholder-val="{{ false }}">
+            <span style="padding:0 9px">deploy ok</span>
+          </sc-if>
+          <span style="padding:0 9px;opacity:.85">14:32</span>
+        </div>
+      </div>
+      <sc-if value="{{ failing }}" hint-placeholder-val="{{ true }}">
+        <div style="display:flex;justify-content:flex-end;padding-right:52px">
+          <div style="width:296px;margin-top:5px;border-radius:10px;background:rgba(248,248,250,.99);box-shadow:0 18px 44px rgba(43,42,40,.28),0 0 0 1px rgba(0,0,0,.09);font-family:-apple-system,BlinkMacSystemFont,'Helvetica Neue',sans-serif;font-size:13px;color:#1d1d1f;padding:5px 0">
+            <div style="padding:4px 14px 3px">Run Deploy Check</div>
+            <div style="padding:3px 14px 4px">Refresh Now</div>
+            <div style="height:1px;background:rgba(0,0,0,.1);margin:4px 14px"></div>
+            <div style="padding:4px 14px 1px;font-weight:600">Failed 2 minutes ago — exit 1</div>
+            <div style="padding:1px 14px 4px;font-family:'SF Mono',ui-monospace,monospace;font-size:11px;color:#6e6e73;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">jq: parse error: Invalid numeric literal</div>
+            <div style="padding:3px 14px 4px">Copy Full Error</div>
+            <div style="height:1px;background:rgba(0,0,0,.1);margin:4px 14px"></div>
+            <div style="padding:3px 14px 4px;display:flex"><span>Diagnostics</span><span style="flex:1"></span><span style="color:#6e6e73">▸</span></div>
+          </div>
+        </div>
+      </sc-if>
+      <sc-if value="{{ healthy }}" hint-placeholder-val="{{ false }}">
+        <div style="height:64px"></div>
+      </sc-if>
+      <div style="font-family:'IBM Plex Mono',monospace;font-size:11px;line-height:1.6;color:#8A8377;margin-top:22px;text-align:right">a failing item promotes its cause to the first level —<br>one glance, one Copy Full Error.</div>
+    </div>
+  </header>
+
+  <section id="how" data-screen-label="Features" style="border-top:1px solid rgba(43,42,40,.14);background:#F8F3E8">
+    <div style="max-width:1080px;margin:0 auto;box-sizing:border-box;padding:72px 32px;display:grid;grid-template-columns:repeat(3,1fr);gap:44px">
+      <div style="display:flex;flex-direction:column;gap:12px">
+        <div style="font-family:'IBM Plex Mono',monospace;font-size:12px;font-weight:500;letter-spacing:.09em;text-transform:uppercase;color:#6B7F3E">01 · config</div>
+        <h3 style="margin:0;font-family:'Source Serif 4',Georgia,serif;font-weight:600;font-size:22px">One plain-text file</h3>
+        <p style="margin:0;font-size:15px;line-height:1.62;color:#5C574E;text-wrap:pretty">Every item is a few lines of json — a title, a command, a schedule. Edit it in anything; pinchos picks up the change. There is no settings window.</p>
+      </div>
+      <div style="display:flex;flex-direction:column;gap:12px">
+        <div style="font-family:'IBM Plex Mono',monospace;font-size:12px;font-weight:500;letter-spacing:.09em;text-transform:uppercase;color:#6B7F3E">02 · signal</div>
+        <h3 style="margin:0;font-family:'Source Serif 4',Georgia,serif;font-weight:600;font-size:22px">Quiet when healthy</h3>
+        <p style="margin:0;font-size:15px;line-height:1.62;color:#5C574E;text-wrap:pretty">Healthy items are just text. Failure speaks in place — <span style="font-family:'IBM Plex Mono',monospace;font-size:13.5px">⚠︎</span> in the bar, the exact cause and a copy button one click away. Stale output gets a <span style="font-family:'IBM Plex Mono',monospace;font-size:13.5px">~</span>.</p>
+      </div>
+      <div style="display:flex;flex-direction:column;gap:12px">
+        <div style="font-family:'IBM Plex Mono',monospace;font-size:12px;font-weight:500;letter-spacing:.09em;text-transform:uppercase;color:#6B7F3E">03 · footprint</div>
+        <h3 style="margin:0;font-family:'Source Serif 4',Georgia,serif;font-weight:600;font-size:22px">Native and tiny</h3>
+        <p style="margin:0;font-size:15px;line-height:1.62;color:#5C574E;text-wrap:pretty">Real NSStatusItems and real NSMenus. System typography, template icons, zero idle motion, no dock icon. It behaves like a built-in menu extra.</p>
+      </div>
+    </div>
+  </section>
+
+  <section id="install" data-screen-label="Install" style="background:#2B2A28;color:#F2EDE3">
+    <div style="max-width:1080px;margin:0 auto;box-sizing:border-box;padding:68px 32px;display:grid;grid-template-columns:1fr 1.1fr;gap:56px;align-items:center">
+      <div style="display:flex;flex-direction:column;gap:14px">
+        <h2 style="margin:0;font-family:'Source Serif 4',Georgia,serif;font-weight:600;font-size:34px;letter-spacing:-.01em">Get pinchos</h2>
+        <p style="margin:0;font-size:15.5px;line-height:1.62;color:rgba(242,237,227,.72);max-width:40ch;text-wrap:pretty">Clone and build with the Swift toolchain, or start from the README — it covers install, the config format, and every marker pinchos can show.</p>
+        <a href="https://github.com/douglasjarquin/pinchos" style="color:#E29B7B;font-weight:500;font-size:14.5px" style-hover="color:#EFB79E">Read the README on GitHub →</a>
+      </div>
+      <div style="background:rgba(0,0,0,.32);border:1px solid rgba(242,237,227,.14);border-radius:12px;padding:20px 22px;font-family:'IBM Plex Mono',monospace;font-size:13.5px;line-height:1.85;color:#F2EDE3;overflow:auto">
+        <div><span style="color:#E29B7B;user-select:none">$ </span>git clone https://github.com/douglasjarquin/pinchos.git</div>
+        <div><span style="color:#E29B7B;user-select:none">$ </span>cd pinchos</div>
+        <div><span style="color:#E29B7B;user-select:none">$ </span>swift build -c release</div>
+      </div>
+    </div>
+  </section>
+
+  <footer data-screen-label="Footer" style="border-top:1px solid rgba(43,42,40,.14)">
+    <div style="max-width:1080px;margin:0 auto;box-sizing:border-box;padding:30px 32px;display:flex;align-items:center;gap:11px">
+      <svg width="17" height="17" viewBox="0 0 32 32"><line x1="8.5" y1="26" x2="8.5" y2="14" stroke="#2B2A28" stroke-width="2.6" stroke-linecap="round"></line><circle cx="8.5" cy="11.6" r="3.3" fill="#6B7F3E"></circle><line x1="16" y1="26" x2="16" y2="9.5" stroke="#2B2A28" stroke-width="2.6" stroke-linecap="round"></line><circle cx="16" cy="6.9" r="3.3" fill="#C4593A"></circle><line x1="23.5" y1="26" x2="23.5" y2="16.5" stroke="#2B2A28" stroke-width="2.6" stroke-linecap="round"></line><circle cx="23.5" cy="14.1" r="3.3" fill="#6B7F3E"></circle></svg>
+      <span style="font-weight:600;font-size:14px">pinchos</span>
+      <span style="flex:1"></span>
+      <div style="display:flex;gap:24px;font-family:'IBM Plex Mono',monospace;font-size:12px">
+        <a href="https://github.com/douglasjarquin/pinchos" style="text-decoration:none">github</a>
+        <a href="Site Design System.dc.html" style="text-decoration:none">design system</a>
+      </div>
+    </div>
+  </footer>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props="{&quot;heroState&quot;:{&quot;editor&quot;:&quot;enum&quot;,&quot;default&quot;:&quot;failing&quot;,&quot;options&quot;:[&quot;failing&quot;,&quot;healthy&quot;],&quot;tsType&quot;:&quot;string&quot;,&quot;section&quot;:&quot;Hero&quot;},&quot;ctaStyle&quot;:{&quot;editor&quot;:&quot;enum&quot;,&quot;default&quot;:&quot;solid&quot;,&quot;options&quot;:[&quot;solid&quot;,&quot;outline&quot;],&quot;tsType&quot;:&quot;string&quot;,&quot;section&quot;:&quot;Hero&quot;}}">
+class Component extends DCLogic {
+  renderVals() {
+    const hero = this.props.heroState ?? 'failing';
+    const cta = this.props.ctaStyle ?? 'solid';
+    return { failing: hero === 'failing', healthy: hero === 'healthy', ctaSolid: cta === 'solid', ctaOutline: cta === 'outline' };
+  }
+}
+</script>
+</body>
+</html>

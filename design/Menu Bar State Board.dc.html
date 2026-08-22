@@ -1,0 +1,178 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<meta name="design_doc_mode" content="canvas">
+<style>html,body{margin:0}body{background:#111114}a{color:#0a84ff}a:hover{color:#3f9cff}</style>
+</helmet>
+<div style="font-family:-apple-system,BlinkMacSystemFont,'SF Pro Text','Helvetica Neue',sans-serif;-webkit-font-smoothing:antialiased;padding:36px;display:flex;flex-direction:column;gap:44px;color:#e8e8ec;min-width:1560px">
+  <div style="display:flex;flex-direction:column;gap:6px">
+    <div style="font:12px 'SF Mono',ui-monospace,monospace;color:#8e8e93">PINCHOS — MENU BAR STATE BOARD · simulated NSStatusItem rendering · production is native AppKit · markers per decision-log D3 (⚠︎ failure · ~ stale)</div>
+    <div style="font:11px 'SF Mono',ui-monospace,monospace;color:#5c5c61">system 13 pt · 16×16 template icons · tabular digits on numeric values · status never depends on color (template rendering is monochrome)</div>
+  </div>
+
+  <div data-screen-label="Menu bar strips" style="display:flex;flex-direction:column;gap:22px">
+    <div style="font-size:13px;font-weight:600;color:#c9c9ce">1 · The menu bar at realistic scale — example config (claude · codex · clock · battery), light + dark</div>
+    <sc-for list="{{ strips }}" as="strip" hint-placeholder-count="3">
+      <div style="display:flex;flex-direction:column;gap:8px">
+        <div style="font:11px 'SF Mono',ui-monospace,monospace;color:#8e8e93">{{ strip.label }}</div>
+        <sc-for list="{{ schemes }}" as="scheme" hint-placeholder-count="2">
+          <div style="color-scheme: {{ scheme.name }};border-radius:10px;padding:16px 18px 22px;background: {{ scheme.desk }}">
+            <div style="display:flex;align-items:stretch;height:25px;border-radius:5px;padding:0 10px;background:light-dark(rgba(248,248,250,.88),rgba(28,28,32,.88));box-shadow:0 1px 8px rgba(0,0,0,.18);font-size:13px;color:light-dark(#1d1d1f,#f5f5f7)">
+              <div style="display:flex;align-items:center;gap:18px">
+                <span style="width:13px;height:13px;border-radius:4px;background:light-dark(#1d1d1f,#f5f5f7);opacity:.9"></span>
+                <span style="font-weight:700">Finder</span>
+                <span>File</span><span>Edit</span><span>View</span><span>Go</span><span>Window</span><span>Help</span>
+              </div>
+              <span style="flex:1"></span>
+              <div style="display:flex;align-items:stretch;opacity: {{ strip.itemOpacity }}">
+                <sc-for list="{{ strip.items }}" as="it" hint-placeholder-count="6">
+                  <div title="{{ it.tip }}" style="display:flex;align-items:center;gap:5px;padding:0 9px;margin:2px 0;border-radius:4px;background: {{ it.plate }};color: {{ it.color }}">
+                    <sc-if value="{{ it.iconBars }}" hint-placeholder-val="{{ false }}"><svg width="15" height="15" viewBox="0 0 16 16"><rect x="2" y="8" width="3" height="6" rx="1" fill="currentColor"></rect><rect x="6.5" y="4" width="3" height="10" rx="1" fill="currentColor"></rect><rect x="11" y="6" width="3" height="8" rx="1" fill="currentColor"></rect></svg></sc-if>
+                    <sc-if value="{{ it.iconBatt }}" hint-placeholder-val="{{ false }}"><svg width="20" height="15" viewBox="0 0 22 16"><rect x="1" y="4" width="16" height="8" rx="2.5" fill="none" stroke="currentColor" stroke-width="1.2"></rect><rect x="3" y="6" width="10" height="4" rx="1" fill="currentColor"></rect><rect x="18" y="6.5" width="2" height="3" rx="1" fill="currentColor" opacity=".6"></rect></svg></sc-if>
+                    <sc-if value="{{ it.text }}" hint-placeholder-val="{{ false }}"><span style="font-variant-numeric:tabular-nums;white-space:nowrap">{{ it.text }}</span></sc-if>
+                  </div>
+                </sc-for>
+              </div>
+            </div>
+            <div style="margin-top:8px;font:10.5px 'SF Mono',ui-monospace,monospace;color:light-dark(#5c5c61,#8e8e93);display: {{ noteDisplay }}">{{ strip.note }}</div>
+          </div>
+        </sc-for>
+      </div>
+    </sc-for>
+  </div>
+
+  <div data-screen-label="Item states" style="display:flex;flex-direction:column;gap:14px">
+    <div style="font-size:13px;font-weight:600;color:#c9c9ce">2 · Status-item states — all 28, light + dark</div>
+    <div style="display:grid;grid-template-columns:34px 250px 330px 330px 1fr;gap:10px 18px;align-items:center">
+      <div></div>
+      <div style="font:10.5px 'SF Mono',ui-monospace,monospace;color:#5c5c61">STATE</div>
+      <div style="font:10.5px 'SF Mono',ui-monospace,monospace;color:#5c5c61">LIGHT</div>
+      <div style="font:10.5px 'SF Mono',ui-monospace,monospace;color:#5c5c61">DARK</div>
+      <div style="font:10.5px 'SF Mono',ui-monospace,monospace;color:#5c5c61;display: {{ noteDisplay }}">NOTES</div>
+      <sc-for list="{{ states }}" as="st" hint-placeholder-count="14">
+        <div style="font:11px 'SF Mono',ui-monospace,monospace;color:#5c5c61;text-align:right">{{ st.n }}</div>
+        <div style="font-size:12.5px;color:#c9c9ce">{{ st.label }}</div>
+        <sc-for list="{{ schemes }}" as="scheme" hint-placeholder-count="2">
+          <div style="color-scheme: {{ scheme.name }}">
+            <sc-if value="{{ st.gone }}" hint-placeholder-val="{{ false }}">
+              <div style="display:inline-flex;align-items:center;height:25px;padding:0 12px;border-radius:5px;border:1px dashed light-dark(rgba(0,0,0,.3),rgba(255,255,255,.28));color:light-dark(#6e6e73,#98989d);font:11px 'SF Mono',ui-monospace,monospace;background: {{ scheme.desk }}">no status item — {{ st.gone }}</div>
+            </sc-if>
+            <sc-if value="{{ st.chip }}" hint-placeholder-val="{{ true }}">
+              <div style="display:inline-flex;align-items:stretch;height:25px;border-radius:5px;padding:0 14px;background:light-dark(rgba(248,248,250,.92),rgba(28,28,32,.92));font-size:13px;color:light-dark(#1d1d1f,#f5f5f7)">
+                <div style="display:flex;align-items:center;gap:5px;padding:0 9px;margin:2px 0;border-radius:4px;opacity: {{ st.opacity }}">
+                  <sc-if value="{{ st.iconBars }}" hint-placeholder-val="{{ false }}"><svg width="15" height="15" viewBox="0 0 16 16"><rect x="2" y="8" width="3" height="6" rx="1" fill="currentColor"></rect><rect x="6.5" y="4" width="3" height="10" rx="1" fill="currentColor"></rect><rect x="11" y="6" width="3" height="8" rx="1" fill="currentColor"></rect></svg></sc-if>
+                  <sc-if value="{{ st.text }}" hint-placeholder-val="{{ false }}"><span style="font-variant-numeric:tabular-nums;white-space:nowrap;max-width:260px;overflow:hidden;text-overflow:clip">{{ st.text }}</span></sc-if>
+                </div>
+              </div>
+            </sc-if>
+          </div>
+        </sc-for>
+        <div style="font:10.5px/1.5 'SF Mono',ui-monospace,monospace;color:#8e8e93;display: {{ noteDisplay }}">{{ st.note }}</div>
+      </sc-for>
+    </div>
+  </div>
+
+  <div data-screen-label="Appearance notes" style="display:flex;flex-direction:column;gap:14px">
+    <div style="font-size:13px;font-weight:600;color:#c9c9ce">3 · Appearance behavior — inherited from the system, nothing custom to compensate</div>
+    <div style="display:grid;grid-template-columns:250px 330px 1fr;gap:10px 18px;align-items:center">
+      <sc-for list="{{ notes }}" as="nt" hint-placeholder-count="4">
+        <div style="font-size:12.5px;color:#c9c9ce">{{ nt.label }}</div>
+        <div style="color-scheme: {{ nt.scheme }}">
+          <div style="display:inline-flex;align-items:stretch;height:25px;border-radius:5px;padding:0 14px;background: {{ nt.barBg }};font-size:13px;color:light-dark(#1d1d1f,#f5f5f7);box-shadow: {{ nt.ring }}">
+            <div style="display:flex;align-items:center;gap:5px;padding:0 9px;margin:2px 0;border-radius:4px;opacity: {{ nt.opacity }};background: {{ nt.plate }};color: {{ nt.fg }}">
+              <span style="font-variant-numeric:tabular-nums">81% ~</span>
+            </div>
+          </div>
+        </div>
+        <div style="font:10.5px/1.5 'SF Mono',ui-monospace,monospace;color:#8e8e93">{{ nt.note }}</div>
+      </sc-for>
+    </div>
+  </div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props="{&quot;showAnnotations&quot;:{&quot;editor&quot;:&quot;boolean&quot;,&quot;default&quot;:true,&quot;tsType&quot;:&quot;boolean&quot;,&quot;section&quot;:&quot;Board&quot;},&quot;desktopContext&quot;:{&quot;editor&quot;:&quot;boolean&quot;,&quot;default&quot;:true,&quot;tsType&quot;:&quot;boolean&quot;,&quot;section&quot;:&quot;Board&quot;}}">
+class Component extends DCLogic {
+  renderVals() {
+    const p = this.props;
+    const desk = this.props.desktopContext ?? true;
+    const clear = 'transparent';
+    const stdItems = [
+      { iconBars: true, text: '81%', tip: 'claude — icon + text · Weekly quota resets Monday 3:00 PM' },
+      { text: '43%', tip: 'codex — text only' },
+      { text: '14:32', tip: 'clock — date +%H:%M every 60 s' },
+      { text: '87%', tip: 'battery — pmset -g batt' },
+      { iconBatt: true, tip: 'system battery (not pinchos)' },
+      { text: 'Wed Aug 21 9:41 AM', tip: 'system clock (not pinchos)' }
+    ].map(x => ({ plate: clear, color: 'inherit', ...x }));
+    const crowdedItems = [
+      { text: 'deploy: build 4821 succe…', tip: 'long value truncated by max_length (grapheme-aware, … marker); full output via tooltip + Copy Full Output' },
+      { text: 'vpn: on' }, { text: 'gh: ok' }, { text: 'ping 12ms' },
+      { text: 'AI: 81% · 43%', tip: 'group — one status item for claude + codex', plate: 'light-dark(rgba(0,0,0,.14),rgba(255,255,255,.18))' },
+      { text: '– ⚠︎', tip: 'failed item among healthy neighbors' },
+      { iconBatt: true }, { text: '9:41 AM' }
+    ].map(x => ({ plate: x.plate || clear, color: 'inherit', tip: x.tip || '', ...x }));
+    const recoveryItems = [
+      { text: 'pinchos ⚠︎', tip: 'malformed configuration — menu carries error, recovery actions' },
+      { iconBatt: true }, { text: 'Wed Aug 21 9:41 AM' }
+    ].map(x => ({ plate: clear, color: 'inherit', tip: x.tip || '', ...x }));
+    const chip = (o) => ({ chip: true, opacity: 1, ...o });
+    return {
+      noteDisplay: (p.showAnnotations ?? true) ? 'block' : 'none',
+      schemes: [
+        { name: 'light', desk: desk ? 'linear-gradient(135deg,#c9cdd6,#b4bac7)' : '#d8d9de' },
+        { name: 'dark', desk: desk ? 'linear-gradient(135deg,#2a2c33,#1f2126)' : '#1f2024' }
+      ],
+      strips: [
+        { label: 'standard — example config among system items', itemOpacity: 1, items: stdItems, note: 'one NSStatusItem per top-level item · group members give up their own slots · pinchos items are visually indistinguishable from system items — that is the goal' },
+        { label: 'crowded — many items, a group, a truncated long value, one failure', itemOpacity: 1, items: crowdedItems, note: 'failure stays one glyph loud (⚠︎) even in a crowded bar · groups reclaim space: AI holds two members in one slot · highlighted plate = menu open' },
+        { label: 'recovery — no usable configuration (last good config may keep running beside it)', itemOpacity: 1, items: recoveryItems, note: 'missing config shows plain “pinchos”; malformed shows “pinchos ⚠︎” · the entire first-run + recovery experience lives in this one item' }
+      ],
+      states: [
+        chip({ n: 1, label: 'Text-only · fresh', text: '81%', note: 'value verbatim after format template · tabular digits stop width jitter' }),
+        chip({ n: 2, label: 'Local icon + text', iconBars: true, text: '81%', note: 'icon = 16×16 template image, isTemplate, system-tinted · left of title' }),
+        chip({ n: 3, label: 'SF Symbol + text (#14)', iconBars: true, text: '81%', note: 'symbol = "chart.bar.fill" · native symbol image, automatic tint · aligned to 16×16 target (U3: no size key)' }),
+        chip({ n: 4, label: 'Icon-only', iconBars: true, note: 'icon_only = true · tooltip carries full title · VoiceOver: “claude, 81 percent, fresh”' }),
+        chip({ n: 5, label: 'SF-Symbol-only (#14)', iconBars: true, note: 'same accessibility contract — never an unlabeled image' }),
+        chip({ n: 6, label: 'Initial · unavailable', text: '–', note: 'before first successful result · error_text default “–” · state announced “unavailable”' }),
+        chip({ n: 7, label: 'Running · no prior value', text: '…', note: 'first run in flight · no spinner, no motion — ever' }),
+        chip({ n: 8, label: 'Running · prior value kept', text: '81%', note: 'refresh in flight · bar unchanged; menu + tooltip say “refreshing” · zero idle animation' }),
+        chip({ n: 9, label: 'Fresh', text: '81%', note: 'baseline = state 1 · within interval + stale_after' }),
+        chip({ n: 10, label: 'Stale', text: '81% ~', note: 'stale_after exceeded · trailing ~ marker (D3) · monochrome-safe, no color' }),
+        chip({ n: 11, label: 'Error · replace', text: '–', note: 'on_error = "replace" → error_text · exact cause promoted to first menu level' }),
+        chip({ n: 12, label: 'Error · keep last', text: '81% ⚠︎', note: 'on_error = "keep_last" → last good value + ⚠︎ (U+26A0 U+FE0E text presentation)' }),
+        chip({ n: 13, label: 'Timeout', text: '81% ⚠︎', note: 'timeout exceeded, run cancelled · keep_last shown; replace policy shows “–” · menu: “Timed out after 15 s”' }),
+        chip({ n: 14, label: 'Launch failure', text: '–', note: 'shell/binary failed to start (127) · menu: “Launch failed: /bin/zx not found”' }),
+        { n: 15, label: 'Disabled', gone: 'disabled = true', note: 'item not created · no slot, no menu · visible in pinchos doctor · re-enable in config' },
+        { n: 16, label: 'Hidden · empty output', gone: 'hide_when_empty', note: 'slot removed on empty stdout · reappears on non-empty output · diagnosable via doctor + group rows' },
+        { n: 17, label: 'Hidden · on error', gone: 'hide_on_error', note: 'slot removed on failure · notification (#21) still fires if opted in' },
+        chip({ n: 18, label: 'Truncated by max_length', text: 'Deploy build 4821 succe…', note: 'grapheme-aware truncation + … · tooltip holds full (capped) output · Copy Full Output always complete' }),
+        chip({ n: 19, label: 'Invalid icon file', text: '81%', note: 'icon dropped, text-only, no marker — icon trouble is not a command failure · Diagnostics + doctor carry it' }),
+        chip({ n: 20, label: 'Unavailable SF Symbol (#14 U2)', text: '81%', note: 'recommendation: config stays valid · text-only render + “Symbol unavailable on this macOS” diagnostic' }),
+        chip({ n: 21, label: 'Group', text: 'AI: 81% · 43%', note: 'static title + compact member summary, recomputed on open · one native status item' }),
+        chip({ n: 22, label: 'Nested group', text: 'Infra: up · 81% · 43%', note: 'a group may contain a group (acyclic) · outer summary includes nested members' }),
+        chip({ n: 23, label: 'Recovery · missing config', text: 'pinchos', note: 'no config found · menu: Create Example Config, Open Config Directory, Reload, Quit' }),
+        chip({ n: 24, label: 'Recovery · malformed config', text: 'pinchos ⚠︎', note: 'parse/validation failure · bounded error + line context in menu · last good config keeps running' }),
+        chip({ n: 25, label: 'json-v1 · neutral (#19)', text: '3 checks ok', note: 'text/tooltip from payload · presentation identical to plain text — protocol adds state, not looks' }),
+        chip({ n: 26, label: 'json-v1 · warning (#19)', text: '2 failing ⚠︎', note: 'state:"warning" → ⚠︎ + Warning headline in menu · not a failure: no notification, no on_error' }),
+        chip({ n: 27, label: 'json-v1 · failure (#19)', text: '– ', note: 'state:"failure" → existing failure pipeline (on_error, promoted error, #21 transition)' }),
+        { n: 28, label: 'json-v1 · hidden (#19)', gone: 'hidden: true', note: 'behaves like hide_when_empty · doctor reports “hidden by structured output”' }
+      ],
+      notes: [
+        { label: 'Inactive menu bar', scheme: 'light', barBg: 'light-dark(rgba(248,248,250,.92),rgba(28,28,32,.92))', opacity: .45, plate: 'transparent', fg: 'inherit', ring: 'none', note: 'system dims all status items uniformly when the bar is inactive · markers stay legible because they are text, not color' },
+        { label: 'Increased contrast', scheme: 'light', barBg: '#ffffff', opacity: 1, plate: 'transparent', fg: '#000000', ring: '0 0 0 1px rgba(0,0,0,.55)', note: 'semantic colors + template images adapt automatically — no custom colors exist to break' },
+        { label: 'Menu open (highlighted plate)', scheme: 'dark', barBg: 'light-dark(rgba(248,248,250,.92),rgba(28,28,32,.92))', opacity: 1, plate: 'light-dark(rgba(0,0,0,.14),rgba(255,255,255,.18))', fg: 'inherit', ring: 'none', note: 'system-provided highlight while the item’s menu is open — never imitated in production code' },
+        { label: 'App active vs. inactive', scheme: 'dark', barBg: 'light-dark(rgba(248,248,250,.92),rgba(28,28,32,.92))', opacity: 1, plate: 'transparent', fg: 'inherit', ring: 'none', note: 'pinchos is an accessory (LSUIElement): never “active”, no Dock icon, no app menu — items behave like system extras' }
+      ]
+    };
+  }
+}
+</script>
+</body>
+</html>

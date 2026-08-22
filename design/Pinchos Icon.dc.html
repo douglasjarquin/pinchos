@@ -1,0 +1,156 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<meta name="design_doc_mode" content="canvas">
+<style>html,body{margin:0}body{background:#111114}a{color:#0a84ff}a:hover{color:#3f9cff}</style>
+</helmet>
+<div style="font-family:-apple-system,BlinkMacSystemFont,'SF Pro Text','Helvetica Neue',sans-serif;-webkit-font-smoothing:antialiased;padding:36px;display:flex;flex-direction:column;gap:44px;color:#e8e8ec;min-width:1480px">
+  <div style="font:12px 'SF Mono',ui-monospace,monospace;color:#8e8e93">PINCHOS — APP ICON (#15) · geometric comps, production masters to be rendered from the same geometry at 1024 → 16 · palette: ivory #F2EDE3 · charcoal #2B2A28 · olive #6B7F3E · terracotta #C4593A · the app icon is the ONLY colorful surface — runtime status-item icons stay template/monochrome</div>
+
+  <div data-screen-label="Directions" style="display:flex;flex-direction:column;gap:16px">
+    <div style="font-size:13px;font-weight:600;color:#c9c9ce">1 · Three directions — a pintxo, not a seaside scene · no text · no tiny food illustration</div>
+    <div style="display:flex;gap:40px;flex-wrap:wrap">
+      <div style="display:flex;flex-direction:column;gap:12px;width:300px">
+        <div style="width:128px;height:128px;border-radius:29px;background:linear-gradient(180deg,#f6f1e7,#ece5d7);box-shadow:inset 0 0 0 1px rgba(0,0,0,.08),0 10px 26px rgba(0,0,0,.45);display:flex;align-items:center;justify-content:center">
+          <svg width="104" height="104" viewBox="0 0 32 32"><circle cx="17.6" cy="13.8" r="4.6" fill="#6b7f3e"></circle><circle cx="12.6" cy="20.4" r="3.4" fill="#c4593a"></circle><line x1="8.6" y1="26" x2="23.4" y2="6.6" stroke="#2b2a28" stroke-width="2.4" stroke-linecap="round"></line><circle cx="23.4" cy="6.6" r="1.9" fill="#2b2a28"></circle></svg>
+        </div>
+        <div style="font-size:12.5px;font-weight:600;color:#c9c9ce">A · Banderilla</div>
+        <div style="font:10.5px/1.6 'SF Mono',ui-monospace,monospace;color:#8e8e93">one diagonal skewer through two forms. a single stroke + two counters survives 16 px; the diagonal gives it energy without motion. reads “pinned” before it reads “food”.</div>
+      </div>
+      <div style="display:flex;flex-direction:column;gap:12px;width:300px">
+        <div style="width:128px;height:128px;border-radius:29px;background:linear-gradient(180deg,#f6f1e7,#ece5d7);box-shadow:inset 0 0 0 1px rgba(0,0,0,.08),0 10px 26px rgba(0,0,0,.45);display:flex;align-items:center;justify-content:center">
+          <svg width="104" height="104" viewBox="0 0 32 32"><line x1="6.5" y1="24.4" x2="25.5" y2="24.4" stroke="#2b2a28" stroke-width="2.4" stroke-linecap="round"></line><line x1="16" y1="24.4" x2="16" y2="8.4" stroke="#2b2a28" stroke-width="2.4" stroke-linecap="round"></line><circle cx="16" cy="11.6" r="4.4" fill="#c4593a"></circle><circle cx="16" cy="6.9" r="1.9" fill="#2b2a28"></circle></svg>
+        </div>
+        <div style="font-size:12.5px;font-weight:600;color:#c9c9ce">B · La Barra</div>
+        <div style="font:10.5px/1.6 'SF Mono',ui-monospace,monospace;color:#8e8e93">a pick standing pinned into a horizontal bar — the literal product story (pin to the menu bar). at 16–32 px the baseline muddies into the glyph and the symmetry reads as a generic map pin.</div>
+      </div>
+      <div style="display:flex;flex-direction:column;gap:12px;width:300px">
+        <div style="width:128px;height:128px;border-radius:29px;background:linear-gradient(180deg,#f6f1e7,#ece5d7);box-shadow:inset 0 0 0 1px rgba(0,0,0,.08),0 10px 26px rgba(0,0,0,.45);display:flex;align-items:center;justify-content:center">
+          <svg width="104" height="104" viewBox="0 0 32 32"><line x1="9.5" y1="26" x2="9.5" y2="13.5" stroke="#2b2a28" stroke-width="2.2" stroke-linecap="round"></line><circle cx="9.5" cy="11.2" r="2.9" fill="#6b7f3e"></circle><line x1="16" y1="26" x2="16" y2="9" stroke="#2b2a28" stroke-width="2.2" stroke-linecap="round"></line><circle cx="16" cy="6.7" r="2.9" fill="#c4593a"></circle><line x1="22.5" y1="26" x2="22.5" y2="16" stroke="#2b2a28" stroke-width="2.2" stroke-linecap="round"></line><circle cx="22.5" cy="13.7" r="2.9" fill="#6b7f3e"></circle></svg>
+        </div>
+        <div style="font-size:12.5px;font-weight:600;color:#c9c9ce">C · Tres Pinchos — selected</div>
+        <div style="font:10.5px/1.6 'SF Mono',ui-monospace,monospace;color:#8e8e93">three picks of stepped heights — a row of pinned things, which is the product story. the small-size risk (thin strokes aliasing) is handled in §2: sticks and heads thicken as the canvas shrinks.</div>
+      </div>
+    </div>
+  </div>
+
+  <div data-screen-label="Selected refinement" style="display:flex;flex-direction:column;gap:16px">
+    <div style="font-size:13px;font-weight:600;color:#c9c9ce">2 · Selected — Tres Pinchos, refined · every size from the same geometry</div>
+    <div style="display:flex;gap:28px;align-items:flex-end;flex-wrap:wrap">
+      <sc-for list="{{ sizes }}" as="sz" hint-placeholder-count="5">
+        <div style="display:flex;flex-direction:column;gap:8px;align-items:center">
+          <div style="width: {{ sz.box }};height: {{ sz.box }};border-radius: {{ sz.radius }};background:linear-gradient(180deg,#f6f1e7,#ece5d7);box-shadow:inset 0 0 0 1px rgba(0,0,0,.08),0 6px 18px rgba(0,0,0,.4);display:flex;align-items:center;justify-content:center">
+            <svg width="{{ sz.glyph }}" height="{{ sz.glyph }}" viewBox="0 0 32 32"><line x1="8.5" y1="26" x2="8.5" y2="14" stroke="#2b2a28" stroke-width="{{ sz.stroke }}" stroke-linecap="round"></line><circle cx="8.5" cy="11.6" r="{{ sz.r }}" fill="#6b7f3e"></circle><line x1="16" y1="26" x2="16" y2="9.5" stroke="#2b2a28" stroke-width="{{ sz.stroke }}" stroke-linecap="round"></line><circle cx="16" cy="6.9" r="{{ sz.r }}" fill="#c4593a"></circle><line x1="23.5" y1="26" x2="23.5" y2="16.5" stroke="#2b2a28" stroke-width="{{ sz.stroke }}" stroke-linecap="round"></line><circle cx="23.5" cy="14.1" r="{{ sz.r }}" fill="#6b7f3e"></circle></svg>
+          </div>
+          <div style="font:10px 'SF Mono',ui-monospace,monospace;color:#5c5c61">{{ sz.label }}</div>
+        </div>
+      </sc-for>
+      <div style="max-width:360px;font:10.5px/1.65 'SF Mono',ui-monospace,monospace;color:#8e8e93">refinement vs comp: spacing widened (6.5 → 7.5 units), sticks thicken as the canvas shrinks (2.2 → 3.0) and heads grow (r 3.0 → 3.4) so three picks stay three at 16 px and the tops stay circles, not a bar chart. no text, no gloss, no scene. why it fits: a row of small things, each on its own pick at its own height — the menu bar itself. restrained warmth nods to the pintxo name; geometry keeps it a utility, not a restaurant.</div>
+    </div>
+  </div>
+
+  <div data-screen-label="Contexts" style="display:flex;flex-direction:column;gap:16px">
+    <div style="font-size:13px;font-weight:600;color:#c9c9ce">3 · In context — desktop, Finder, notification · light + dark</div>
+    <div style="display:flex;gap:24px;flex-wrap:wrap">
+      <sc-for list="{{ schemes }}" as="scheme" hint-placeholder-count="2">
+        <div style="color-scheme: {{ scheme.name }};flex:1;min-width:620px;border-radius:12px;padding:20px;background: {{ scheme.desk }};display:flex;flex-direction:column;gap:18px">
+          <div style="display:flex;gap:26px;align-items:flex-start">
+            <div style="display:flex;flex-direction:column;align-items:center;gap:5px">
+              <div style="width:76px;height:76px;border-radius:17px;background:linear-gradient(180deg,#f6f1e7,#ece5d7);box-shadow:inset 0 0 0 1px rgba(0,0,0,.08),0 8px 20px rgba(0,0,0,.35);display:flex;align-items:center;justify-content:center">
+                <svg width="60" height="60" viewBox="0 0 32 32"><line x1="8.5" y1="26" x2="8.5" y2="14" stroke="#2b2a28" stroke-width="2.2" stroke-linecap="round"></line><circle cx="8.5" cy="11.6" r="3" fill="#6b7f3e"></circle><line x1="16" y1="26" x2="16" y2="9.5" stroke="#2b2a28" stroke-width="2.2" stroke-linecap="round"></line><circle cx="16" cy="6.9" r="3" fill="#c4593a"></circle><line x1="23.5" y1="26" x2="23.5" y2="16.5" stroke="#2b2a28" stroke-width="2.2" stroke-linecap="round"></line><circle cx="23.5" cy="14.1" r="3" fill="#6b7f3e"></circle></svg>
+              </div>
+              <span style="font-size:12px;padding:1px 7px;border-radius:4px;color:#ffffff;background:rgba(10,90,220,.85)">Pinchos</span>
+            </div>
+            <div style="flex:1;border-radius:10px;overflow:hidden;box-shadow:0 12px 32px rgba(0,0,0,.25),0 0 0 1px light-dark(rgba(0,0,0,.1),rgba(255,255,255,.12))">
+              <div style="display:flex;align-items:center;gap:8px;height:34px;padding:0 12px;background:light-dark(#f0f0f2,#2c2c30)">
+                <span style="display:flex;gap:7px"><span style="width:11px;height:11px;border-radius:6px;background:#ff5f57"></span><span style="width:11px;height:11px;border-radius:6px;background:#febc2e"></span><span style="width:11px;height:11px;border-radius:6px;background:#28c840"></span></span>
+                <span style="font-size:12.5px;font-weight:600;color:light-dark(#3c3c43,#d8d8dc)">Applications</span>
+              </div>
+              <div style="background:light-dark(#ffffff,#1e1e20);padding:6px 0 10px">
+                <sc-for list="{{ finderRows }}" as="fr" hint-placeholder-count="3">
+                  <div style="display:flex;align-items:center;gap:9px;height:26px;padding:0 14px;background: {{ fr.bg }};color: {{ fr.fg }};font-size:13px">
+                    <sc-if value="{{ fr.pinchos }}" hint-placeholder-val="{{ false }}">
+                      <span style="width:17px;height:17px;border-radius:4px;background:linear-gradient(180deg,#f6f1e7,#ece5d7);box-shadow:inset 0 0 0 .5px rgba(0,0,0,.15);display:flex;align-items:center;justify-content:center;flex:none"><svg width="14" height="14" viewBox="0 0 32 32"><line x1="8" y1="26" x2="8" y2="14" stroke="#2b2a28" stroke-width="3" stroke-linecap="round"></line><circle cx="8" cy="11.2" r="3.5" fill="#6b7f3e"></circle><line x1="16" y1="26" x2="16" y2="9.5" stroke="#2b2a28" stroke-width="3" stroke-linecap="round"></line><circle cx="16" cy="6.9" r="3.5" fill="#c4593a"></circle><line x1="24" y1="26" x2="24" y2="16.5" stroke="#2b2a28" stroke-width="3" stroke-linecap="round"></line><circle cx="24" cy="14.1" r="3.5" fill="#6b7f3e"></circle></svg></span>
+                    </sc-if>
+                    <sc-if value="{{ fr.plain }}" hint-placeholder-val="{{ true }}">
+                      <span style="width:17px;height:17px;border-radius:4px;background:light-dark(rgba(0,0,0,.12),rgba(255,255,255,.16));flex:none"></span>
+                    </sc-if>
+                    <span>{{ fr.name }}</span>
+                    <span style="flex:1"></span>
+                    <span style="font-size:12px;opacity:.55">{{ fr.kind }}</span>
+                  </div>
+                </sc-for>
+              </div>
+            </div>
+            <div style="width:300px;display:flex;flex-direction:column;gap:10px">
+              <div style="display:flex;gap:10px;align-items:center;padding:10px 13px;border-radius:13px;background:light-dark(rgba(248,248,250,.92),rgba(46,46,50,.92));box-shadow:0 8px 24px rgba(0,0,0,.22),0 0 0 1px light-dark(rgba(0,0,0,.08),rgba(255,255,255,.1))">
+                <div style="width:34px;height:34px;flex:none;border-radius:8px;background:linear-gradient(180deg,#f6f1e7,#ece5d7);box-shadow:inset 0 0 0 1px rgba(0,0,0,.08);display:flex;align-items:center;justify-content:center">
+                  <svg width="24" height="24" viewBox="0 0 32 32"><line x1="8.5" y1="26" x2="8.5" y2="14" stroke="#2b2a28" stroke-width="2.6" stroke-linecap="round"></line><circle cx="8.5" cy="11.6" r="3.2" fill="#6b7f3e"></circle><line x1="16" y1="26" x2="16" y2="9.5" stroke="#2b2a28" stroke-width="2.6" stroke-linecap="round"></line><circle cx="16" cy="6.9" r="3.2" fill="#c4593a"></circle><line x1="23.5" y1="26" x2="23.5" y2="16.5" stroke="#2b2a28" stroke-width="2.6" stroke-linecap="round"></line><circle cx="23.5" cy="14.1" r="3.2" fill="#6b7f3e"></circle></svg>
+                </div>
+                <div style="flex:1;min-width:0">
+                  <div style="display:flex;align-items:baseline;gap:8px"><span style="font-size:12.5px;font-weight:600;color:light-dark(#1d1d1f,#f5f5f7)">claude</span><span style="flex:1"></span><span style="font-size:10.5px;color:light-dark(#8e8e93,#98989d)">now</span></div>
+                  <div style="font-size:12px;color:light-dark(#3c3c43,#d1d1d6);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">Failed · exit 1 — jq: parse error</div>
+                </div>
+              </div>
+              <div style="font:10px/1.6 'SF Mono',ui-monospace,monospace;color:light-dark(#5c5c61,#8e8e93)">notification identity (#21 × #15): the app icon marks the banner; the item name is the title. no per-item icon inside notifications.</div>
+            </div>
+          </div>
+        </div>
+      </sc-for>
+    </div>
+  </div>
+
+  <div data-screen-label="Template + separation" style="display:flex;gap:48px;flex-wrap:wrap;align-items:flex-start">
+    <div style="display:flex;flex-direction:column;gap:12px">
+      <div style="font-size:13px;font-weight:600;color:#c9c9ce">4 · Monochrome / template interpretation</div>
+      <div style="display:flex;gap:12px">
+        <div style="display:flex;align-items:center;gap:12px;height:34px;padding:0 14px;border-radius:6px;background:#f4f4f6;color:#1d1d1f"><svg width="16" height="16" viewBox="0 0 32 32"><line x1="8.5" y1="26" x2="8.5" y2="14" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"></line><circle cx="8.5" cy="11.6" r="3" fill="currentColor"></circle><line x1="16" y1="26" x2="16" y2="9.5" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"></line><circle cx="16" cy="6.9" r="3" fill="currentColor"></circle><line x1="23.5" y1="26" x2="23.5" y2="16.5" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"></line><circle cx="23.5" cy="14.1" r="3" fill="currentColor"></circle></svg><span style="font-size:12px;font-variant-numeric:tabular-nums">light</span></div>
+        <div style="display:flex;align-items:center;gap:12px;height:34px;padding:0 14px;border-radius:6px;background:#232327;color:#f5f5f7"><svg width="16" height="16" viewBox="0 0 32 32"><line x1="8.5" y1="26" x2="8.5" y2="14" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"></line><circle cx="8.5" cy="11.6" r="3" fill="currentColor"></circle><line x1="16" y1="26" x2="16" y2="9.5" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"></line><circle cx="16" cy="6.9" r="3" fill="currentColor"></circle><line x1="23.5" y1="26" x2="23.5" y2="16.5" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"></line><circle cx="23.5" cy="14.1" r="3" fill="currentColor"></circle></svg><span style="font-size:12px;font-variant-numeric:tabular-nums">dark</span></div>
+      </div>
+      <div style="font:10.5px/1.6 'SF Mono',ui-monospace,monospace;color:#8e8e93;max-width:420px">solid monochrome interpretation for any template context (e.g. a future About credit). note: the RUNTIME recovery item stays the text “pinchos” / “pinchos ⚠︎” — no icon is proposed for it.</div>
+    </div>
+    <div style="display:flex;flex-direction:column;gap:12px">
+      <div style="font-size:13px;font-weight:600;color:#c9c9ce">5 · App icon ≠ status-item icons</div>
+      <div style="color-scheme:dark;display:inline-flex;align-items:stretch;height:25px;border-radius:5px;padding:0 12px;background:rgba(28,28,32,.92);font-size:13px;color:#f5f5f7;align-self:flex-start">
+        <div style="display:flex;align-items:center;gap:5px;padding:0 9px;margin:2px 0"><svg width="15" height="15" viewBox="0 0 16 16"><rect x="2" y="8" width="3" height="6" rx="1" fill="currentColor"></rect><rect x="6.5" y="4" width="3" height="10" rx="1" fill="currentColor"></rect><rect x="11" y="6" width="3" height="8" rx="1" fill="currentColor"></rect></svg><span>81%</span></div>
+        <div style="display:flex;align-items:center;gap:5px;padding:0 9px;margin:2px 0"><span style="width:13px;height:13px;border-radius:7px;border:1.8px solid currentColor"></span><span>14:32</span></div>
+      </div>
+      <div style="font:10.5px/1.6 'SF Mono',ui-monospace,monospace;color:#8e8e93;max-width:420px">status-item icons are USER-configured (local template files or, with #14, SF Symbols): always monochrome, always 16×16, always semantic-tinted. the colorful tres pinchos never appears in the menu bar.</div>
+    </div>
+  </div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props="{&quot;$preview&quot;:{&quot;width&quot;:&quot;1520px&quot;,&quot;height&quot;:&quot;1500px&quot;}}">
+class Component extends DCLogic {
+  renderVals() {
+    const sel = 'light-dark(rgba(10,110,255,.22),rgba(10,132,255,.3))';
+    return {
+      sizes: [
+        { box: '256px', radius: '57px', glyph: '208', stroke: '2.2', r: '3', label: '256 (masters: 1024/512)' },
+        { box: '128px', radius: '29px', glyph: '104', stroke: '2.2', r: '3', label: '128' },
+        { box: '64px', radius: '14.5px', glyph: '52', stroke: '2.4', r: '3.1', label: '64' },
+        { box: '32px', radius: '7px', glyph: '26', stroke: '2.7', r: '3.25', label: '32' },
+        { box: '16px', radius: '3.5px', glyph: '13', stroke: '3', r: '3.4', label: '16' }
+      ],
+      schemes: [
+        { name: 'light', desk: 'linear-gradient(135deg,#c9cdd6,#b4bac7)' },
+        { name: 'dark', desk: 'linear-gradient(135deg,#2a2c33,#1f2126)' }
+      ],
+      finderRows: [
+        { plain: true, name: 'Numbers', kind: 'Application' },
+        { pinchos: true, name: 'Pinchos', kind: 'Application', bg: sel, fg: 'light-dark(#1d1d1f,#f5f5f7)' },
+        { plain: true, name: 'Preview', kind: 'Application' }
+      ].map(r => ({ bg: r.bg || 'transparent', fg: r.fg || 'light-dark(#1d1d1f,#f5f5f7)', pinchos: !!r.pinchos, plain: !r.pinchos, ...r }))
+    };
+  }
+}
+</script>
+</body>
+</html>
