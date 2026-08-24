@@ -1,0 +1,17 @@
+commands:
+  format: './scripts/no-mistakes.sh format'
+  lint: './scripts/no-mistakes.sh lint'
+  test: './scripts/no-mistakes.sh test --screencast'
+
+# Ignore these paths during review and documentation checks.
+ignore_patterns:
+  - ".build/**"
+  - ".swiftpm/**"
+  - ".omo/**"
+  - "*.xcodeproj"
+  - "*.xcodeproj/**"
+
+test:
+  evidence:
+    store_in_repo: true
+    dir: .no-mistakes/evidence
