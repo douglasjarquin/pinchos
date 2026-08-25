@@ -2,3 +2,7 @@
 .swiftpm/
 *.xcodeproj
 .DS_Store
+
+# Local no-mistakes evidence worktree. Published on orphan branch
+# no-mistakes/evidence; do not commit it on code branches.
+.no-mistakes/evidence/
