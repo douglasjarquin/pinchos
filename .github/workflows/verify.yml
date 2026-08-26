@@ -1,0 +1,46 @@
+name: Verify changes
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: verify-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  changes:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Select affected jobs
+        run: echo "No path filters configured; build-and-test always selected."
+
+  build-and-test:
+    needs: changes
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+      - name: swift build
+        run: swift build
+      - name: swift test
+        run: swift test
+      - name: swift build (release)
+        run: swift build -c release
+
+  gate:
+    name: gate
+    needs:
+      - changes
+      - build-and-test
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require all checks to pass
+        if: >-
+          needs.changes.result != 'success' ||
+          (needs.build-and-test.result != 'success' && needs.build-and-test.result != 'skipped')
+        run: exit 1
