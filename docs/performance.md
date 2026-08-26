@@ -15,7 +15,7 @@ runner to runner. Pinchos therefore splits performance evidence into two tiers:
    wall-clock time or absolute memory; they prove structural properties that can only be
    true or false, regardless of runner noise, e.g. "a manual-interval item never holds a
    timer" or "retained output never exceeds its configured byte budget." Enforced by
-   `.github/workflows/ci.yml` (`swift build`, `swift test`, `swift build -c release`).
+   `.github/workflows/verify.yml` (`swift build`, `swift test`, `swift build -c release`).
 2. **Wall-clock/RSS/wakeup budgets, run manually on a controlled machine.** These are the
    absolute product claims (the "under 15MB" line in the README). They're measured with
    the real release binary using `footprint`'s `phys_footprint` (Apple's own private-memory
@@ -49,7 +49,7 @@ behavior rather than typical end-user UX. P4/P5 target specific known-risky subs
 
 ## What ordinary CI enforces today
 
-`.github/workflows/ci.yml` runs, in order, on every PR and every push to `main`:
+`.github/workflows/verify.yml` runs, in order, on every PR and every push to `main`:
 
 1. `swift build` — debug build, for fast iteration and to catch build breaks early.
 2. `swift test` — the full `PinchosCoreTests` + `pinchosTests` suite, including the

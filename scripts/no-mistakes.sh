@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #
 # House format/lint/test entrypoint for .no-mistakes.yaml.
-# Mirrors .github/workflows/ci.yml: swift build, swift test, swift build -c release.
+# Mirrors .github/workflows/verify.yml: swift build, swift test, swift build -c release.
 # This repo has no formatter and no browser tests; format and --screencast are no-ops.
 
 set -euo pipefail
