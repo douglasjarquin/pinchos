@@ -654,7 +654,9 @@ final class ConfigParserTests: XCTestCase {
             "hide_when_empty",
             "hide_on_error",
             "icon_only",
-            "disabled"
+            "disabled",
+            "notify_on",
+            "notify_cooldown"
         ])
         XCTAssertEqual(ConfigParser.supportedActionKeys, ["title", "run", "refresh"])
     }

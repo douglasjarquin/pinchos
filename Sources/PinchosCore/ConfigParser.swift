@@ -28,7 +28,9 @@ public enum ConfigParser {
         "hide_when_empty",
         "hide_on_error",
         "icon_only",
-        "disabled"
+        "disabled",
+        "notify_on",
+        "notify_cooldown"
     ]
 
     static let supportedActionKeys: Set<String> = ["title", "run", "refresh"]
@@ -965,6 +967,30 @@ public enum ConfigParser {
             table: table,
             sourceLines: sourceLines
         ) ?? false
+        let notifyOn = try parseNotificationEvents(
+            name: name,
+            value: table["notify_on"],
+            sourceLines: sourceLines
+        )
+        let notifyCooldown: TimeInterval?
+        if let notifyCooldownValue = table["notify_cooldown"] {
+            let rawValue = try stringValue(
+                name: name,
+                key: "notify_cooldown",
+                value: notifyCooldownValue,
+                sourceLines: sourceLines
+            )
+            do {
+                notifyCooldown = try parseDuration(rawValue)
+            } catch {
+                throw ConfigParseError(
+                    message: "item.\(name): invalid notify_cooldown '\(rawValue)'",
+                    line: sourceLine(item: name, key: "notify_cooldown", sourceLines: sourceLines)
+                )
+            }
+        } else {
+            notifyCooldown = nil
+        }
 
         return CommandItemConfig(
             name: name,
@@ -1008,7 +1034,9 @@ public enum ConfigParser {
             hideWhenEmpty: hideWhenEmpty,
             hideOnError: hideOnError,
             iconOnly: iconOnly,
-            disabled: disabled
+            disabled: disabled,
+            notifyOn: notifyOn,
+            notifyCooldown: notifyCooldown
         )
     }
 
@@ -1073,6 +1101,40 @@ public enum ConfigParser {
             paths.insert(resolvePath(rawPath, relativeTo: configURL))
         }
         return paths.sorted()
+    }
+
+    private static func parseNotificationEvents(
+        name: String,
+        value: TOMLValueConvertible?,
+        sourceLines: SourceLineMap
+    ) throws -> Set<ItemNotificationEvent> {
+        guard let value else { return [] }
+        guard let array = value.array else {
+            throw typeError(
+                path: "item.\(name).notify_on",
+                expected: "array",
+                value: value,
+                line: sourceLine(item: name, key: "notify_on", sourceLines: sourceLines)
+            )
+        }
+
+        var events = Set<ItemNotificationEvent>()
+        for (index, element) in array.enumerated() {
+            let rawValue = try stringValue(
+                path: "item.\(name).notify_on[\(index)]",
+                value: element,
+                requireNonEmpty: true,
+                line: sourceLine(item: name, key: "notify_on", sourceLines: sourceLines)
+            )
+            guard let event = ItemNotificationEvent(rawValue: rawValue) else {
+                throw ConfigParseError(
+                    message: "item.\(name): notify_on must contain only 'failure' or 'recovery'",
+                    line: sourceLine(item: name, key: "notify_on", sourceLines: sourceLines)
+                )
+            }
+            events.insert(event)
+        }
+        return events
     }
 
     /// Parses one `[group.<name>]` table. `members` existence, duplicate,

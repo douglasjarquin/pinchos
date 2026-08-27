@@ -45,9 +45,11 @@ protocol ManagedItemFactory: AnyObject {
 @MainActor
 private final class DefaultManagedItemFactory: ManagedItemFactory {
     private let scheduler: CommandScheduler
+    private let notificationSink: ItemNotificationSink
 
-    init(scheduler: CommandScheduler) {
+    init(scheduler: CommandScheduler, notificationSink: ItemNotificationSink) {
         self.scheduler = scheduler
+        self.notificationSink = notificationSink
     }
 
     func make(
@@ -63,7 +65,8 @@ private final class DefaultManagedItemFactory: ManagedItemFactory {
                 menuDelegate: menuDelegate,
                 initiallyVisible: initiallyVisible,
                 isTopLevel: isTopLevel,
-                scheduler: scheduler
+                scheduler: scheduler,
+                notificationSink: notificationSink
             )
         case .group:
             return ManagedGroupItem(
@@ -149,7 +152,10 @@ final class StatusItemController: StatusItemMenuDelegate {
     ) {
         let resolvedScheduler = scheduler ?? CommandScheduler()
         self.scheduler = resolvedScheduler
-        self.itemFactory = itemFactory ?? DefaultManagedItemFactory(scheduler: resolvedScheduler)
+        self.itemFactory = itemFactory ?? DefaultManagedItemFactory(
+            scheduler: resolvedScheduler,
+            notificationSink: SystemItemNotificationSink()
+        )
         self.configPath = configPath
         self.onReload = onReload
     }

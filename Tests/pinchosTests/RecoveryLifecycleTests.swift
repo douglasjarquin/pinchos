@@ -37,7 +37,8 @@ final class RecoveryLifecycleTests: XCTestCase {
         menuDelegate: StatusItemMenuDelegate? = nil,
         initiallyVisible: Bool = true,
         now: @escaping () -> Date = Date.init,
-        scheduler: CommandScheduler = CommandScheduler()
+        scheduler: CommandScheduler = CommandScheduler(),
+        notificationSink: ItemNotificationSink? = nil
     ) -> ManagedItem {
         ManagedItem(
             config: config,
@@ -45,6 +46,7 @@ final class RecoveryLifecycleTests: XCTestCase {
             initiallyVisible: initiallyVisible,
             scheduler: scheduler,
             now: now,
+            notificationSink: notificationSink,
             statusItemFactory: { nil }
         )
     }

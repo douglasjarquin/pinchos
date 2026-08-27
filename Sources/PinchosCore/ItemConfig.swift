@@ -5,6 +5,11 @@ public enum ItemErrorPolicy: String, Equatable, Sendable {
     case keepLast = "keep_last"
 }
 
+public enum ItemNotificationEvent: String, Equatable, Hashable, Sendable {
+    case failure
+    case recovery
+}
+
 public enum RefreshInterval: Equatable, Sendable {
     case scheduled(TimeInterval)
     case manual
@@ -101,6 +106,8 @@ public struct CommandItemConfig: Equatable, Sendable {
     public let hideOnError: Bool
     public let iconOnly: Bool
     public let disabled: Bool
+    public let notifyOn: Set<ItemNotificationEvent>
+    public let notifyCooldown: TimeInterval?
 
     public init(
         name: String,
@@ -128,7 +135,9 @@ public struct CommandItemConfig: Equatable, Sendable {
         hideWhenEmpty: Bool = false,
         hideOnError: Bool = false,
         iconOnly: Bool = false,
-        disabled: Bool = false
+        disabled: Bool = false,
+        notifyOn: Set<ItemNotificationEvent> = [],
+        notifyCooldown: TimeInterval? = nil
     ) {
         self.name = name
         self.run = run
@@ -155,6 +164,8 @@ public struct CommandItemConfig: Equatable, Sendable {
         self.hideOnError = hideOnError
         self.iconOnly = iconOnly
         self.disabled = disabled
+        self.notifyOn = notifyOn
+        self.notifyCooldown = notifyCooldown
     }
 
     /// Local-file path when `iconSource` is `.file`; `nil` for a symbol or
@@ -292,7 +303,9 @@ extension ItemConfig {
         hideWhenEmpty: Bool = false,
         hideOnError: Bool = false,
         iconOnly: Bool = false,
-        disabled: Bool = false
+        disabled: Bool = false,
+        notifyOn: Set<ItemNotificationEvent> = [],
+        notifyCooldown: TimeInterval? = nil
     ) {
         self = .command(
             CommandItemConfig(
@@ -321,7 +334,9 @@ extension ItemConfig {
                 hideWhenEmpty: hideWhenEmpty,
                 hideOnError: hideOnError,
                 iconOnly: iconOnly,
-                disabled: disabled
+                disabled: disabled,
+                notifyOn: notifyOn,
+                notifyCooldown: notifyCooldown
             )
         )
     }
