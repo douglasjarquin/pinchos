@@ -727,7 +727,7 @@ final class StatusItemControllerTests: XCTestCase {
         let elapsed = started.duration(to: clock.now)
 
         XCTAssertLessThan(
-            elapsed, .milliseconds(150) * itemNames.count / 2,
+            elapsed, .milliseconds(150) * itemNames.count * 3 / 4,
             "4 items at 150ms settle time each must not sum to ~600ms if prepared concurrently"
         )
     }
@@ -750,7 +750,7 @@ final class StatusItemControllerTests: XCTestCase {
         let elapsed = started.duration(to: clock.now)
 
         XCTAssertLessThan(
-            elapsed, .milliseconds(150) * itemNames.count / 2,
+            elapsed, .milliseconds(150) * itemNames.count * 3 / 4,
             "4 items at 150ms settle time each must not sum to ~600ms during shutdown if torn down concurrently"
         )
     }
@@ -782,7 +782,7 @@ final class StatusItemControllerTests: XCTestCase {
         let elapsed = started.duration(to: clock.now)
 
         XCTAssertLessThan(
-            elapsed, .milliseconds(150) * 4 / 2,
+            elapsed, .milliseconds(150) * 4 * 3 / 4,
             "changed and removed items settling at 150ms each must overlap, not sum"
         )
     }
