@@ -55,6 +55,8 @@ final class ManagedItem: ManagedItemLifecycle {
     )
     private weak var menuDelegate: StatusItemMenuDelegate?
     private let now: () -> Date
+    private let notificationSink: ItemNotificationSink
+    private var notificationTracker = NotificationTransitionTracker()
     private var isActive = true
     private var configurationGeneration = 0
     private var isPreparingUpdate = false
@@ -121,6 +123,7 @@ final class ManagedItem: ManagedItemLifecycle {
         now: @escaping () -> Date = Date.init,
         iconRenderer: StatusItemIconRenderer = .system,
         triggerObserverFactory: (any ItemTriggerObserverFactory)? = nil,
+        notificationSink: ItemNotificationSink? = nil,
         statusItemFactory: @escaping () -> NSStatusItem? = {
             NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         }
@@ -133,6 +136,7 @@ final class ManagedItem: ManagedItemLifecycle {
         self.now = now
         self.iconRenderer = iconRenderer
         self.triggerObserverFactory = triggerObserverFactory
+        self.notificationSink = notificationSink ?? SystemItemNotificationSink()
         self.renderedTitle = commandConfig.errorText
         self.renderedToolTip = nil
         self.runner = CommandRunner(
@@ -666,7 +670,33 @@ final class ManagedItem: ManagedItemLifecycle {
         }
         let runnerSnapshot = await runner.snapshot()
         guard isActive, generation == configurationGeneration else { return }
-        renderPresentation(makeRuntimeSnapshot(runnerSnapshot))
+        let snapshot = makeRuntimeSnapshot(runnerSnapshot)
+        renderPresentation(snapshot)
+        sendNotificationIfNeeded(snapshot)
+    }
+
+    private func sendNotificationIfNeeded(_ snapshot: ItemRuntimeSnapshot) {
+        let isFailure = snapshot.outputDiagnostic != nil
+            || snapshot.lastExecution?.terminalReason != .exited(code: 0)
+        let policy = ItemNotificationConfig(
+            events: commandConfig.notifyOn,
+            cooldown: commandConfig.notifyCooldown
+        )
+        guard let event = notificationTracker.record(isFailure: isFailure, at: now(), policy: policy) else {
+            return
+        }
+
+        let body: String
+        switch event {
+        case .failure:
+            let detail = snapshot.errorSummary.map {
+                DiagnosticPreviewFormatter.preview($0, limits: .menuStderr).text
+            } ?? "command failed"
+            body = "Failure: \(detail)"
+        case .recovery:
+            body = "Recovered successfully"
+        }
+        notificationSink.send(ItemNotification(event: event, itemName: commandConfig.name, body: body))
     }
 
     private func requestPresentationUpdate() {
