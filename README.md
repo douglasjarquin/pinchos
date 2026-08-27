@@ -166,6 +166,7 @@ run = "<shell command>" # required, executed with `shell` on its interval
 shell = ["/bin/zsh", "-lc"] # optional, default ["/bin/sh", "-c"]
 working_directory = "~/src/project" # optional, tilde-expanded; relative paths are relative to this config file
 interval = "60s"        # optional, default "60s". Formats: "30s", "5m", "1h", or "manual"
+output = "json-v1"      # optional, default plain stdout. Parse the command's stdout as the versioned JSON protocol below.
 timeout = "15s"         # optional, default "15s", minimum "1s". Terminates the command process group when it expires
 max_output = "64KiB"    # optional, default "64KiB" per stdout/stderr stream. Formats: "B", "KiB", "MiB". Maximum 4MiB per stream.
 format = "{output}%"    # optional. {output} is the trimmed last stdout line of `run`. Absent = raw output.
@@ -196,6 +197,42 @@ title = "Refresh now"
 refresh = true
 ```
 
+### Versioned structured output
+
+Plain stdout is the default and remains unchanged for existing items.
+Set `output = "json-v1"` to opt into the small structured protocol.
+
+The command must write one JSON object with the required integer `version` field set to `1`.
+All other fields are optional:
+
+```json
+{
+  "version": 1,
+  "text": "81%",
+  "tooltip": "Weekly quota resets Monday at 3:00 PM",
+  "state": "warning",
+  "hidden": false,
+  "symbol": "chart.bar.fill",
+  "actions": [
+    { "title": "Open usage", "run": "open https://example.com/usage" },
+    { "title": "Refresh", "refresh": true }
+  ]
+}
+```
+
+`text` is the displayed title, `tooltip` is the native tooltip, `hidden` controls visibility, and `icon` or `symbol` overrides the configured icon source for that successful run.
+`state` accepts `normal`, `warning`, or `error` and maps to Pinchos's native fresh, warning, or error presentation.
+`icon` and `symbol` are mutually exclusive.
+`actions` uses the same declarative action shape as TOML: every entry needs a non-empty `title` and exactly one of a shell `run` string or `refresh: true`.
+When `actions` is present, it replaces the configured action list for that successful run and uses the existing scheduler and action execution model.
+Unknown top-level fields are ignored so additive fields do not change the v1 contract.
+
+Malformed JSON, a missing or unsupported version, invalid field types, conflicting icon sources, invalid actions, and truncated stdout are treated as a failed structured run.
+The item stays safe, applies its configured `on_error` policy, and exposes the structured-output diagnostic in its normal right-click diagnostics.
+Structured output is decoded only from the command runner's retained stdout, so the existing `max_output` per-stream limit and shared output-memory budget apply without change.
+Structured text and tooltips also use Pinchos's existing bounded diagnostic previews before reaching native AppKit surfaces.
+The protocol deliberately has no HTML, CSS, Markdown, webview, arbitrary UI, or SwiftBar semantics.
+
 An optional top-level `[scheduler]` table overrides the global active-session limit (see "Scheduler" below); it is not per-item:
 
 ```toml
@@ -203,7 +240,7 @@ An optional top-level `[scheduler]` table overrides the global active-session li
 max_active_sessions = 4 # optional, default min(4, CPU cores). Range 1-32.
 ```
 
-- `tooltip` is rendered by the native status-item tooltip. Supported placeholders are `{output}` (the retained stdout, including newlines, as a bounded preview — see "Diagnostics previews vs. retained output" below), `{updated_at}` (the last successful completion time), `{attempted_at}` (the last command start time), `{duration}` (the last run duration with three decimal places and an `s` suffix), `{exit_status}` (the last exit code or terminal result), `{error}` (the latest bounded stderr line or terminal error), `{stale}` (`yes` or `no`), and `{status}` (`running`, `fresh`, `stale`, `error`, or `unavailable`).
+- `tooltip` is rendered by the native status-item tooltip. Supported placeholders are `{output}` (the retained stdout, including newlines, as a bounded preview — see "Diagnostics previews vs. retained output" below), `{updated_at}` (the last successful completion time), `{attempted_at}` (the last command start time), `{duration}` (the last run duration with three decimal places and an `s` suffix), `{exit_status}` (the last exit code or terminal result), `{error}` (the latest bounded stderr line or terminal error), `{stale}` (`yes` or `no`), and `{status}` (`running`, `fresh`, `warning`, `stale`, `error`, or `unavailable`).
 - Timestamps use UTC ISO-8601 format.
 - Before the first successful run, `{output}` and `{updated_at}` are empty, while `{attempted_at}` and diagnostic placeholders become available after an attempt.
 - `{{` and `}}` escape literal braces.

@@ -24,6 +24,7 @@ private final class GroupTestFakeItem: ManagedItemLifecycle {
     private let eventLog: GroupTestEventLog
     private var pendingConfig: ItemConfig?
     private(set) var config: ItemConfig
+    var actions: [ItemAction] { config.commandConfig?.actions ?? [] }
     var iconDiagnosticNote: String?
     let isTopLevel: Bool
     var runtimeSnapshotValue: ItemRuntimeSnapshot?

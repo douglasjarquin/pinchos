@@ -9,6 +9,7 @@ protocol StatusItemMenuDelegate: AnyObject {
 @MainActor
 protocol ManagedItemLifecycle: AnyObject {
     var config: ItemConfig { get }
+    var actions: [ItemAction] { get }
     var iconDiagnosticNote: String? { get }
     func owns(statusItem: NSStatusItem) -> Bool
     func activate()
@@ -414,7 +415,7 @@ final class StatusItemController: StatusItemMenuDelegate {
         to menu: NSMenu
     ) async {
         var hasConfiguredRefresh = false
-        for (index, action) in commandConfig.actions.enumerated() {
+        for (index, action) in item.actions.enumerated() {
             let menuItem = NSMenuItem(title: action.title, action: #selector(itemAction(_:)), keyEquivalent: "")
             menuItem.target = self
             menuItem.representedObject = ItemActionTarget(item: item, index: index)
@@ -424,7 +425,7 @@ final class StatusItemController: StatusItemMenuDelegate {
                 hasConfiguredRefresh = true
             }
         }
-        if !commandConfig.actions.isEmpty {
+        if !item.actions.isEmpty {
             menu.addItem(NSMenuItem.separator())
         }
         if !hasConfiguredRefresh {
@@ -447,12 +448,12 @@ final class StatusItemController: StatusItemMenuDelegate {
             addClickDiagnostics(clickSnapshot, to: menu)
         }
         var actionSnapshots: [(index: Int, snapshot: CommandRunnerSnapshot?)] = []
-        for index in commandConfig.actions.indices {
+        for index in item.actions.indices {
             actionSnapshots.append((index: index, snapshot: await item.actionSnapshot(at: index)))
         }
         if actionSnapshots.contains(where: { $0.snapshot != nil }) {
             menu.addItem(NSMenuItem.separator())
-            addActionDiagnostics(actions: commandConfig.actions, snapshots: actionSnapshots, to: menu)
+            addActionDiagnostics(actions: item.actions, snapshots: actionSnapshots, to: menu)
         }
         if commandConfig.disabled {
             menu.addItem(NSMenuItem.separator())

@@ -9,6 +9,7 @@ public enum ConfigParser {
         "working_directory",
         "env",
         "interval",
+        "output",
         "timeout",
         "max_output",
         "format",
@@ -754,6 +755,25 @@ public enum ConfigParser {
             refreshInterval = .scheduled(interval)
         }
 
+        let output: CommandOutputFormat
+        if let outputValue = table["output"] {
+            let rawValue = try stringValue(
+                name: name,
+                key: "output",
+                value: outputValue,
+                sourceLines: sourceLines
+            )
+            guard let parsedValue = CommandOutputFormat(rawValue: rawValue), parsedValue != .plain else {
+                throw ConfigParseError(
+                    message: "item.\(name): output must be 'json-v1'",
+                    line: sourceLine(item: name, key: "output", sourceLines: sourceLines)
+                )
+            }
+            output = parsedValue
+        } else {
+            output = .plain
+        }
+
         let refreshOnClick: Bool
         if let refreshOnClickValue = table["refresh_on_click"] {
             guard let value = refreshOnClickValue.bool else {
@@ -940,6 +960,7 @@ public enum ConfigParser {
             name: name,
             run: run,
             interval: refreshInterval,
+            output: output,
             timeout: timeout,
             maxOutputBytes: maxOutputBytes,
             shell: shell,

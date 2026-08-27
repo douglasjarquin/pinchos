@@ -8,6 +8,9 @@ private final class FakeManagedItem: ManagedItemLifecycle {
     private let eventLog: EventLog
     private var pendingConfig: ItemConfig?
     private(set) var config: ItemConfig
+    var actions: [ItemAction] {
+        config.commandConfig?.actions ?? []
+    }
     var iconDiagnosticNote: String?
     let initiallyVisible: Bool
     let isTopLevel: Bool
