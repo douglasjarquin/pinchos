@@ -34,6 +34,7 @@ extension SupervisorProcessSession {
             try setCloseOnExec(control.write)
             try setCloseOnExec(status.read)
             try setCloseOnExec(status.write)
+            try setNoSignalOnBrokenPipe(control.write)
 
             var attributes: posix_spawnattr_t?
             try check(posix_spawnattr_init(&attributes), context: "unable to initialize supervisor attributes")
@@ -151,6 +152,18 @@ extension SupervisorProcessSession {
         let flags = fcntl(fileDescriptor, F_GETFD)
         guard flags >= 0, fcntl(fileDescriptor, F_SETFD, flags | FD_CLOEXEC) >= 0 else {
             throw LaunchError.posix(errno, context: "unable to configure close-on-exec")
+        }
+    }
+
+    /// The supervisor shell can die (killed with its process group, or from
+    /// resource exhaustion under heavy concurrent load) before every planned
+    /// `send()` to it completes. Without this, a `write()` after that happens
+    /// delivers SIGPIPE with its default disposition, which kills this whole
+    /// process instantly - not just the write. This makes a broken control
+    /// pipe surface as a normal `EPIPE` `send()` already knows how to handle.
+    private static func setNoSignalOnBrokenPipe(_ fileDescriptor: Int32) throws {
+        guard fcntl(fileDescriptor, F_SETNOSIGPIPE, 1) >= 0 else {
+            throw LaunchError.posix(errno, context: "unable to disable SIGPIPE on control pipe")
         }
     }
 

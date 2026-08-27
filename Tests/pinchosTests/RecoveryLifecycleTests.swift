@@ -1753,7 +1753,11 @@ final class RecoveryLifecycleTests: XCTestCase {
     private func waitForClickExecution(_ item: ManagedItem) async throws -> ClickDiagnosticsSnapshot {
         let deadline = Date().addingTimeInterval(2)
         while Date() < deadline {
-            if let snapshot = await item.clickSnapshot(), snapshot.runner.lastExecution != nil {
+            if let snapshot = await item.clickSnapshot(),
+                snapshot.runner.lastExecution != nil,
+                snapshot.lastCompletedAt != nil,
+                !snapshot.runner.isRunning
+            {
                 return snapshot
             }
             try await Task.sleep(for: .milliseconds(10))
