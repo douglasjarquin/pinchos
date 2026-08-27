@@ -702,7 +702,9 @@ final class ManagedItem: ManagedItemLifecycle {
         case .warning:
             baseTitle = lastSuccessfulTitle ?? commandConfig.errorText
         case .error:
-            baseTitle = commandConfig.onError == .keepLast
+            let isGenuineFailure = snapshot.outputDiagnostic != nil
+                || snapshot.lastExecution?.terminalReason != .exited(code: 0)
+            baseTitle = (!isGenuineFailure || commandConfig.onError == .keepLast)
                 ? (lastSuccessfulTitle ?? commandConfig.errorText)
                 : commandConfig.errorText
         case .running:

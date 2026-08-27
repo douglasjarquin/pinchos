@@ -34,6 +34,27 @@ final class StructuredOutputLifecycleTests: XCTestCase {
         XCTAssertEqual(snapshot.structuredOutput?.actions, [ItemAction(title: "Refresh", kind: .refresh)])
     }
 
+    func testJSONV1StateErrorKeepsStructuredTextUnderDefaultOnError() async throws {
+        let item = ManagedItem(
+            config: ItemConfig(
+                name: "full",
+                run: "printf '%s' '{\"version\":1,\"text\":\"95% FULL\",\"state\":\"error\"}'",
+                interval: .manual,
+                output: .jsonV1
+            ),
+            menuDelegate: StructuredOutputMenuDelegate(),
+            initiallyVisible: false,
+            scheduler: CommandScheduler(),
+            statusItemFactory: { nil }
+        )
+        addTeardownBlock { @MainActor in await item.tearDown() }
+
+        item.refreshNow()
+        _ = try await waitForSnapshot(item) { $0.status == .error }
+
+        XCTAssertEqual(item.renderedTitle, "95% FULL ⚠︎")
+    }
+
     func testMalformedJSONV1IsAnErrorWithUsefulDiagnostic() async throws {
         let item = ManagedItem(
             config: ItemConfig(
