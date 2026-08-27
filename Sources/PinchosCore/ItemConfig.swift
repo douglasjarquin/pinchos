@@ -15,6 +15,12 @@ public enum CommandOutputFormat: String, Equatable, Sendable {
     case jsonV1 = "json-v1"
 }
 
+public enum ItemTrigger: String, Equatable, Hashable, Sendable {
+    case startup
+    case wake
+    case networkChange = "network-change"
+}
+
 public enum ItemActionKind: Equatable, Sendable {
     case command(String)
     case refresh
@@ -77,6 +83,8 @@ public struct CommandItemConfig: Equatable, Sendable {
     public let environment: [String: String]
     public let interval: RefreshInterval
     public let output: CommandOutputFormat
+    public let triggers: Set<ItemTrigger>
+    public let watch: [String]
     public let timeout: TimeInterval
     public let maxOutputBytes: Int
     public let format: String?
@@ -105,6 +113,8 @@ public struct CommandItemConfig: Equatable, Sendable {
         workingDirectory: String? = nil,
         environment: [String: String] = [:],
         format: String? = nil,
+        triggers: Set<ItemTrigger> = [],
+        watch: [String] = [],
         click: String? = nil,
         refreshOnClick: Bool = false,
         errorText: String = "\u{2013}",
@@ -127,6 +137,8 @@ public struct CommandItemConfig: Equatable, Sendable {
         self.environment = environment
         self.interval = interval
         self.output = output
+        self.triggers = triggers
+        self.watch = watch
         self.timeout = timeout
         self.maxOutputBytes = maxOutputBytes
         self.format = format
@@ -265,6 +277,8 @@ extension ItemConfig {
         workingDirectory: String? = nil,
         environment: [String: String] = [:],
         format: String? = nil,
+        triggers: Set<ItemTrigger> = [],
+        watch: [String] = [],
         click: String? = nil,
         refreshOnClick: Bool = false,
         errorText: String = "\u{2013}",
@@ -292,6 +306,8 @@ extension ItemConfig {
                 workingDirectory: workingDirectory,
                 environment: environment,
                 format: format,
+                triggers: triggers,
+                watch: watch,
                 click: click,
                 refreshOnClick: refreshOnClick,
                 errorText: errorText,
