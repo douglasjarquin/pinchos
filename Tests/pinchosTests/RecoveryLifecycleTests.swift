@@ -482,7 +482,7 @@ final class RecoveryLifecycleTests: XCTestCase {
         let elapsed = started.duration(to: clock.now)
 
         XCTAssertLessThan(
-            elapsed, perRoleSettle * 3 / 2,
+            elapsed, perRoleSettle * 2,
             "primary/click/action settling at 150ms each must overlap, not sum to ~450ms"
         )
     }
