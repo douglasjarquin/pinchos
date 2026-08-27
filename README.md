@@ -167,6 +167,8 @@ shell = ["/bin/zsh", "-lc"] # optional, default ["/bin/sh", "-c"]
 working_directory = "~/src/project" # optional, tilde-expanded; relative paths are relative to this config file
 interval = "60s"        # optional, default "60s". Formats: "30s", "5m", "1h", or "manual"
 output = "json-v1"      # optional, default plain stdout. Parse the command's stdout as the versioned JSON protocol below.
+triggers = ["startup", "wake", "network-change"] # optional, refresh after selected system events
+watch = ["~/Library/Application Support/example/status.json"] # optional, refresh when a watched path changes
 timeout = "15s"         # optional, default "15s", minimum "1s". Terminates the command process group when it expires
 max_output = "64KiB"    # optional, default "64KiB" per stdout/stderr stream. Formats: "B", "KiB", "MiB". Maximum 4MiB per stream.
 format = "{output}%"    # optional. {output} is the trimmed last stdout line of `run`. Absent = raw output.
@@ -253,6 +255,9 @@ max_active_sessions = 4 # optional, default min(4, CPU cores). Range 1-32.
 - Environment variable names must use letters, digits, and underscores, and must start with a letter or underscore.
 - `timeout` accepts whole seconds, minutes, or hours and terminates the command's process group after the configured duration.
 - `interval = "manual"` runs the item once when it is first activated, then disables its periodic timer. Use **Refresh Now** from the item's right-click menu, or set `refresh_on_click = true`, for later runs.
+- `triggers` accepts zero or more of `startup`, `wake`, and `network-change`; event refreshes use the same runner and scheduler as polling and manual refreshes, so all three modes can be enabled together.
+- `watch` accepts filesystem paths that are tilde-expanded and normalized when the config loads; duplicate paths are collapsed, and each watched path refreshes only the item that declares it.
+- Repeated equivalent wake, network, or watched-file events are debounced, and changing an item's trigger or watch configuration during a live reload only replaces the affected observers.
 - `refresh_on_click` only applies when `click` is absent. A configured `click` command keeps ownership of the normal left-click action.
 - An item may declare zero or more `action` tables.
 - Actions appear in declaration order at the top of the item's right-click menu.
