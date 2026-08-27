@@ -154,7 +154,8 @@ private final class WakeTriggerObserver: ItemTriggerObserver {
             object: nil,
             queue: .main
         ) { [weak self] _ in
-            Task { @MainActor in self?.onEvent() }
+            guard let self else { return }
+            Task { @MainActor in self.onEvent() }
         }
     }
 
@@ -181,7 +182,8 @@ private final class NetworkTriggerObserver: ItemTriggerObserver {
         let monitor = NWPathMonitor()
         self.monitor = monitor
         monitor.pathUpdateHandler = { [weak self] _ in
-            Task { @MainActor in self?.onEvent() }
+            guard let self else { return }
+            Task { @MainActor in self.onEvent() }
         }
         monitor.start(queue: queue)
     }
