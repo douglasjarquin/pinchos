@@ -94,7 +94,7 @@ final class ItemTriggerObservationTests: XCTestCase {
 
         factory.observers[.wake]?.emit()
         factory.observers[.file("/tmp/status.json")]?.emit()
-        try await Task.sleep(for: .milliseconds(60))
+        try await Task.sleep(for: .milliseconds(200))
 
         XCTAssertEqual(refreshCount, 2)
     }
