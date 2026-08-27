@@ -10,6 +10,11 @@ public enum RefreshInterval: Equatable, Sendable {
     case manual
 }
 
+public enum CommandOutputFormat: String, Equatable, Sendable {
+    case plain
+    case jsonV1 = "json-v1"
+}
+
 public enum ItemActionKind: Equatable, Sendable {
     case command(String)
     case refresh
@@ -71,6 +76,7 @@ public struct CommandItemConfig: Equatable, Sendable {
     public let workingDirectory: String?
     public let environment: [String: String]
     public let interval: RefreshInterval
+    public let output: CommandOutputFormat
     public let timeout: TimeInterval
     public let maxOutputBytes: Int
     public let format: String?
@@ -92,6 +98,7 @@ public struct CommandItemConfig: Equatable, Sendable {
         name: String,
         run: String,
         interval: RefreshInterval,
+        output: CommandOutputFormat = .plain,
         timeout: TimeInterval = CommandItemConfig.defaultTimeout,
         maxOutputBytes: Int = CommandItemConfig.defaultMaxOutputBytes,
         shell: [String] = CommandItemConfig.defaultShell,
@@ -119,6 +126,7 @@ public struct CommandItemConfig: Equatable, Sendable {
         self.workingDirectory = workingDirectory
         self.environment = environment
         self.interval = interval
+        self.output = output
         self.timeout = timeout
         self.maxOutputBytes = maxOutputBytes
         self.format = format
@@ -250,6 +258,7 @@ extension ItemConfig {
         name: String,
         run: String,
         interval: RefreshInterval,
+        output: CommandOutputFormat = .plain,
         timeout: TimeInterval = CommandItemConfig.defaultTimeout,
         maxOutputBytes: Int = CommandItemConfig.defaultMaxOutputBytes,
         shell: [String] = CommandItemConfig.defaultShell,
@@ -276,6 +285,7 @@ extension ItemConfig {
                 name: name,
                 run: run,
                 interval: interval,
+                output: output,
                 timeout: timeout,
                 maxOutputBytes: maxOutputBytes,
                 shell: shell,

@@ -19,6 +19,7 @@ final class ManagedGroupItem: ManagedItemLifecycle {
     let statusItem: NSStatusItem?
     private(set) var groupConfig: GroupItemConfig
     var config: ItemConfig { .group(groupConfig) }
+    var actions: [ItemAction] { [] }
     private(set) var iconDiagnosticNote: String?
     private let iconRenderer: StatusItemIconRenderer
     private weak var menuDelegate: StatusItemMenuDelegate?

@@ -65,6 +65,7 @@ public struct CommandRunnerSnapshot: Equatable, Sendable {
 public enum ItemRuntimeStatus: String, Equatable, Sendable {
     case running
     case fresh
+    case warning
     case stale
     case error
     case unavailable
@@ -89,7 +90,9 @@ public struct ItemRuntimeSnapshot: Equatable, Sendable {
         lastExecution: CommandExecution?,
         staleAfter: TimeInterval?,
         skippedRefreshes: Int,
-        now: Date
+        now: Date,
+        structuredOutput: StructuredCommandOutput? = nil,
+        outputDiagnostic: String? = nil
     ) {
         self.isRunning = isRunning
         self.fullOutput = fullOutput
@@ -98,6 +101,8 @@ public struct ItemRuntimeSnapshot: Equatable, Sendable {
         self.lastExecution = lastExecution
         self.staleAfter = staleAfter
         self.skippedRefreshes = skippedRefreshes
+        self.structuredOutput = structuredOutput
+        self.outputDiagnostic = outputDiagnostic
         if let staleAfter, let lastUpdatedAt {
             self.isStale = now.timeIntervalSince(lastUpdatedAt) >= staleAfter
         } else {
@@ -106,8 +111,12 @@ public struct ItemRuntimeSnapshot: Equatable, Sendable {
 
         if isRunning {
             status = .running
+        } else if outputDiagnostic != nil {
+            status = .error
         } else if let lastExecution, lastExecution.terminalReason != .exited(code: 0) {
             status = .error
+        } else if let structuredState = structuredOutput?.state {
+            status = structuredState.runtimeStatus
         } else if fullOutput == nil {
             status = .unavailable
         } else if self.isStale {
@@ -116,6 +125,9 @@ public struct ItemRuntimeSnapshot: Equatable, Sendable {
             status = .fresh
         }
     }
+
+    public let structuredOutput: StructuredCommandOutput?
+    public let outputDiagnostic: String?
 
     public var lastRunDuration: TimeInterval? {
         lastExecution?.duration
@@ -138,6 +150,7 @@ public struct ItemRuntimeSnapshot: Equatable, Sendable {
     }
 
     public var errorSummary: String? {
+        if let outputDiagnostic { return outputDiagnostic }
         guard let lastExecution, lastExecution.terminalReason != .exited(code: 0) else {
             return nil
         }

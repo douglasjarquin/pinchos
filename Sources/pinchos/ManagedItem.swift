@@ -22,6 +22,7 @@ final class ManagedItem: ManagedItemLifecycle {
     private(set) var isVisible = true
     private(set) var commandConfig: CommandItemConfig
     var config: ItemConfig { .command(commandConfig) }
+    private(set) var actions: [ItemAction]
     private(set) var iconIsLoaded = false
     private(set) var iconDiagnosticNote: String?
     private let iconRenderer: StatusItemIconRenderer
@@ -60,6 +61,8 @@ final class ManagedItem: ManagedItemLifecycle {
     private var pendingActionInvocations = 0
     private var actionInvocationsDrained: CheckedContinuation<Void, Never>?
     private var lastSuccessfulOutput: String?
+    private var lastStructuredOutput: StructuredCommandOutput?
+    private var structuredOutputDiagnostic: String?
     private var lastAttemptedAt: Date?
     private var lastUpdatedAt: Date?
     private var lastSuccessfulTitle: String?
@@ -100,6 +103,7 @@ final class ManagedItem: ManagedItemLifecycle {
         let timerNeedsRestart: Bool
         let presentationNeedsUpdate: Bool
         let staleAfterChanged: Bool
+        let outputChanged: Bool
     }
 
     init(
@@ -116,6 +120,7 @@ final class ManagedItem: ManagedItemLifecycle {
     ) {
         let commandConfig = config.command
         self.commandConfig = commandConfig
+        self.actions = commandConfig.actions
         self.menuDelegate = menuDelegate
         self.scheduler = scheduler
         self.now = now
@@ -142,7 +147,7 @@ final class ManagedItem: ManagedItemLifecycle {
         } else {
             self.clickRunner = nil
         }
-        self.actionRunners = Self.makeActionRunners(for: commandConfig)
+        self.actionRunners = Self.makeActionRunners(for: commandConfig.actions, config: commandConfig)
         // A hidden group member gets no real backing `NSStatusItem` at
         // all: there is no visible status-bar slot to ever reveal for it,
         // so every `statusItem?.` access in this class simply no-ops.
@@ -170,13 +175,13 @@ final class ManagedItem: ManagedItemLifecycle {
         return ownedStatusItem === statusItem
     }
 
-    private func applyIcon() {
+    private func applyIcon(source: ItemIconSource? = nil) {
         // Loading is intentionally independent of `statusItem` (nil in headless
         // tests) so `iconIsLoaded` reflects whether the configured source
         // actually resolved, not whether there is a real status item to paint
         // it onto. An unavailable SF Symbol name stays a valid config and
         // falls back to text-only with a diagnostic note.
-        let rendered = iconRenderer.render(commandConfig.iconSource)
+        let rendered = iconRenderer.render(source ?? commandConfig.iconSource)
         iconRenderer.apply(rendered, to: statusItem?.button)
         iconIsLoaded = rendered.isLoaded
         iconDiagnosticNote = rendered.diagnosticNote
@@ -202,7 +207,9 @@ final class ManagedItem: ManagedItemLifecycle {
             || previousConfig.interval != newCommandConfig.interval
             || previousConfig.disabled != newCommandConfig.disabled
         let staleAfterChanged = previousConfig.staleAfter != newCommandConfig.staleAfter || runnerConfigurationChanged
-        let presentationNeedsUpdate = previousConfig.format != newCommandConfig.format
+        let outputChanged = previousConfig.output != newCommandConfig.output
+        let presentationNeedsUpdate = outputChanged
+            || previousConfig.format != newCommandConfig.format
             || previousConfig.errorText != newCommandConfig.errorText
             || previousConfig.onError != newCommandConfig.onError
             || previousConfig.staleAfter != newCommandConfig.staleAfter
@@ -260,6 +267,7 @@ final class ManagedItem: ManagedItemLifecycle {
         } : nil
 
         let actionRunnersConfigurationChanged = previousConfig.actions != newCommandConfig.actions
+            || previousConfig.output != newCommandConfig.output
             || previousConfig.timeout != newCommandConfig.timeout
             || previousConfig.maxOutputBytes != newCommandConfig.maxOutputBytes
             || previousConfig.shell != newCommandConfig.shell
@@ -267,7 +275,7 @@ final class ManagedItem: ManagedItemLifecycle {
             || previousConfig.environment != newCommandConfig.environment
         let actionsNeedCancel = actionRunnersConfigurationChanged || becameDisabled
         let replacementActionRunners = actionRunnersConfigurationChanged
-            ? Self.makeActionRunners(for: newCommandConfig)
+            ? Self.makeActionRunners(for: newCommandConfig.actions, config: newCommandConfig)
             : nil
 
         // A permit request only queued (not yet running) for a runner whose
@@ -310,7 +318,8 @@ final class ManagedItem: ManagedItemLifecycle {
             actionRunnersConfigurationChanged: actionRunnersConfigurationChanged,
             timerNeedsRestart: timerNeedsRestart,
             presentationNeedsUpdate: presentationNeedsUpdate,
-            staleAfterChanged: staleAfterChanged
+            staleAfterChanged: staleAfterChanged,
+            outputChanged: outputChanged
         )
     }
 
@@ -318,6 +327,11 @@ final class ManagedItem: ManagedItemLifecycle {
         guard isActive, let pendingUpdate else { return }
         self.pendingUpdate = nil
         commandConfig = pendingUpdate.commandConfig
+        if pendingUpdate.outputChanged || commandConfig.output == .plain {
+            lastStructuredOutput = nil
+            structuredOutputDiagnostic = nil
+        }
+        actions = lastStructuredOutput?.actions ?? commandConfig.actions
         if let runner = pendingUpdate.runner {
             self.runner = runner
         }
@@ -327,7 +341,7 @@ final class ManagedItem: ManagedItemLifecycle {
             lastClickCompletedAt = nil
         }
         if pendingUpdate.actionRunnersConfigurationChanged {
-            actionRunners = pendingUpdate.actionRunners ?? [:]
+            actionRunners = Self.makeActionRunners(for: actions, config: commandConfig)
         }
         applyIcon()
         if pendingUpdate.timerNeedsRestart {
@@ -338,7 +352,10 @@ final class ManagedItem: ManagedItemLifecycle {
         }
         if pendingUpdate.presentationNeedsUpdate {
             lastSuccessfulTitle = lastSuccessfulOutput.map {
-                applyFormat(commandConfig.format, output: lastTrimmedLine(of: $0))
+                let output = lastStructuredOutput.map {
+                    DiagnosticPreviewFormatter.preview($0.text ?? "", limits: .menuValue).text
+                } ?? lastTrimmedLine(of: $0)
+                return applyFormat(commandConfig.format, output: output)
             }
             requestPresentationUpdate()
         }
@@ -561,18 +578,7 @@ final class ManagedItem: ManagedItemLifecycle {
             _ = await runner.finishActiveRun()
             return
         }
-        renderPresentation(
-            ItemRuntimeSnapshot(
-                isRunning: true,
-                fullOutput: lastSuccessfulOutput,
-                lastAttemptedAt: lastAttemptedAt,
-                lastUpdatedAt: lastUpdatedAt,
-                lastExecution: runningRunnerSnapshot.lastExecution,
-                staleAfter: commandConfig.staleAfter,
-                skippedRefreshes: runningRunnerSnapshot.skippedRefreshes,
-                now: now()
-            )
-        )
+        renderPresentation(makeRuntimeSnapshot(runningRunnerSnapshot))
         let preliminaryOutcome = await runner.finishActiveRun()
         guard isActive, generation == configurationGeneration else { return }
         guard case .completed = preliminaryOutcome else { return }
@@ -586,14 +592,56 @@ final class ManagedItem: ManagedItemLifecycle {
         guard isActive, generation == configurationGeneration else { return }
         let currentConfig = commandConfig
         if execution.terminalReason == .exited(code: 0) {
-            lastSuccessfulOutput = execution.stdout
-            lastUpdatedAt = now()
-            lastSuccessfulTitle = applyFormat(
-                currentConfig.format,
-                output: lastTrimmedLine(of: execution.stdout)
-            )
-            scheduleStalePresentation()
+            if currentConfig.output == .jsonV1 {
+                do {
+                    guard !execution.stdoutTruncated else {
+                        throw StructuredOutputParseError.invalidField(
+                            "output",
+                            "complete JSON within max_output; stdout was truncated"
+                        )
+                    }
+                    let structured = try StructuredOutputParser.parse(execution.stdout)
+                    lastStructuredOutput = structured
+                    structuredOutputDiagnostic = nil
+                    lastSuccessfulOutput = execution.stdout
+                    lastUpdatedAt = now()
+                    let structuredText = DiagnosticPreviewFormatter.preview(
+                        structured.text ?? "",
+                        limits: .menuValue
+                    ).text
+                    lastSuccessfulTitle = applyFormat(currentConfig.format, output: structuredText)
+                    await replaceActions(structured.actions ?? currentConfig.actions, config: currentConfig)
+                    scheduleStalePresentation()
+                } catch let error as StructuredOutputParseError {
+                    structuredOutputDiagnostic = error.description
+                    if currentConfig.onError == .replace {
+                        lastStructuredOutput = nil
+                        lastSuccessfulOutput = nil
+                        lastUpdatedAt = nil
+                        lastSuccessfulTitle = nil
+                        await replaceActions(currentConfig.actions, config: currentConfig)
+                        stalePresentationTask?.cancel()
+                        stalePresentationTask = nil
+                    }
+                } catch {
+                    structuredOutputDiagnostic = "structured output could not be decoded: \(error)"
+                }
+            } else {
+                lastStructuredOutput = nil
+                structuredOutputDiagnostic = nil
+                actions = currentConfig.actions
+                lastSuccessfulOutput = execution.stdout
+                lastUpdatedAt = now()
+                lastSuccessfulTitle = applyFormat(
+                    currentConfig.format,
+                    output: lastTrimmedLine(of: execution.stdout)
+                )
+                scheduleStalePresentation()
+            }
         } else if currentConfig.onError == .replace {
+            lastStructuredOutput = nil
+            structuredOutputDiagnostic = nil
+            await replaceActions(currentConfig.actions, config: currentConfig)
             lastSuccessfulOutput = nil
             lastUpdatedAt = nil
             lastSuccessfulTitle = nil
@@ -602,18 +650,7 @@ final class ManagedItem: ManagedItemLifecycle {
         }
         let runnerSnapshot = await runner.snapshot()
         guard isActive, generation == configurationGeneration else { return }
-        renderPresentation(
-            ItemRuntimeSnapshot(
-                isRunning: runnerSnapshot.isRunning,
-                fullOutput: lastSuccessfulOutput,
-                lastAttemptedAt: lastAttemptedAt,
-                lastUpdatedAt: lastUpdatedAt,
-                lastExecution: runnerSnapshot.lastExecution,
-                staleAfter: currentConfig.staleAfter,
-                skippedRefreshes: runnerSnapshot.skippedRefreshes,
-                now: now()
-            )
-        )
+        renderPresentation(makeRuntimeSnapshot(runnerSnapshot))
     }
 
     private func requestPresentationUpdate() {
@@ -625,16 +662,7 @@ final class ManagedItem: ManagedItemLifecycle {
     private func updatePresentation() async {
         let runnerSnapshot = await runner.snapshot()
         guard isActive else { return }
-        let snapshot = ItemRuntimeSnapshot(
-            isRunning: runnerSnapshot.isRunning,
-            fullOutput: lastSuccessfulOutput,
-            lastAttemptedAt: lastAttemptedAt,
-            lastUpdatedAt: lastUpdatedAt,
-            lastExecution: runnerSnapshot.lastExecution,
-            staleAfter: commandConfig.staleAfter,
-            skippedRefreshes: runnerSnapshot.skippedRefreshes,
-            now: now()
-        )
+        let snapshot = makeRuntimeSnapshot(runnerSnapshot)
         renderPresentation(snapshot)
     }
 
@@ -671,8 +699,12 @@ final class ManagedItem: ManagedItemLifecycle {
         switch snapshot.status {
         case .fresh, .stale:
             baseTitle = lastSuccessfulTitle ?? commandConfig.errorText
+        case .warning:
+            baseTitle = lastSuccessfulTitle ?? commandConfig.errorText
         case .error:
-            baseTitle = commandConfig.onError == .keepLast
+            let isGenuineFailure = snapshot.outputDiagnostic != nil
+                || snapshot.lastExecution?.terminalReason != .exited(code: 0)
+            baseTitle = (!isGenuineFailure || commandConfig.onError == .keepLast)
                 ? (lastSuccessfulTitle ?? commandConfig.errorText)
                 : commandConfig.errorText
         case .running:
@@ -685,35 +717,45 @@ final class ManagedItem: ManagedItemLifecycle {
         switch snapshot.status {
         case .stale:
             marker = " ⌛︎"
-        case .error, .unavailable:
+        case .warning, .error, .unavailable:
             marker = " ⚠︎"
         case .running, .fresh:
             marker = ""
         }
         setTitle(truncateTitle(baseTitle, maxLength: commandConfig.maxLength) + marker)
-        setToolTip(renderTooltip(commandConfig.tooltip, state: snapshot))
-        setVisibility(computeVisibility(lastExecution: snapshot.lastExecution, fullOutput: snapshot.fullOutput))
+        let structuredTooltip = snapshot.structuredOutput?.tooltip.map {
+            DiagnosticPreviewFormatter.preview($0, limits: .tooltip).text
+        }
+        setToolTip(structuredTooltip ?? renderTooltip(commandConfig.tooltip, state: snapshot))
+        applyIcon(source: snapshot.structuredOutput?.iconSource ?? commandConfig.iconSource)
+        setVisibility(
+            computeVisibility(
+                lastExecution: snapshot.lastExecution,
+                fullOutput: snapshot.fullOutput,
+                hidden: snapshot.structuredOutput?.hidden
+            )
+        )
     }
 
     /// `hide_when_empty` and `hide_on_error` only take effect after a completed
     /// attempt (`lastExecution` becomes non-nil), so an item never disappears before
     /// its first result lands. `disabled` overrides both policies to keep a disabled
     /// item visible and inspectable via its right-click diagnostics menu.
-    private func computeVisibility(lastExecution: CommandExecution?, fullOutput: String?) -> Bool {
+    private func computeVisibility(lastExecution: CommandExecution?, fullOutput: String?, hidden: Bool? = nil) -> Bool {
         guard !commandConfig.disabled else { return true }
         guard let lastExecution else { return true }
         if lastExecution.terminalReason != .exited(code: 0) {
             return !commandConfig.hideOnError
         }
+        if let hidden { return !hidden }
         if commandConfig.hideWhenEmpty {
             return !lastTrimmedLine(of: fullOutput ?? "").isEmpty
         }
         return true
     }
 
-    func runtimeSnapshot() async -> ItemRuntimeSnapshot {
-        let runnerSnapshot = await runner.snapshot()
-        let snapshot = ItemRuntimeSnapshot(
+    private func makeRuntimeSnapshot(_ runnerSnapshot: CommandRunnerSnapshot) -> ItemRuntimeSnapshot {
+        ItemRuntimeSnapshot(
             isRunning: runnerSnapshot.isRunning,
             fullOutput: lastSuccessfulOutput,
             lastAttemptedAt: lastAttemptedAt,
@@ -721,8 +763,30 @@ final class ManagedItem: ManagedItemLifecycle {
             lastExecution: runnerSnapshot.lastExecution,
             staleAfter: commandConfig.staleAfter,
             skippedRefreshes: runnerSnapshot.skippedRefreshes,
-            now: now()
+            now: now(),
+            structuredOutput: lastStructuredOutput,
+            outputDiagnostic: structuredOutputDiagnostic
         )
+    }
+
+    private func replaceActions(_ newActions: [ItemAction], config: CommandItemConfig) async {
+        guard actions != newActions else { return }
+        for task in pendingActionPermitTasks.values {
+            task.cancel()
+        }
+        let runners = Array(actionRunners.values)
+        await withTaskGroup(of: Void.self) { group in
+            for runner in runners {
+                group.addTask { await runner.cancelActive() }
+            }
+        }
+        actions = newActions
+        actionRunners = Self.makeActionRunners(for: newActions, config: config)
+    }
+
+    func runtimeSnapshot() async -> ItemRuntimeSnapshot {
+        let runnerSnapshot = await runner.snapshot()
+        let snapshot = makeRuntimeSnapshot(runnerSnapshot)
         renderPresentation(snapshot)
         return snapshot
     }
@@ -732,8 +796,8 @@ final class ManagedItem: ManagedItemLifecycle {
     }
 
     func actionSnapshot(at index: Int) async -> CommandRunnerSnapshot? {
-        guard commandConfig.actions.indices.contains(index),
-            case .command = commandConfig.actions[index].kind,
+        guard actions.indices.contains(index),
+            case .command = actions[index].kind,
             let actionRunner = actionRunners[index]
         else {
             return nil
@@ -757,11 +821,11 @@ final class ManagedItem: ManagedItemLifecycle {
 
     func invokeAction(at index: Int) {
         guard isActive, !isPreparingUpdate, !isPreparingRemoval, !commandConfig.disabled,
-            commandConfig.actions.indices.contains(index)
+            actions.indices.contains(index)
         else {
             return
         }
-        switch commandConfig.actions[index].kind {
+        switch actions[index].kind {
         case .refresh:
             refreshNow()
         case .command:
@@ -888,9 +952,12 @@ final class ManagedItem: ManagedItemLifecycle {
         continuation.resume()
     }
 
-    private static func makeActionRunners(for config: CommandItemConfig) -> [Int: CommandRunner] {
+    private static func makeActionRunners(
+        for actions: [ItemAction],
+        config: CommandItemConfig
+    ) -> [Int: CommandRunner] {
         var runners: [Int: CommandRunner] = [:]
-        for (index, action) in config.actions.enumerated() {
+        for (index, action) in actions.enumerated() {
             guard case .command(let command) = action.kind else { continue }
             runners[index] = CommandRunner(
                 command: command,

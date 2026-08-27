@@ -14,6 +14,7 @@ final class ConfigParserTests: XCTestCase {
         XCTAssertEqual(item.name, "limits")
         XCTAssertEqual(item.run, "echo 42")
         XCTAssertEqual(item.interval, .scheduled(60))
+        XCTAssertEqual(item.output, .plain)
         XCTAssertNil(item.format)
         XCTAssertNil(item.click)
         XCTAssertTrue(item.actions.isEmpty)
@@ -28,6 +29,18 @@ final class ConfigParserTests: XCTestCase {
         XCTAssertFalse(item.hideOnError)
         XCTAssertFalse(item.iconOnly)
         XCTAssertFalse(item.disabled)
+    }
+
+    func testParsesVersionedJSONOutputOptIn() {
+        let toml = """
+        [item.quota]
+        type = "command"
+        run = "quota"
+        output = "json-v1"
+        """
+
+        let config = try? ConfigParser.parse(toml)
+        XCTAssertEqual(config?.items[0].command.output, .jsonV1)
     }
 
     func testParsesAllFields() throws {
@@ -72,6 +85,7 @@ final class ConfigParserTests: XCTestCase {
             (key: "working_directory", value: "42", expectedMessage: "must be a string"),
             (key: "env", value: "[]", expectedMessage: "must be a table"),
             (key: "interval", value: "5", expectedMessage: "must be a string"),
+            (key: "output", value: "42", expectedMessage: "must be a string"),
             (key: "timeout", value: "15", expectedMessage: "must be a string"),
             (key: "max_output", value: "65536", expectedMessage: "must be a string"),
             (key: "format", value: "42", expectedMessage: "must be a string"),
@@ -131,6 +145,21 @@ final class ConfigParserTests: XCTestCase {
                 XCTAssertTrue(parseError?.message.contains("did you mean '\(invalid.suggestion)'" ) == true)
                 XCTAssertEqual(parseError?.line, 4)
             }
+        }
+    }
+
+    func testRejectsUnsupportedStructuredOutputFormatWithSourceLine() {
+        let toml = """
+        [item.clock]
+        type = "command"
+        run = "date"
+        output = "json-v2"
+        """
+
+        XCTAssertThrowsError(try ConfigParser.parse(toml)) { error in
+            let parseError = error as? ConfigParseError
+            XCTAssertTrue(parseError?.message.contains("item.clock: output must be 'json-v1'") == true)
+            XCTAssertEqual(parseError?.line, 4)
         }
     }
 
@@ -554,6 +583,7 @@ final class ConfigParserTests: XCTestCase {
             "working_directory",
             "env",
             "interval",
+            "output",
             "timeout",
             "max_output",
             "format",
