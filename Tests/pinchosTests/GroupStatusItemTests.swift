@@ -261,6 +261,39 @@ final class GroupStatusItemTests: XCTestCase {
         XCTAssertFalse(header.isEnabled)
     }
 
+    func testGroupMenuProjectsStructuredMemberTextInsteadOfRawJSON() async throws {
+        let factory = GroupTestFakeFactory()
+        let controller = makeController(factory: factory)
+        addTeardownBlock { @MainActor in await controller.shutdown() }
+
+        await controller.apply(config: PinchosConfig(items: [
+            command("quota"),
+            group("usage", title: "Usage", members: ["quota"])
+        ]))
+
+        factory.item(named: "quota")?.runtimeSnapshotValue = ItemRuntimeSnapshot(
+            isRunning: false,
+            fullOutput: #"{"version":1,"text":"81%"}"#,
+            lastAttemptedAt: Date(),
+            lastUpdatedAt: Date(),
+            lastExecution: nil,
+            staleAfter: nil,
+            skippedRefreshes: 0,
+            now: Date(),
+            structuredOutput: StructuredCommandOutput(text: "81%")
+        )
+
+        let groupItem = try XCTUnwrap(factory.item(named: "usage"))
+        let menu = await controller.makeLifecycleMenu(forManagedItem: groupItem)
+
+        let header = try XCTUnwrap(menu.items.first)
+        let member = try XCTUnwrap(menu.items.first(where: { $0.title.hasPrefix("quota:") }))
+        XCTAssertTrue(header.title.contains("81%"))
+        XCTAssertTrue(member.title.contains("81%"))
+        XCTAssertFalse(header.title.contains("version"))
+        XCTAssertFalse(member.title.contains("version"))
+    }
+
     func testGroupMenuListsOneSubmenuPerMemberWithItsOwnValueAndRefresh() async throws {
         let factory = GroupTestFakeFactory()
         let controller = makeController(factory: factory)

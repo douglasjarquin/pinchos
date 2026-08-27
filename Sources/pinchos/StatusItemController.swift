@@ -481,7 +481,11 @@ final class StatusItemController: StatusItemMenuDelegate {
             switch member.config {
             case .command:
                 let snapshot = await member.runtimeSnapshot()
-                let value = snapshot.fullOutput.map { lastTrimmedLine(of: $0) } ?? ""
+                let value = if let structuredText = snapshot.structuredOutput?.text {
+                    DiagnosticPreviewFormatter.preview(structuredText, limits: .menuValue).text
+                } else {
+                    snapshot.fullOutput.map { lastTrimmedLine(of: $0) } ?? ""
+                }
                 preview = value.isEmpty ? "\u{2013}" : value
             case .group(let nested):
                 preview = nested.title
