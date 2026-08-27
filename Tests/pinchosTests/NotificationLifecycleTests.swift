@@ -50,6 +50,17 @@ private func waitForNotifications(
 
 final class NotificationLifecycleTests: XCTestCase {
     @MainActor
+    func testUnavailableNotificationServiceDoesNotInterruptItemLifecycle() {
+        let sink = SystemItemNotificationSink(centerProvider: { nil })
+
+        sink.send(ItemNotification(
+            event: .failure,
+            itemName: "service-health",
+            body: "Failure: unavailable"
+        ))
+    }
+
+    @MainActor
     func testFailureAndRecoveryNotificationsAreTransitionOrientedAndSurviveConfigUpdate() async throws {
         let marker = FileManager.default.temporaryDirectory
             .appendingPathComponent("pinchos-notification-\(UUID().uuidString)")

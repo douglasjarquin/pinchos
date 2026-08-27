@@ -20,35 +20,42 @@ final class SystemItemNotificationSink: ItemNotificationSink {
         case denied
     }
 
-    private let centerProvider: () -> UNUserNotificationCenter
+    private let centerProvider: () -> UNUserNotificationCenter?
     private var center: UNUserNotificationCenter?
     private var authorizationState: AuthorizationState = .unknown
 
-    init(center: @autoclosure @escaping () -> UNUserNotificationCenter = .current()) {
-        self.centerProvider = center
+    init(centerProvider: @escaping () -> UNUserNotificationCenter? = {
+        guard Bundle.main.bundleURL.pathExtension == "app" else { return nil }
+        return UNUserNotificationCenter.current()
+    }) {
+        self.centerProvider = centerProvider
     }
 
     func send(_ notification: ItemNotification) {
-        let center = notificationCenter()
         switch authorizationState {
         case .granted:
-            deliver(notification)
+            guard let center = notificationCenter() else { return }
+            deliver(notification, using: center)
         case .denied:
             return
         case .unknown:
+            guard let center = notificationCenter() else {
+                authorizationState = .denied
+                return
+            }
             center.requestAuthorization(options: [.alert, .sound]) { [weak self] granted, _ in
                 Task { @MainActor [weak self] in
                     guard let self else { return }
                     self.authorizationState = granted ? .granted : .denied
                     guard granted else { return }
-                    self.deliver(notification)
+                    guard let center = self.notificationCenter() else { return }
+                    self.deliver(notification, using: center)
                 }
             }
         }
     }
 
-    private func deliver(_ notification: ItemNotification) {
-        let center = notificationCenter()
+    private func deliver(_ notification: ItemNotification, using center: UNUserNotificationCenter) {
         let content = UNMutableNotificationContent()
         content.title = "Pinchos: \(notification.itemName)"
         content.body = notification.body
@@ -61,11 +68,11 @@ final class SystemItemNotificationSink: ItemNotificationSink {
         center.add(request) { _ in }
     }
 
-    private func notificationCenter() -> UNUserNotificationCenter {
+    private func notificationCenter() -> UNUserNotificationCenter? {
         if let center {
             return center
         }
-        let center = centerProvider()
+        guard let center = centerProvider() else { return nil }
         self.center = center
         return center
     }
