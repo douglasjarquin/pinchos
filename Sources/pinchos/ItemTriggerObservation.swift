@@ -169,17 +169,17 @@ private final class WakeTriggerObserver: ItemTriggerObserver {
 @MainActor
 private final class NetworkTriggerObserver: ItemTriggerObserver {
     private let onEvent: @MainActor () -> Void
-    private let monitor = NWPathMonitor()
     private let queue = DispatchQueue(label: "com.pinchos.network-trigger")
-    private var isStarted = false
+    private var monitor: NWPathMonitor?
 
     init(onEvent: @escaping @MainActor () -> Void) {
         self.onEvent = onEvent
     }
 
     func start() {
-        guard !isStarted else { return }
-        isStarted = true
+        guard monitor == nil else { return }
+        let monitor = NWPathMonitor()
+        self.monitor = monitor
         monitor.pathUpdateHandler = { [weak self] _ in
             Task { @MainActor in self?.onEvent() }
         }
@@ -187,9 +187,8 @@ private final class NetworkTriggerObserver: ItemTriggerObserver {
     }
 
     func stop() {
-        guard isStarted else { return }
-        isStarted = false
-        monitor.cancel()
+        monitor?.cancel()
+        monitor = nil
     }
 }
 

@@ -189,6 +189,41 @@ final class ItemTriggerObservationTests: XCTestCase {
         XCTFail("event trigger did not reach the managed item's refresh runner")
     }
 
+    func testEventRefreshCoexistsWithPollingWithoutOverlappingRuns() async throws {
+        let factory = FakeTriggerObserverFactory()
+        let item = ManagedItem(
+            config: .command(
+                CommandItemConfig(
+                    name: "example",
+                    run: "sleep 0.3; printf event",
+                    interval: .scheduled(0.05),
+                    watch: ["/tmp/status.json"]
+                )
+            ),
+            menuDelegate: NoopMenuDelegate(),
+            initiallyVisible: false,
+            triggerObserverFactory: factory,
+            statusItemFactory: { nil }
+        )
+        addTeardownBlock { @MainActor in
+            await item.tearDown()
+        }
+
+        item.activate()
+        let watcher = try XCTUnwrap(factory.observers[.file("/tmp/status.json")])
+        watcher.emit()
+
+        for _ in 0..<120 {
+            let snapshot = await item.runnerSnapshot()
+            if snapshot.lastExecution != nil {
+                XCTAssertGreaterThan(snapshot.skippedRefreshes, 0)
+                return
+            }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        XCTFail("polling and event refresh did not settle")
+    }
+
     func testManagedItemReloadReconfiguresOnlyChangedObservers() async throws {
         let factory = FakeTriggerObserverFactory()
         let initialConfig = config(watch: ["/tmp/old.json", "/tmp/kept.json"])
