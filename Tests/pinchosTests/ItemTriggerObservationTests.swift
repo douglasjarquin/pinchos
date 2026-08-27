@@ -249,6 +249,42 @@ final class ItemTriggerObservationTests: XCTestCase {
         await item.tearDown()
     }
 
+    func testManagedItemCombinedRunnerAndTriggerReloadReconfiguresObservers() async throws {
+        let factory = FakeTriggerObserverFactory()
+        let item = ManagedItem(
+            config: .command(
+                CommandItemConfig(
+                    name: "example",
+                    run: "printf old",
+                    interval: .manual,
+                    watch: ["/tmp/old.json"]
+                )
+            ),
+            menuDelegate: NoopMenuDelegate(),
+            initiallyVisible: false,
+            triggerObserverFactory: factory,
+            statusItemFactory: { nil }
+        )
+        item.activate()
+
+        let removed = try XCTUnwrap(factory.observers[.file("/tmp/old.json")])
+        await item.prepareUpdate(
+            config: .command(
+                CommandItemConfig(
+                    name: "example",
+                    run: "printf new",
+                    interval: .scheduled(60),
+                    watch: ["/tmp/new.json"]
+                )
+            )
+        )
+        item.commitPreparedUpdate()
+
+        XCTAssertEqual(removed.stopCount, 1)
+        XCTAssertEqual(factory.observers[.file("/tmp/new.json")]?.startCount, 1)
+        await item.tearDown()
+    }
+
     func testManagedItemRemovalStopsAllObservers() async throws {
         let factory = FakeTriggerObserverFactory()
         let item = ManagedItem(

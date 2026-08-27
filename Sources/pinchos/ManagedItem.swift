@@ -354,10 +354,11 @@ final class ManagedItem: ManagedItemLifecycle {
         applyIcon()
         if commandConfig.disabled {
             triggerCoordinator.stop()
-        } else if pendingUpdate.timerNeedsRestart {
-            startTimer(runInitialRefresh: false)
         } else {
             triggerCoordinator.update(config: commandConfig)
+            if pendingUpdate.timerNeedsRestart {
+                startTimer(runInitialRefresh: false)
+            }
         }
         if pendingUpdate.staleAfterChanged {
             scheduleStalePresentation()
