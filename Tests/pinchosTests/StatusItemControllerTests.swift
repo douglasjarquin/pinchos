@@ -692,9 +692,15 @@ final class StatusItemControllerTests: XCTestCase {
         XCTAssertFalse(newItems[1] === oldItems[1])
         XCTAssertEqual(newItems.map(\.config.name), ["beta", "alpha"])
         XCTAssertTrue(newItems.allSatisfy { !$0.initiallyVisible })
-        XCTAssertEqual(factory.eventLog.events, [
+        // prepareRemoval for old items is fanned out via `withTaskGroup`
+        // (see LifecycleSettlement.swift), so alpha/beta may settle in
+        // either order; only the deterministic, sequentially-driven suffix
+        // (commit-removal, activate) has a fixed order.
+        XCTAssertEqual(Set(factory.eventLog.events.prefix(2)), [
             "prepare-removal:alpha",
-            "prepare-removal:beta",
+            "prepare-removal:beta"
+        ])
+        XCTAssertEqual(factory.eventLog.events.suffix(4), [
             "commit-removal:alpha",
             "commit-removal:beta",
             "activate:beta",

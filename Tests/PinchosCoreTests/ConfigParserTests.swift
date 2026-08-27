@@ -43,6 +43,56 @@ final class ConfigParserTests: XCTestCase {
         XCTAssertEqual(config?.items[0].command.output, .jsonV1)
     }
 
+    func testParsesEventTriggersAndNormalizedWatchPaths() throws {
+        let toml = """
+        [item.example]
+        type = "command"
+        run = "echo status"
+        triggers = ["startup", "wake", "network-change"]
+        watch = ["~/Library/Application Support/example/status.json"]
+        """
+
+        let config = try ConfigParser.parse(toml)
+        let item = config.items[0].command
+        XCTAssertEqual(item.triggers, [.startup, .wake, .networkChange])
+        XCTAssertEqual(
+            item.watch,
+            [("~/Library/Application Support/example/status.json" as NSString).expandingTildeInPath]
+        )
+    }
+
+    func testDeduplicatesAndNormalizesWatchPathsRelativeToConfig() throws {
+        let toml = """
+        [item.example]
+        type = "command"
+        run = "echo status"
+        triggers = ["wake", "wake"]
+        watch = ["./status.json", "sub/../status.json"]
+        """
+        let configURL = URL(fileURLWithPath: "/tmp/pinchos/config/pinchos.toml")
+
+        let item = try ConfigParser.parse(toml, relativeTo: configURL).items[0].command
+
+        XCTAssertEqual(item.triggers, [.wake])
+        XCTAssertEqual(item.watch, ["/tmp/pinchos/config/status.json"])
+    }
+
+    func testRejectsUnsupportedEventTrigger() {
+        let toml = """
+        [item.example]
+        type = "command"
+        run = "echo status"
+        triggers = ["network"]
+        """
+
+        XCTAssertThrowsError(try ConfigParser.parse(toml)) { error in
+            let parseError = error as? ConfigParseError
+            XCTAssertTrue(parseError?.message.contains("item.example.triggers[0]") == true)
+            XCTAssertTrue(parseError?.message.contains("unsupported value 'network'") == true)
+            XCTAssertEqual(parseError?.line, 4)
+        }
+    }
+
     func testParsesAllFields() throws {
         let toml = """
         [item.limits]
@@ -86,6 +136,8 @@ final class ConfigParserTests: XCTestCase {
             (key: "env", value: "[]", expectedMessage: "must be a table"),
             (key: "interval", value: "5", expectedMessage: "must be a string"),
             (key: "output", value: "42", expectedMessage: "must be a string"),
+            (key: "triggers", value: "\"startup\"", expectedMessage: "must be an array"),
+            (key: "watch", value: "\"status.json\"", expectedMessage: "must be an array"),
             (key: "timeout", value: "15", expectedMessage: "must be a string"),
             (key: "max_output", value: "65536", expectedMessage: "must be a string"),
             (key: "format", value: "42", expectedMessage: "must be a string"),
@@ -584,6 +636,8 @@ final class ConfigParserTests: XCTestCase {
             "env",
             "interval",
             "output",
+            "triggers",
+            "watch",
             "timeout",
             "max_output",
             "format",

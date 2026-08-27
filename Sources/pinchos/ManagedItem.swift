@@ -47,6 +47,12 @@ final class ManagedItem: ManagedItemLifecycle {
     private var pendingRefreshPermitTask: Task<Void, Never>?
     private var pendingClickPermitTask: Task<Void, Never>?
     private var pendingActionPermitTasks: [Int: Task<Void, Never>] = [:]
+    private let triggerObserverFactory: (any ItemTriggerObserverFactory)?
+    private lazy var triggerCoordinator = ItemTriggerCoordinator(
+        config: commandConfig,
+        observerFactory: triggerObserverFactory,
+        onRefresh: { [weak self] in self?.requestRefresh() }
+    )
     private weak var menuDelegate: StatusItemMenuDelegate?
     private let now: () -> Date
     private var isActive = true
@@ -114,6 +120,7 @@ final class ManagedItem: ManagedItemLifecycle {
         scheduler: CommandScheduler = .shared,
         now: @escaping () -> Date = Date.init,
         iconRenderer: StatusItemIconRenderer = .system,
+        triggerObserverFactory: (any ItemTriggerObserverFactory)? = nil,
         statusItemFactory: @escaping () -> NSStatusItem? = {
             NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         }
@@ -125,6 +132,7 @@ final class ManagedItem: ManagedItemLifecycle {
         self.scheduler = scheduler
         self.now = now
         self.iconRenderer = iconRenderer
+        self.triggerObserverFactory = triggerObserverFactory
         self.renderedTitle = commandConfig.errorText
         self.renderedToolTip = nil
         self.runner = CommandRunner(
@@ -344,8 +352,13 @@ final class ManagedItem: ManagedItemLifecycle {
             actionRunners = Self.makeActionRunners(for: actions, config: commandConfig)
         }
         applyIcon()
-        if pendingUpdate.timerNeedsRestart {
-            startTimer(runInitialRefresh: false)
+        if commandConfig.disabled {
+            triggerCoordinator.stop()
+        } else {
+            triggerCoordinator.update(config: commandConfig)
+            if pendingUpdate.timerNeedsRestart {
+                startTimer(runInitialRefresh: false)
+            }
         }
         if pendingUpdate.staleAfterChanged {
             scheduleStalePresentation()
@@ -369,6 +382,7 @@ final class ManagedItem: ManagedItemLifecycle {
         stalePresentationTask?.cancel()
         stalePresentationTask = nil
         cancelRefreshTimer()
+        triggerCoordinator.stop()
         pendingRefreshPermitTask?.cancel()
         pendingClickPermitTask?.cancel()
         for task in pendingActionPermitTasks.values {
@@ -408,6 +422,7 @@ final class ManagedItem: ManagedItemLifecycle {
 
     func commitRemoval() {
         guard isActive else { return }
+        triggerCoordinator.stop()
         isActive = false
         isPreparingRemoval = false
         if let statusItem {
@@ -492,6 +507,7 @@ final class ManagedItem: ManagedItemLifecycle {
     private func startTimer(runInitialRefresh: Bool = true) {
         cancelRefreshTimer()
         guard !commandConfig.disabled else { return }
+        triggerCoordinator.start()
         guard case .scheduled(let interval) = commandConfig.interval else {
             if runInitialRefresh {
                 requestRefresh()

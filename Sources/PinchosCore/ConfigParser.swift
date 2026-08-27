@@ -10,6 +10,8 @@ public enum ConfigParser {
         "env",
         "interval",
         "output",
+        "triggers",
+        "watch",
         "timeout",
         "max_output",
         "format",
@@ -733,6 +735,14 @@ public enum ConfigParser {
         )
         let environment = try parseEnvironment(name: name, value: table["env"], sourceLines: sourceLines)
 
+        let triggers = try parseTriggers(name: name, value: table["triggers"], sourceLines: sourceLines)
+        let watch = try parseWatchPaths(
+            name: name,
+            value: table["watch"],
+            relativeTo: configURL,
+            sourceLines: sourceLines
+        )
+
         let intervalString = try optionalString(
             name: name,
             key: "interval",
@@ -972,6 +982,8 @@ public enum ConfigParser {
                 table: table,
                 sourceLines: sourceLines
             ),
+            triggers: triggers,
+            watch: watch,
             click: try optionalString(
                 name: name,
                 key: "click",
@@ -998,6 +1010,69 @@ public enum ConfigParser {
             iconOnly: iconOnly,
             disabled: disabled
         )
+    }
+
+    private static func parseTriggers(
+        name: String,
+        value: TOMLValueConvertible?,
+        sourceLines: SourceLineMap
+    ) throws -> Set<ItemTrigger> {
+        guard let value else { return [] }
+        guard let array = value.array else {
+            throw typeError(
+                path: "item.\(name).triggers",
+                expected: "array",
+                value: value,
+                line: sourceLine(item: name, key: "triggers", sourceLines: sourceLines)
+            )
+        }
+
+        var triggers = Set<ItemTrigger>()
+        for (index, element) in array.enumerated() {
+            let rawValue = try stringValue(
+                path: "item.\(name).triggers[\(index)]",
+                value: element,
+                requireNonEmpty: true,
+                line: sourceLine(item: name, key: "triggers", index: index, sourceLines: sourceLines)
+            )
+            guard let trigger = ItemTrigger(rawValue: rawValue) else {
+                throw ConfigParseError(
+                    message: "item.\(name).triggers[\(index)]: unsupported value '\(rawValue)'",
+                    line: sourceLine(item: name, key: "triggers", index: index, sourceLines: sourceLines)
+                )
+            }
+            triggers.insert(trigger)
+        }
+        return triggers
+    }
+
+    private static func parseWatchPaths(
+        name: String,
+        value: TOMLValueConvertible?,
+        relativeTo configURL: URL?,
+        sourceLines: SourceLineMap
+    ) throws -> [String] {
+        guard let value else { return [] }
+        guard let array = value.array else {
+            throw typeError(
+                path: "item.\(name).watch",
+                expected: "array",
+                value: value,
+                line: sourceLine(item: name, key: "watch", sourceLines: sourceLines)
+            )
+        }
+
+        var paths = Set<String>()
+        for (index, element) in array.enumerated() {
+            let rawPath = try stringValue(
+                path: "item.\(name).watch[\(index)]",
+                value: element,
+                requireNonEmpty: true,
+                line: sourceLine(item: name, key: "watch", index: index, sourceLines: sourceLines)
+            )
+            paths.insert(resolvePath(rawPath, relativeTo: configURL))
+        }
+        return paths.sorted()
     }
 
     /// Parses one `[group.<name>]` table. `members` existence, duplicate,
@@ -1569,8 +1644,13 @@ public enum ConfigParser {
 
     private static func resolvePath(_ rawPath: String, relativeTo configURL: URL?) -> String {
         let expandedPath = (rawPath as NSString).expandingTildeInPath
-        guard let configURL else { return expandedPath }
-        return URL(fileURLWithPath: expandedPath, relativeTo: configURL.deletingLastPathComponent())
+        let url: URL
+        if let configURL {
+            url = URL(fileURLWithPath: expandedPath, relativeTo: configURL.deletingLastPathComponent())
+        } else {
+            url = URL(fileURLWithPath: expandedPath)
+        }
+        return url
             .standardizedFileURL
             .path
     }
