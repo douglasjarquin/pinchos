@@ -63,12 +63,22 @@ final class ItemTriggerObservationTests: XCTestCase {
 
     func testEquivalentEventsAreDebouncedPerSource() async throws {
         let factory = FakeTriggerObserverFactory()
+        let refreshExpectation = expectation(description: "debounced refresh")
+        let unexpectedRefreshExpectation = expectation(description: "no extra debounced refresh")
+        unexpectedRefreshExpectation.isInverted = true
         var refreshCount = 0
         let coordinator = ItemTriggerCoordinator(
             config: config(watch: ["/tmp/status.json"]),
             observerFactory: factory,
             debounce: .milliseconds(20),
-            onRefresh: { refreshCount += 1 }
+            onRefresh: {
+                refreshCount += 1
+                if refreshCount == 1 {
+                    refreshExpectation.fulfill()
+                } else {
+                    unexpectedRefreshExpectation.fulfill()
+                }
+            }
         )
         coordinator.start()
 
@@ -76,7 +86,7 @@ final class ItemTriggerObservationTests: XCTestCase {
         watcher.emit()
         watcher.emit()
         watcher.emit()
-        try await Task.sleep(for: .milliseconds(60))
+        await fulfillment(of: [refreshExpectation, unexpectedRefreshExpectation], timeout: 1)
 
         XCTAssertEqual(refreshCount, 1)
     }

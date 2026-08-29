@@ -458,9 +458,7 @@ final class RecoveryLifecycleTests: XCTestCase {
     /// another. Real runner cancellation is normally too fast (SIGKILL
     /// settles almost immediately) to distinguish concurrent from serial
     /// execution, so this test uses the item's test-only settlement-delay
-    /// seam to give each of the three roles a controllable, equal settle
-    /// time and asserts the whole teardown completes near that one settle
-    /// time, not the sum of all three.
+    /// seam to require all three roles to start before any one role settles.
     @MainActor
     func testItemShutdownCancelsPrimaryClickAndActionRunnersConcurrentlyNotSequentially() async throws {
         let item = makeHeadlessItem(
@@ -474,19 +472,27 @@ final class RecoveryLifecycleTests: XCTestCase {
             initiallyVisible: false
         )
         let perRoleSettle: Duration = .milliseconds(150)
-        item.cancellationSettlementDelayForTesting = { _ in
+        let allRolesStarted = expectation(description: "all runner cancellations start before any settles")
+        let tracker = CancellationRoleTracker(expectedRoleCount: 3)
+        item.cancellationSettlementDelayForTesting = { role in
+            if await tracker.recordStart(role) {
+                allRolesStarted.fulfill()
+            }
             try? await Task.sleep(for: perRoleSettle)
+            await tracker.recordSettle(role)
         }
 
-        let clock = ContinuousClock()
-        let started = clock.now
-        await item.tearDown()
-        let elapsed = started.duration(to: clock.now)
+        let shutdownTask = Task { @MainActor in await item.tearDown() }
+        await fulfillment(of: [allRolesStarted], timeout: 1)
+        await shutdownTask.value
 
-        XCTAssertLessThan(
-            elapsed, perRoleSettle * 2,
-            "primary/click/action settling at 150ms each must overlap, not sum to ~450ms"
+        let prematureSettles = await tracker.prematureSettles
+        XCTAssertTrue(
+            prematureSettles.isEmpty,
+            "roles settled before all 3 cancellation roles had started: \(prematureSettles)"
         )
+        let startedRoles = await tracker.startedRoles
+        XCTAssertEqual(startedRoles.count, 3)
     }
 
     /// A per-item lifecycle operation must still respect the shared
@@ -2193,5 +2199,26 @@ final class RecoveryLifecycleTests: XCTestCase {
             baseline + 2,
             "repeated start/stop/delete/recreate cycles must not leak descriptors"
         )
+    }
+}
+
+private actor CancellationRoleTracker {
+    private let expectedRoleCount: Int
+    private(set) var startedRoles: Set<String> = []
+    private(set) var prematureSettles: [String] = []
+
+    init(expectedRoleCount: Int) {
+        self.expectedRoleCount = expectedRoleCount
+    }
+
+    func recordStart(_ role: String) -> Bool {
+        startedRoles.insert(role)
+        return startedRoles.count == expectedRoleCount
+    }
+
+    func recordSettle(_ role: String) {
+        if startedRoles.count < expectedRoleCount {
+            prematureSettles.append(role)
+        }
     }
 }
