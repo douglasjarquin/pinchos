@@ -473,18 +473,26 @@ final class RecoveryLifecycleTests: XCTestCase {
         )
         let perRoleSettle: Duration = .milliseconds(150)
         let allRolesStarted = expectation(description: "all runner cancellations start before any settles")
-        var startedRoles: Set<String> = []
+        let tracker = CancellationRoleTracker(expectedRoleCount: 3)
         item.cancellationSettlementDelayForTesting = { role in
-            startedRoles.insert(role)
-            if startedRoles.count == 3 {
+            if await tracker.recordStart(role) {
                 allRolesStarted.fulfill()
             }
             try? await Task.sleep(for: perRoleSettle)
+            await tracker.recordSettle(role)
         }
 
         let shutdownTask = Task { @MainActor in await item.tearDown() }
         await fulfillment(of: [allRolesStarted], timeout: 1)
         await shutdownTask.value
+
+        let prematureSettles = await tracker.prematureSettles
+        XCTAssertTrue(
+            prematureSettles.isEmpty,
+            "roles settled before all 3 cancellation roles had started: \(prematureSettles)"
+        )
+        let startedRoles = await tracker.startedRoles
+        XCTAssertEqual(startedRoles.count, 3)
     }
 
     /// A per-item lifecycle operation must still respect the shared
@@ -2191,5 +2199,26 @@ final class RecoveryLifecycleTests: XCTestCase {
             baseline + 2,
             "repeated start/stop/delete/recreate cycles must not leak descriptors"
         )
+    }
+}
+
+private actor CancellationRoleTracker {
+    private let expectedRoleCount: Int
+    private(set) var startedRoles: Set<String> = []
+    private(set) var prematureSettles: [String] = []
+
+    init(expectedRoleCount: Int) {
+        self.expectedRoleCount = expectedRoleCount
+    }
+
+    func recordStart(_ role: String) -> Bool {
+        startedRoles.insert(role)
+        return startedRoles.count == expectedRoleCount
+    }
+
+    func recordSettle(_ role: String) {
+        if startedRoles.count < expectedRoleCount {
+            prematureSettles.append(role)
+        }
     }
 }
