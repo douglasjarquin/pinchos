@@ -176,14 +176,14 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           TAG="${GITHUB_REF_NAME}"
-          EXISTING_TARGET="$(gh release view "$TAG" --json targetCommitish --jq .targetCommitish 2>/dev/null || true)"
-          if [[ -n "$EXISTING_TARGET" ]]; then
-            if [[ "$EXISTING_TARGET" != "$GITHUB_SHA" ]]; then
-              echo "::error::A release for tag $TAG already exists and points at commit $EXISTING_TARGET, not this run's commit $GITHUB_SHA." >&2
-              echo "error: the tag must have moved after the release was first published; refusing to silently overwrite a different commit's artifacts." >&2
-              echo "error: delete the existing release/tag deliberately and re-tag if this is intentional." >&2
-              exit 1
-            fi
+          TAG_COMMIT="$(gh api "repos/${GITHUB_REPOSITORY}/commits/${TAG}" --jq .sha)"
+          if [[ "$TAG_COMMIT" != "$GITHUB_SHA" ]]; then
+            echo "::error::Tag $TAG now points at commit $TAG_COMMIT, not this run's commit $GITHUB_SHA." >&2
+            echo "error: the tag must have moved after this run started; refusing to publish artifacts for a superseded commit." >&2
+            echo "error: delete the existing release/tag deliberately and re-tag if this is intentional." >&2
+            exit 1
+          fi
+          if gh release view "$TAG" --json tagName >/dev/null 2>&1; then
             echo "Release for $TAG already exists at this exact commit; updating its artifacts idempotently."
           else
             # --target is ignored by GitHub once a tag exists (true here, since
