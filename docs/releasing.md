@@ -63,7 +63,7 @@ DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer scripts/package-app.sh 
 DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer scripts/smoke-app-bundle.sh dist/Pinchos.app 1.2.0
 ```
 
-This produces `dist/Pinchos.app`, unsigned. `.github/workflows/ci.yml`'s `packaging-smoke` job runs the same two commands on every PR and push, so bundle-structure regressions are caught without needing any Apple credentials in CI. **Never distribute this unsigned bundle to normal users** - it will fail Gatekeeper on a clean Mac by design, and that's the point: the only normal-user artifact is the one `release.yml` signs and notarizes.
+This produces `dist/Pinchos.app`, unsigned. `.github/workflows/verify.yml`'s `packaging-smoke` job runs the same two commands on every PR and push, so bundle-structure regressions are caught without needing any Apple credentials in CI. **Never distribute this unsigned bundle to normal users** - it will fail Gatekeeper on a clean Mac by design, and that's the point: the only normal-user artifact is the one `release.yml` signs and notarizes.
 
 ## Bumping the Homebrew cask after a release
 

@@ -31,7 +31,10 @@ security import "$CERT_PATH" -k "$KEYCHAIN_PATH" -P "$APPLE_DEVELOPER_ID_CERTIFI
 	-T /usr/bin/codesign -T /usr/bin/security
 security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
 
-mapfile -t EXISTING_KEYCHAINS < <(security list-keychains -d user | sed 's/^ *"//; s/" *$//')
+EXISTING_KEYCHAINS=()
+while IFS= read -r keychain; do
+	EXISTING_KEYCHAINS+=("$keychain")
+done < <(security list-keychains -d user | sed 's/^ *"//; s/" *$//')
 security list-keychains -d user -s "$KEYCHAIN_PATH" "${EXISTING_KEYCHAINS[@]}"
 
 echo "PINCHOS_SIGNING_KEYCHAIN=${KEYCHAIN_PATH}" >>"$GITHUB_ENV"
