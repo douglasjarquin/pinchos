@@ -184,7 +184,19 @@ jobs:
             echo "error: delete the existing release/tag deliberately and re-tag if this is intentional." >&2
             exit 1
           fi
-          if gh release view "$TAG" --json tagName >/dev/null 2>&1; then
+          if EXISTING_BODY="$(gh release view "$TAG" --json body --jq .body 2>/dev/null)"; then
+            RELEASE_COMMIT="$(printf '%s' "$EXISTING_BODY" | grep -Eo 'commit [0-9a-f]{40}' | head -n 1 | cut -d' ' -f2 || true)"
+            if [[ -z "$RELEASE_COMMIT" ]]; then
+              echo "::error::A release for tag $TAG already exists but does not record the commit it was published from." >&2
+              echo "error: refusing to overwrite a release this workflow cannot verify; delete it deliberately and re-run." >&2
+              exit 1
+            fi
+            if [[ "$RELEASE_COMMIT" != "$RUN_COMMIT" ]]; then
+              echo "::error::A release for tag $TAG already exists and was published from commit $RELEASE_COMMIT, not this run's commit $RUN_COMMIT." >&2
+              echo "error: the tag must have been deleted and re-pushed at a different commit; refusing to silently overwrite a different commit's artifacts." >&2
+              echo "error: delete the existing release/tag deliberately and re-tag if this is intentional." >&2
+              exit 1
+            fi
             echo "Release for $TAG already exists at this exact commit; updating its artifacts idempotently."
           else
             # --target is ignored by GitHub once a tag exists (true here, since
