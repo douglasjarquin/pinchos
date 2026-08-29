@@ -1,0 +1,17 @@
+---
+import Mark from './Mark.astro';
+
+const base = import.meta.env.BASE_URL.endsWith('/') ? import.meta.env.BASE_URL : `${import.meta.env.BASE_URL}/`;
+---
+
+<footer class="site-footer">
+  <div class="site-footer__inner container container--landing">
+    <Mark size={17} />
+    <a class="site-footer__wordmark" href={base}>pinchos</a>
+    <span class="site-footer__spacer"></span>
+    <nav class="site-footer__links" aria-label="Footer navigation">
+      <a href="https://github.com/douglasjarquin/pinchos">github</a>
+      <a href={`${base}design-system/`}>design system</a>
+    </nav>
+  </div>
+</footer>

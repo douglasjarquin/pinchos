@@ -1,0 +1,98 @@
+.component-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 22px;
+}
+
+.component-card {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 14px;
+  padding: 22px;
+}
+
+.component-card--wide {
+  grid-column: 1 / -1;
+}
+
+.component-card > p {
+  color: var(--color-ink-soft);
+  font-size: 12.5px;
+  line-height: 1.6;
+}
+
+.component-actions,
+.chips,
+.pager,
+.tabs {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 14px;
+}
+
+.component-actions a:not(.button) {
+  font-size: 14.5px;
+  font-weight: 500;
+}
+
+.component-card .code-block {
+  padding: 14px 16px;
+}
+
+.note-callout {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  padding: 14px 16px;
+  border: 1px solid var(--color-rule);
+  border-radius: var(--radius-card);
+  background: var(--color-paper-raised);
+}
+
+.note-callout p {
+  color: var(--color-ink-soft);
+  font-size: 13.5px;
+  line-height: 1.6;
+}
+
+.marker-table {
+  width: 100%;
+  border: 1px solid var(--color-rule);
+  border-radius: var(--radius-panel);
+  border-spacing: 0;
+  overflow: hidden;
+  text-align: left;
+}
+
+.marker-table th,
+.marker-table td {
+  padding: 11px 16px;
+  border-bottom: 1px solid var(--color-rule-soft);
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+.marker-table th {
+  padding-block: 10px;
+  background: var(--color-paper-raised);
+  color: var(--color-olive-readable);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+}
+
+.marker-table td:first-child {
+  font-family: var(--font-mono);
+}
+
+.marker-table tr:last-child td {
+  border-bottom: 0;
+}
+
+.marker-table tbody tr:hover {
+  background: var(--color-paper-raised);
+}

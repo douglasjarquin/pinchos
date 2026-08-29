@@ -1,0 +1,106 @@
+.form-layout {
+  grid-template-columns: minmax(0, 360px) minmax(0, 1fr);
+  gap: 28px;
+}
+
+.specimen-form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.specimen-form label,
+.specimen-form legend {
+  color: var(--color-ink);
+  font-size: 13.5px;
+  font-weight: 600;
+}
+
+.specimen-form input:not([type='checkbox']):not([type='radio']),
+.specimen-form select {
+  width: 100%;
+  min-height: 42px;
+  padding: 10px 12px;
+  border: 1px solid rgba(43, 42, 40, 0.3);
+  border-radius: var(--radius-button);
+  background: var(--color-paper-field);
+  color: var(--color-ink);
+  font-family: var(--font-body);
+  font-size: 14.5px;
+}
+
+.specimen-form input:focus {
+  outline: 2px solid var(--color-link);
+  outline-offset: 2px;
+}
+
+.specimen-form fieldset {
+  display: flex;
+  gap: var(--space-5);
+  padding: 0;
+  border: 0;
+}
+
+.check-row {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  min-height: 24px;
+  font-size: 14px !important;
+  font-weight: 400 !important;
+}
+
+.check-row input {
+  accent-color: var(--color-link-readable);
+}
+
+.specimen-form button {
+  align-self: flex-start;
+  border: 0;
+  cursor: pointer;
+}
+
+.form-error {
+  color: var(--color-link-readable);
+  font-family: var(--font-mono);
+  font-size: 11px;
+}
+
+.tabs {
+  gap: 22px;
+  border-bottom: 1px solid var(--color-rule);
+}
+
+.tabs span {
+  padding: 0 2px 9px;
+  color: var(--color-ink-soft);
+  font-size: 14px;
+  font-weight: 500;
+}
+
+.tabs .tabs__active {
+  margin-bottom: -1px;
+  border-bottom: 2px solid var(--color-link);
+  color: var(--color-ink);
+  font-weight: 600;
+}
+
+.chips code,
+.chips kbd,
+.pager a {
+  padding: 3px 9px;
+  border: 1px solid var(--color-rule);
+  border-radius: 6px;
+  background: var(--color-paper-raised);
+  color: var(--color-ink);
+  font-size: 11px;
+}
+
+.chips .chip-olive { color: var(--color-olive-readable); }
+.chips .chip-terracotta { color: var(--color-link-readable); }
+
+.chips kbd {
+  padding-inline: 7px;
+  border-bottom-width: 2px;
+  font-size: 11.5px;
+}

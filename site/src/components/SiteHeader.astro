@@ -1,0 +1,23 @@
+---
+import Mark from './Mark.astro';
+
+interface Props {
+  docs?: boolean;
+}
+
+const { docs = false } = Astro.props;
+const base = import.meta.env.BASE_URL.endsWith('/') ? import.meta.env.BASE_URL : `${import.meta.env.BASE_URL}/`;
+---
+
+<header class="site-header container container--landing">
+  <a class="site-header__wordmark" href={`${base}`} aria-label="pinchos home">
+    <Mark size={22} />
+    <span>pinchos</span>
+  </a>
+  <span class="site-header__spacer"></span>
+  <nav class="site-nav" aria-label="Primary navigation">
+    {!docs && <a href="#how">how it works</a>}
+    {!docs && <a href="https://github.com/douglasjarquin/pinchos">github ↗</a>}
+    {docs && <a href={`${base}`}>← landing page</a>}
+  </nav>
+</header>

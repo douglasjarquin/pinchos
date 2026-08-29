@@ -1,0 +1,227 @@
+---
+import BaseLayout from '../layouts/BaseLayout.astro';
+import Button from '../components/Button.astro';
+import CodeBlock from '../components/CodeBlock.astro';
+import ProductMockup from '../components/ProductMockup.astro';
+
+const github = 'https://github.com/douglasjarquin/pinchos';
+---
+
+<BaseLayout title="pinchos - pin your scripts to the menu bar" description="pinchos runs your commands and pins their output to the macOS menu bar.">
+  <header class="landing-hero container container--landing">
+    <div class="hero-copy">
+      <div class="overline">macOS menu bar utility</div>
+      <h1 class="serif-heading">Pin your scripts to the menu bar.</h1>
+      <p class="hero-copy__lede">pinchos runs the commands you give it and pins their output where you can see it. Quiet while everything is healthy — unmissable the moment something fails.</p>
+      <div class="hero-copy__actions">
+        <Button href={github}>View on GitHub <span aria-hidden="true">→</span></Button>
+        <a class="text-link" href="#install">Build it yourself ↓</a>
+      </div>
+      <div class="hero-copy__meta">free · open source · native AppKit · no Electron</div>
+    </div>
+    <ProductMockup />
+  </header>
+
+  <section id="how" class="features-band" aria-labelledby="features-heading">
+    <div class="container container--landing features-grid">
+      <h2 id="features-heading" class="visually-hidden">How it works</h2>
+      <article class="feature">
+        <div class="overline">01 · config</div>
+        <h3 class="serif-heading">One plain-text file</h3>
+        <p>Every item is a few lines of TOML — a title, a command, a schedule. Edit it in anything; pinchos picks up the change. There is no settings window.</p>
+      </article>
+      <article class="feature">
+        <div class="overline">02 · signal</div>
+        <h3 class="serif-heading">Quiet when healthy</h3>
+        <p>Healthy items are just text. Failure speaks in place — <code>⚠︎</code> in the bar, the exact cause and a copy button one click away. Stale output gets a <code>~</code>.</p>
+      </article>
+      <article class="feature">
+        <div class="overline">03 · footprint</div>
+        <h3 class="serif-heading">Native and tiny</h3>
+        <p>Real <code>NSStatusItems</code> and real <code>NSMenus</code>. System typography, template icons, zero idle motion, no dock icon. It behaves like a built-in menu extra.</p>
+      </article>
+    </div>
+  </section>
+
+  <section id="install" class="install-band" aria-labelledby="install-heading">
+    <div class="container container--landing install-grid">
+      <div class="install-copy">
+        <h2 id="install-heading" class="serif-heading">Get pinchos</h2>
+        <p>Clone and build with the Swift toolchain, or start from the README — it covers install, the config format, and every marker pinchos can show.</p>
+        <a href={github}>Read the README on GitHub →</a>
+      </div>
+      <CodeBlock lines={['git clone https://github.com/douglasjarquin/pinchos.git', 'cd pinchos', 'swift build -c release']} />
+    </div>
+  </section>
+</BaseLayout>
+
+<style>
+  .landing-hero {
+    display: grid;
+    grid-template-columns: minmax(0, 1.02fr) minmax(0, 0.98fr);
+    align-items: center;
+    gap: 60px;
+    padding-block: var(--space-16) var(--space-18);
+  }
+
+  .hero-copy {
+    display: flex;
+    min-width: 0;
+    flex-direction: column;
+    gap: 22px;
+  }
+
+  .hero-copy h1 {
+    max-width: 16ch;
+    font-size: clamp(2.75rem, 6vw, 3.375rem);
+    line-height: 1.06;
+    letter-spacing: -0.015em;
+    text-wrap: balance;
+  }
+
+  .hero-copy__lede {
+    max-width: 44ch;
+    margin: 0;
+    color: var(--color-ink-soft);
+    font-size: 17.5px;
+    line-height: 1.62;
+    text-wrap: pretty;
+  }
+
+  .hero-copy__actions {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 18px;
+    margin-top: 6px;
+  }
+
+  .hero-copy__meta {
+    margin-top: 2px;
+    color: var(--color-meta-readable);
+    font-family: var(--font-mono);
+    font-size: 12px;
+  }
+
+  .features-band {
+    border-top: 1px solid var(--color-rule);
+    background: var(--color-paper-raised);
+  }
+
+  .features-grid {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 44px;
+    padding-block: var(--space-18);
+  }
+
+  .feature {
+    display: flex;
+    min-width: 0;
+    flex-direction: column;
+    gap: var(--space-3);
+  }
+
+  .feature h3 {
+    font-size: 22px;
+    line-height: 1.3;
+  }
+
+  .feature p {
+    margin: 0;
+    color: var(--color-ink-soft);
+    font-size: 15px;
+    line-height: 1.62;
+    text-wrap: pretty;
+  }
+
+  .feature code {
+    font-family: var(--font-mono);
+    font-size: 13.5px;
+  }
+
+  .install-band {
+    background: var(--color-ink);
+    color: var(--color-dark-copy);
+  }
+
+  .install-grid {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1.1fr);
+    align-items: center;
+    gap: 56px;
+    padding-block: 68px;
+  }
+
+  .install-copy {
+    display: flex;
+    min-width: 0;
+    flex-direction: column;
+    gap: 14px;
+  }
+
+  .install-copy h2 {
+    font-size: 34px;
+    letter-spacing: -0.01em;
+  }
+
+  .install-copy p {
+    max-width: 40ch;
+    margin: 0;
+    color: rgba(242, 237, 227, 0.72);
+    font-size: 15.5px;
+    line-height: 1.62;
+    text-wrap: pretty;
+  }
+
+  .install-copy a {
+    color: var(--color-dark-prompt);
+    font-size: 14.5px;
+    font-weight: 500;
+  }
+
+  .install-band .code-block {
+    padding: var(--space-5) 22px;
+    border: 1px solid rgba(242, 237, 227, 0.14);
+    background: rgba(0, 0, 0, 0.32);
+  }
+
+  .visually-hidden {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border: 0;
+  }
+
+  @media (max-width: 720px) {
+    .landing-hero,
+    .install-grid {
+      grid-template-columns: minmax(0, 1fr);
+    }
+
+    .landing-hero {
+      gap: var(--space-12);
+      padding-block: var(--space-12) var(--space-16);
+    }
+
+    .hero-copy h1 {
+      max-width: 16ch;
+    }
+
+    .features-grid {
+      grid-template-columns: minmax(0, 1fr);
+      gap: var(--space-10);
+      padding-block: var(--space-12);
+    }
+
+    .install-grid {
+      gap: var(--space-8);
+      padding-block: var(--space-12);
+    }
+  }
+</style>
