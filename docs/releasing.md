@@ -54,6 +54,11 @@ Re-running the workflow for a tag whose release already exists is **idempotent**
 
 If a tag is deleted and re-pushed at a **different** commit while a release for that tag name already exists, the workflow refuses to overwrite it and fails with an explicit error naming both commits. Delete the stale GitHub release (and decide whether to also delete/re-push the tag) deliberately before retrying - the pipeline will never silently publish one commit's artifacts under a release that was already associated with a different commit.
 
+This overwrite guard reads the publishing commit from the existing release's notes (the workflow writes `commit <sha>` there when it creates a release), so do not remove that line when editing release notes.
+If the notes no longer record a commit, the workflow refuses to overwrite the release at all until it is deleted deliberately.
+
+Annotated and lightweight tags both work: the guard dereferences tag objects to their commit before comparing.
+
 ## Local, unsigned packaging (no Apple credentials needed)
 
 For structure/metadata smoke testing, or as a contributor without signing credentials:
