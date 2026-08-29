@@ -1,0 +1,13 @@
+---
+interface Props {
+  lines: string[];
+}
+
+const { lines } = Astro.props;
+---
+
+<div class="code-block" role="group" aria-label="Terminal commands" tabindex="0">
+  {lines.map((line) => (
+    <div><span class="code-block__prompt">$ </span>{line}</div>
+  ))}
+</div>

@@ -1,0 +1,194 @@
+---
+import BaseLayout from '../../layouts/BaseLayout.astro';
+import Button from '../../components/Button.astro';
+import CodeBlock from '../../components/CodeBlock.astro';
+import Mark from '../../components/Mark.astro';
+import ProductMockup from '../../components/ProductMockup.astro';
+import '../../styles/docs.css';
+
+const colors = [
+  ['Paper', '--color-paper', 'page background'],
+  ['Paper Raised', '--color-paper-raised', 'alternate bands, chips'],
+  ['Ink', '--color-ink', 'text, charcoal band, code bg'],
+  ['Ink Soft', '--color-ink-soft', 'body copy, secondary text'],
+  ['Terracotta', '--color-terracotta', 'brand mark, large display accents'],
+  ['Link Terracotta', '--color-link', 'links, buttons, focus'],
+  ['Olive', '--color-olive', 'overlines, labels, mark'],
+  ['Meta', '--color-meta', 'captions, meta lines, muted mono'],
+];
+
+const typeRows = [
+  ['display · 54/1.06 · 600 · -1.5%', 'type-display', 'Pin your scripts'],
+  ['h2 · 32/1.15 · 600 · -1%', 'type-h2', 'Get pinchos'],
+  ['h3 · 22/1.3 · 600', 'type-h3', 'Quiet when healthy'],
+  ['body · 16.5/1.65 · 400', 'type-body', 'Healthy items are just text; failure speaks in place.'],
+  ['small · 14/1.6 · 500', 'type-small', 'Build it yourself'],
+  ['overline · 12 · 500 · +9% · caps', 'type-overline', 'macOS menu bar utility'],
+  ['code · 13.5/1.85 · 400', 'type-code', 'swift build -c release'],
+];
+
+const spaces = [4, 8, 12, 16, 24, 32, 48, 64, 96];
+---
+
+<BaseLayout title="pinchos web design system" description="The web design system for pinchos." docs>
+  <div class="docs-page container container--docs">
+    <header class="docs-intro">
+      <div class="docs-intro__identity">
+        <Mark size={26} label="pinchos mark" />
+        <strong>pinchos</strong>
+        <span>web design system · v1</span>
+      </div>
+      <h1 class="serif-heading">Everything the site is allowed to do.</h1>
+      <p class="body-copy">Scope: the website only. The product's own design system (menus, markers, states) lives in <code>design/docs/design-system.md</code> — the site quotes the product, never restyles it.</p>
+    </header>
+
+    <section class="docs-section" aria-labelledby="principles-heading">
+      <h2 id="principles-heading" class="serif-heading">1 · Principles</h2>
+      <div class="principles-grid">
+        <p><strong>Paper, not chrome.</strong> Ivory background, ink text, hairline rules. No gradients, no glass, no dark mode in v1.</p>
+        <p><strong>The product is the only dark surface.</strong> Menu-bar mockups and code blocks sit on charcoal; nothing else does.</p>
+        <p><strong>One accent per block.</strong> Terracotta is interactive, olive is labels. Never both carrying meaning in the same block.</p>
+        <p><strong>Write like a README.</strong> Matter-of-fact, lowercase “pinchos”, no exclamation marks, no superlatives.</p>
+      </div>
+    </section>
+
+    <section class="docs-section" aria-labelledby="mark-heading">
+      <h2 id="mark-heading" class="serif-heading">2 · Mark &amp; wordmark</h2>
+      <div class="mark-layout">
+        <div>
+          <div class="mark-specimen raised-card">
+            {[96, 48, 24, 16].map((size) => <div class="mark-size"><Mark size={size} label={`pinchos mark at ${size} pixels`} /><span>{size}</span></div>)}
+          </div>
+          <p class="mono-note">tres pinchos mark. Sticks thicken and heads grow as it shrinks — the same scaling rule as the app icon. Clearspace: one head diameter on all sides.</p>
+        </div>
+        <div>
+          <div class="lockup raised-card"><Mark size={30} /><span>pinchos</span></div>
+          <p class="mono-note">lockup: mark + Bricolage Grotesque 700, always lowercase. Gap = 45% of mark height. Favicon = mark alone on transparent.</p>
+        </div>
+        <div class="mark-rules">
+          <div class="overline">rules</div>
+          <div>· never recolor or outline the mark</div>
+          <div>· never place it inside menu-bar mockups</div>
+          <div>· ivory-tile version only for app-icon contexts</div>
+        </div>
+      </div>
+    </section>
+
+    <section class="docs-section" aria-labelledby="color-heading">
+      <h2 id="color-heading" class="serif-heading">3 · Color</h2>
+      <div class="color-grid">
+        {colors.map(([name, token, role]) => <div class="color-card">
+          <div class="color-card__swatch" style={`background: var(${token})`}></div>
+          <div class="color-card__body"><strong>{name}</strong><code>{token}</code><span>{role}</span></div>
+        </div>)}
+      </div>
+      <p class="docs-note">Contrast: Ink on Paper 12.1:1. Link terracotta on Paper is approximately 4.7:1; brand terracotta is decorative or large-display only. Olive is for overlines and marks, never body copy. Derive any new shade from these hues.</p>
+    </section>
+
+    <section class="docs-section" aria-labelledby="type-heading">
+      <h2 id="type-heading" class="serif-heading">4 · Typography</h2>
+      <div class="type-family-row">
+        <span><b>Source Serif 4</b> - display, H1-H2, feature H3s</span>
+        <span><b>Bricolage Grotesque</b> - body, UI, wordmark</span>
+        <span><b>IBM Plex Mono</b> - overlines, code, meta</span>
+      </div>
+      <div class="type-table">
+        {typeRows.map(([spec, className, sample]) => <div class="type-row"><code>{spec}</code><span class={className}>{sample}</span></div>)}
+        <p>Rules: serif never below 20px · sentence case everywhere · “pinchos” always lowercase, even at line start · product markers <code>⚠︎ ~</code> quoted verbatim in mono.</p>
+      </div>
+    </section>
+
+    <section class="docs-section" aria-labelledby="spacing-heading">
+      <h2 id="spacing-heading" class="serif-heading">5 · Spacing &amp; layout</h2>
+      <div class="spacing-layout">
+        <div>
+          <div class="overline">scale · base 4</div>
+          <div class="space-scale">{spaces.map((space) => <div><i style={`height: ${space}px`}></i><code>{space}</code></div>)}</div>
+        </div>
+        <div class="spacing-rules">
+          <div class="overline">rules</div>
+          <div>container <code>max-width 1080</code>, side padding 32 · section rhythm 72-96 · gaps from the scale only</div>
+          <div>radii: 8 buttons · 10 chips/cards · 12 code &amp; mockups — nothing rounder</div>
+          <div>borders <code>1px rgba(43,42,40,.14)</code> · one shadow, product mockups only</div>
+          <div>alternate bands: Paper → Paper Raised → Charcoal, at most one charcoal band per page</div>
+        </div>
+      </div>
+    </section>
+
+    <section class="docs-section" aria-labelledby="components-heading">
+      <h2 id="components-heading" class="serif-heading">6 · Components</h2>
+      <div class="component-grid">
+        <article class="component-card raised-card">
+          <div class="overline">buttons &amp; links</div>
+          <div class="component-actions"><Button href="#primary">Primary</Button><Button href="#secondary" variant="secondary">Secondary</Button><a href="#link">Text link</a></div>
+          <p>One primary per view. Hover darkens one step; focus ring is 2px Link Terracotta, offset 2. Links underline on paper; nav/footer links skip the underline.</p>
+        </article>
+        <article class="component-card raised-card">
+          <div class="overline">code</div>
+          <CodeBlock lines={['swift build -c release']} />
+          <p>Block: charcoal, radius 12, ivory text, prompt in dark prompt terracotta, no syntax rainbow. Inline: <code>pinchos.toml</code> — raised chip, mono, 1px line.</p>
+        </article>
+        <article class="component-card raised-card">
+          <div class="overline">product mockups</div>
+          <ProductMockup compact />
+          <p>The bar is always the dark pill with system font and real product vocabulary: <code>⚠︎</code> failed, <code>~</code> stale.</p>
+        </article>
+        <article class="component-card raised-card">
+          <div class="overline">note / callout</div>
+          <div class="note-callout"><div class="overline">note</div><p>Raised chip with a mono overline. Full 1px border — never a colored left edge.</p></div>
+          <p>Overline color by kind: olive for notes, link terracotta for warnings.</p>
+        </article>
+        <article class="component-card raised-card component-card--wide">
+          <div class="overline">table</div>
+          <table class="marker-table">
+            <thead><tr><th scope="col">marker</th><th scope="col">meaning</th><th scope="col">first level shows</th></tr></thead>
+            <tbody>
+              <tr><td>⚠︎</td><td>Failed</td><td>exact cause headline, bounded stderr line, Copy Full Error</td></tr>
+              <tr><td>~</td><td>Stale</td><td>last output kept in the bar, marked stale</td></tr>
+              <tr><td>—</td><td>Healthy</td><td>text only; nothing is promoted</td></tr>
+            </tbody>
+          </table>
+          <p>Header: mono caps olive on Paper Raised. Hairline rows only — no zebra, no vertical rules.</p>
+        </article>
+        <article class="component-card raised-card component-card--wide">
+          <div class="overline">forms</div>
+          <div class="form-layout">
+            <form class="specimen-form">
+              <label for="email">Email</label><input id="email" value="ana@example.com" />
+              <label for="config-name">Config name</label><input id="config-name" value="pinchos..toml" aria-describedby="config-error" /><span id="config-error" class="form-error">error — must end in .toml, exactly one dot</span>
+              <label for="version">Version</label><select id="version"><option>latest release</option></select>
+              <label class="check-row"><input type="checkbox" checked /> Notify me about releases</label>
+              <label class="check-row"><input type="checkbox" /> Include pre-releases</label>
+              <fieldset><legend>channel</legend><label class="check-row"><input type="radio" name="channel" checked /> stable</label><label class="check-row"><input type="radio" name="channel" /> beta</label></fieldset>
+              <button type="button" class="button button--primary">Subscribe</button>
+            </form>
+            <div class="form-rules"><div class="overline">rules</div><div>· labels above fields, never placeholder-as-label</div><div>· fields use Paper Field fill, 1px border, radius 8, padding 10 12</div><div>· hints and errors in mono 11 below the field</div><div>· checks and radios are 16px; checked fill Link Terracotta</div></div>
+          </div>
+        </article>
+        <article class="component-card raised-card">
+          <div class="overline">tabs · tags · kbd</div>
+          <div class="tabs"><span class="tabs__active">Overview</span><span>Config</span><span>Changelog</span></div>
+          <div class="chips"><code>json-v1</code><code class="chip-olive">new in 0.4</code><code class="chip-terracotta">breaking</code><kbd><span aria-hidden="true">⌘</span><span class="visually-hidden">Command</span></kbd><kbd>C</kbd></div>
+          <p>Tabs use a 2px Link Terracotta underline. Tags are mono chips; kbd uses a 2px bottom border.</p>
+        </article>
+        <article class="component-card raised-card">
+          <div class="overline">lists · quote · prev/next</div>
+          <ul class="olive-list"><li>unordered — olive dot, hanging, 6px row gap</li><li>ordered — mono olive numerals, zero-padded</li></ul>
+          <blockquote>“It behaves like a built-in menu extra.”<cite>— design/README.md</cite></blockquote>
+          <div class="pager"><a href="#config">← Config format</a><a href="#markers">Markers →</a></div>
+        </article>
+      </div>
+    </section>
+
+    <section class="docs-section" aria-labelledby="voice-heading">
+      <h2 id="voice-heading" class="serif-heading">7 · Voice</h2>
+      <div class="voice-grid"><div><div class="overline">say</div><p>“pinchos runs the commands you give it.”</p><p>“Failed 2 minutes ago — exit 1.”</p><p>“Free, open source, native AppKit.”</p></div><div><div class="overline overline--terracotta">don't say</div><p>“Supercharge your workflow!”</p><p>“Something went wrong.”</p><p>“The ultimate menu bar experience.”</p></div></div>
+      <p class="docs-note">Sentence case, present tense, no exclamation marks, no emoji. Error examples in copy are always real ones with exact causes. Feature claims name the mechanism, not the feeling.</p>
+    </section>
+
+    <section class="docs-section docs-section--last" aria-labelledby="later-heading">
+      <h2 id="later-heading" class="serif-heading">8 · Adding pages later</h2>
+      <p class="docs-note docs-note--wide">Every new page reuses the landing nav and footer verbatim. Docs pages: single column, max-width 720, body 16.5/1.65, H2s in serif with 56px top spacing, code blocks per section 6. A changelog or blog gets mono dates in olive and serif titles. If a page needs a component this system doesn't define, add it here first — one page, one new component, maximum.</p>
+    </section>
+  </div>
+</BaseLayout>
