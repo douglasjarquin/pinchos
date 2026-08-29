@@ -50,7 +50,7 @@ Checksums are generated *after* stapling, so they cover the exact bytes a user d
 
 ## Rerunning or re-tagging
 
-Re-running the workflow for a tag whose release already exists is **idempotent** as long as the tag still points at the same commit that created the release: the workflow detects the existing release, confirms `targetCommitish` matches the current commit, and overwrites that release's artifacts (`gh release upload --clobber`).
+Re-running the workflow for a tag whose release already exists is **idempotent** as long as the tag still points at the same commit that created the release: the workflow resolves the tag to its current commit via the GitHub commits API, confirms it matches the commit this run was triggered for, detects the existing release, and overwrites that release's artifacts (`gh release upload --clobber`).
 
 If a tag is deleted and re-pushed at a **different** commit while a release for that tag name already exists, the workflow refuses to overwrite it and fails with an explicit error naming both commits. Delete the stale GitHub release (and decide whether to also delete/re-push the tag) deliberately before retrying - the pipeline will never silently publish one commit's artifacts under a release that was already associated with a different commit.
 

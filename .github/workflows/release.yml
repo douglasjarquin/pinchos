@@ -176,9 +176,10 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           TAG="${GITHUB_REF_NAME}"
+          RUN_COMMIT="$(git rev-parse "${GITHUB_SHA}^{commit}")"
           TAG_COMMIT="$(gh api "repos/${GITHUB_REPOSITORY}/commits/${TAG}" --jq .sha)"
-          if [[ "$TAG_COMMIT" != "$GITHUB_SHA" ]]; then
-            echo "::error::Tag $TAG now points at commit $TAG_COMMIT, not this run's commit $GITHUB_SHA." >&2
+          if [[ "$TAG_COMMIT" != "$RUN_COMMIT" ]]; then
+            echo "::error::Tag $TAG now points at commit $TAG_COMMIT, not this run's commit $RUN_COMMIT." >&2
             echo "error: the tag must have moved after this run started; refusing to publish artifacts for a superseded commit." >&2
             echo "error: delete the existing release/tag deliberately and re-tag if this is intentional." >&2
             exit 1
@@ -191,6 +192,6 @@ jobs:
             # is tied to whatever commit the tag itself points to.
             gh release create "$TAG" \
               --title "Pinchos $TAG" \
-              --notes "Automated release for $TAG (commit ${GITHUB_SHA})."
+              --notes "Automated release for $TAG (commit ${RUN_COMMIT})."
           fi
           gh release upload "$TAG" "dist/${ARTIFACT_NAME}" "dist/${ARTIFACT_NAME}.sha256" --clobber
