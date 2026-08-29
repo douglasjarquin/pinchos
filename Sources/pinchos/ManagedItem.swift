@@ -91,9 +91,9 @@ final class ManagedItem: ManagedItemLifecycle {
     /// "action:<index>"). Real runner cancellation is normally too fast to
     /// distinguish concurrent from sequential execution in a test; this lets
     /// tests inject a controllable settle time per role and prove that all
-    /// roles for one item are cancelled concurrently -- bounded by the
-    /// slowest role, not the sum of all of them. Production code always
-    /// leaves this `nil`.
+    /// roles for one item are cancelled concurrently -- every role starts
+    /// before any role settles, rather than settling one after another.
+    /// Production code always leaves this `nil`.
     var cancellationSettlementDelayForTesting: ((String) async -> Void)?
 
     /// Test-only observer invoked with the identities reported by
