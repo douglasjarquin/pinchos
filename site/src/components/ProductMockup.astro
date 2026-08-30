@@ -52,7 +52,6 @@ const { compact = false } = Astro.props;
   }
 
   .product-visual {
-    position: relative;
     min-width: 0;
   }
 
@@ -129,10 +128,6 @@ const { compact = false } = Astro.props;
   }
 
   .config-disclosure > summary {
-    position: absolute;
-    z-index: 1;
-    inset-block-start: 0;
-    inset-inline-start: 0;
     display: inline-flex;
     min-height: 44px;
     align-items: center;
@@ -147,6 +142,7 @@ const { compact = false } = Astro.props;
     font-size: 12px;
     font-weight: 500;
     list-style: none;
+    margin-top: var(--space-3);
     user-select: none;
   }
 
@@ -246,11 +242,6 @@ const { compact = false } = Astro.props;
 
     .failure-menu {
       width: min(296px, calc(100% - 20px));
-    }
-
-    .config-disclosure > summary {
-      position: static;
-      margin-top: var(--space-3);
     }
 
     .config-panel {
