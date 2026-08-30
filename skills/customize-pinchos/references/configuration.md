@@ -54,7 +54,7 @@ Follow this order for every customization.
    XDG_CONFIG_HOME="$staging_root" pinchos run <item>
    ```
 
-The staging copy changes the base directory for relative `working_directory`, `watch`, and `icon` paths.
+The staging copy changes the base directory for relative `shell[0]`, `working_directory`, `watch`, and `icon` paths.
 Create safe staging fixtures or use absolute equivalents for any such path before relying on `doctor` or `run` results.
 Do not claim that a staged check exercised an original relative path when it did not.
 
@@ -77,7 +77,7 @@ Use `pinchos open-config` when you want Pinchos to open the resolved file in its
 
 Pinchos reads `$XDG_CONFIG_HOME/pinchos/pinchos.toml` when `XDG_CONFIG_HOME` is set and non-empty.
 Otherwise it reads `~/.config/pinchos/pinchos.toml`.
-Relative `working_directory`, `watch`, and `icon` paths resolve relative to the configuration file.
+Relative `shell[0]`, `working_directory`, `watch`, and `icon` paths resolve relative to the configuration file.
 A leading `~` resolves to the launching user's home directory.
 
 ## Schema
