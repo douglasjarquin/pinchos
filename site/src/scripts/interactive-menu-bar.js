@@ -61,6 +61,7 @@ const initializeMenu = (root) => {
   let renderedActionName = null;
 
   const activeTrigger = () => triggers.find((trigger) => trigger.dataset.menuItem === activeName && !stateFor(activeName).hidden);
+  const focusExpandedItem = () => (activeTrigger() ?? emptyState).focus();
 
   const configuredActionData = (trigger) => {
     try {
@@ -242,6 +243,7 @@ const initializeMenu = (root) => {
     diagnostics.open = showDiagnostics;
     panelOpen = true;
     updatePanel();
+    updateMenuTabStops(panel, visiblePanelItems()[0]);
   };
 
   const closeCollapsedRoot = () => {
@@ -345,7 +347,7 @@ const initializeMenu = (root) => {
       diagnosticsVisible = false;
       diagnostics.open = false;
       updatePanel();
-      activeTrigger()?.focus();
+      focusExpandedItem();
       return;
     }
     collapsed = true;
@@ -364,7 +366,7 @@ const initializeMenu = (root) => {
     diagnosticsVisible = false;
     diagnostics.open = false;
     updatePanel();
-    activeTrigger()?.focus();
+    focusExpandedItem();
   });
 
   triggers.forEach((trigger) => {

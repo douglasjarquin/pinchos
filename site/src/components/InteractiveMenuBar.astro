@@ -175,9 +175,9 @@ const codexClick = configValue('codex', 'click');
       hidden
       data-collapsed-panel
     >
-      <div class="collapsed-menu__items" data-collapsed-items></div>
-      <p class="collapsed-menu__empty" data-collapsed-empty hidden>No visible Pinchos</p>
-      <div class="menu-rule" aria-hidden="true"></div>
+      <div class="collapsed-menu__items" role="none" data-collapsed-items></div>
+      <p class="collapsed-menu__empty" role="none" data-collapsed-empty hidden>No visible Pinchos</p>
+      <div class="menu-rule" role="separator" aria-hidden="true"></div>
       <button class="example-menu__action" type="button" role="menuitem" tabindex="-1" data-expand-action>Expand Pinchos</button>
     </div>
 
@@ -224,7 +224,7 @@ const codexClick = configValue('codex', 'click');
       <div class="menu-rule" role="separator" aria-hidden="true"></div>
       <button class="example-menu__action" type="button" role="menuitem" tabindex="-1" data-hide-action>Hide</button>
       <button class="example-menu__action" type="button" role="menuitem" tabindex="-1" data-collapse-action>Collapse Pinchos</button>
-      <p class="example-menu__feedback" data-feedback role="status" hidden></p>
+      <div role="none"><p class="example-menu__feedback" data-feedback role="status" hidden></p></div>
     </div>
   </div>
 </div>
