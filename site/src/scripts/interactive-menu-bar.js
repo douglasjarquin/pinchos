@@ -3,6 +3,7 @@ const initializeMenu = (root) => {
   const triggers = [...root.querySelectorAll('[data-menu-item]')];
   const runAction = panel?.querySelector('[data-run-action]');
   const refreshAction = panel?.querySelector('[data-refresh-action]');
+  const hideAction = panel?.querySelector('[data-hide-action]');
   const configuredActions = panel?.querySelector('[data-configured-actions]');
   const clickLink = panel?.querySelector('[data-click-link]');
   const noClick = panel?.querySelector('[data-no-click]');
@@ -16,9 +17,11 @@ const initializeMenu = (root) => {
   const diagnosticClick = panel?.querySelector('[data-diagnostic-click]');
   const diagnosticError = panel?.querySelector('[data-diagnostic-error]');
   const diagnosticStale = panel?.querySelector('[data-diagnostic-stale]');
+  const diagnosticHidden = panel?.querySelector('[data-diagnostic-hidden]');
   const feedback = panel?.querySelector('[data-feedback]');
+  const emptyState = root.querySelector('[data-menu-empty]');
 
-  if (!panel || !runAction || !refreshAction || !configuredActions || !clickLink || !noClick || !summary || !failureDetails || !meta || !diagnostics || !diagnosticItem || !diagnosticRefresh || !diagnosticFormat || !diagnosticClick || !diagnosticError || !diagnosticStale || !feedback || triggers.length === 0) {
+  if (!panel || !runAction || !refreshAction || !hideAction || !configuredActions || !clickLink || !noClick || !summary || !failureDetails || !meta || !diagnostics || !diagnosticItem || !diagnosticRefresh || !diagnosticFormat || !diagnosticClick || !diagnosticError || !diagnosticStale || !diagnosticHidden || !feedback || !emptyState || triggers.length === 0) {
     return;
   }
 
@@ -27,16 +30,18 @@ const initializeMenu = (root) => {
       failed: trigger.dataset.initialState === 'failed',
       refreshing: false,
       activity: null,
+      hidden: trigger.dataset.hidden === 'true',
     }]),
   );
   const timers = new Map();
-  let activeName = triggers[0].dataset.menuItem;
+  const stateFor = (name) => states.get(name) ?? { failed: false, refreshing: false, activity: null, hidden: false };
+  const visibleTriggers = () => triggers.filter((trigger) => !stateFor(trigger.dataset.menuItem).hidden);
+  let activeName = visibleTriggers()[0]?.dataset.menuItem ?? triggers[0].dataset.menuItem;
   let panelOpen = false;
   let diagnosticsVisible = false;
   let renderedActionName = null;
 
-  const stateFor = (name) => states.get(name) ?? { failed: false, refreshing: false, activity: null };
-  const activeTrigger = () => triggers.find((trigger) => trigger.dataset.menuItem === activeName);
+  const activeTrigger = () => triggers.find((trigger) => trigger.dataset.menuItem === activeName && !stateFor(activeName).hidden);
 
   const configuredActionData = (trigger) => {
     try {
@@ -67,7 +72,7 @@ const initializeMenu = (root) => {
 
   const startSimulation = (itemName, activity, recover) => {
     const state = stateFor(itemName);
-    if (state.refreshing) return;
+    if (state.refreshing || state.hidden) return;
 
     state.refreshing = true;
     state.activity = activity;
@@ -83,8 +88,27 @@ const initializeMenu = (root) => {
   };
 
   const updatePanel = () => {
+    const visible = visibleTriggers();
+    if (!visible.some((itemTrigger) => itemTrigger.dataset.menuItem === activeName)) {
+      activeName = visible[0]?.dataset.menuItem ?? activeName;
+    }
     const trigger = activeTrigger();
-    if (!trigger) return;
+    emptyState.hidden = visible.length !== 0;
+
+    triggers.forEach((itemTrigger) => {
+      const isActive = itemTrigger === trigger;
+      const itemState = stateFor(itemTrigger.dataset.menuItem);
+      itemTrigger.hidden = itemState.hidden;
+      itemTrigger.setAttribute('aria-expanded', String(panelOpen && isActive));
+      itemTrigger.dataset.state = itemState.refreshing ? 'running' : itemState.failed ? 'failed' : 'fresh';
+      const itemDisplay = itemTrigger.querySelector('[data-item-display]');
+      if (itemDisplay) itemDisplay.textContent = itemState.failed ? itemTrigger.dataset.displayValue : itemTrigger.dataset.value;
+    });
+
+    if (!trigger) {
+      panel.hidden = true;
+      return;
+    }
 
     const state = stateFor(activeName);
     const label = trigger.dataset.itemLabel ?? activeName;
@@ -95,6 +119,7 @@ const initializeMenu = (root) => {
     const clickCommand = trigger.dataset.clickCommand ?? '';
     const errorPolicy = trigger.dataset.errorPolicy || 'default';
     const staleAfter = trigger.dataset.staleAfter || 'not configured';
+    const hidden = state.hidden;
     const stateText = state.refreshing
       ? state.activity === 'run' || state.activity === 'action' ? 'running…' : 'refreshing…'
       : state.failed
@@ -120,11 +145,13 @@ const initializeMenu = (root) => {
     diagnosticClick.textContent = clickCommand ? `Click: ${clickCommand}` : 'Click: not configured';
     diagnosticError.textContent = `On error: ${errorPolicy}`;
     diagnosticStale.textContent = `Stale after: ${staleAfter}`;
+    diagnosticHidden.textContent = `Hidden: ${hidden ? 'yes' : 'no'}`;
     failureDetails.hidden = !state.failed;
     runAction.disabled = state.refreshing;
     runAction.textContent = state.refreshing && state.activity === 'run' ? `Running ${label}…` : `Run ${label}`;
     refreshAction.disabled = state.refreshing;
     refreshAction.textContent = state.refreshing && state.activity === 'refresh' ? 'Refreshing…' : 'Refresh Now';
+    hideAction.disabled = state.refreshing || hidden;
     configuredActions.querySelectorAll('[data-configured-action]').forEach((action) => {
       action.disabled = state.refreshing;
     });
@@ -138,15 +165,6 @@ const initializeMenu = (root) => {
       clickLink.removeAttribute('href');
     }
 
-    triggers.forEach((itemTrigger) => {
-      const isActive = itemTrigger === trigger;
-      const itemState = stateFor(itemTrigger.dataset.menuItem);
-      itemTrigger.setAttribute('aria-expanded', String(panelOpen && isActive));
-      itemTrigger.dataset.state = itemState.refreshing ? 'running' : itemState.failed ? 'failed' : 'fresh';
-      const itemDisplay = itemTrigger.querySelector('[data-item-display]');
-      if (itemDisplay) itemDisplay.textContent = itemState.failed ? itemTrigger.dataset.displayValue : itemTrigger.dataset.value;
-    });
-
     const spokenValue = value.replace('🔋 ', '').replace('%', ' percent');
     trigger.setAttribute('aria-label', `${label}, ${spokenValue}${state.failed ? ', failed, showing last good value' : ', fresh'}`);
   };
@@ -157,6 +175,7 @@ const initializeMenu = (root) => {
 
   const openItem = (trigger, showDiagnostics) => {
     const nextName = trigger.dataset.menuItem;
+    if (stateFor(nextName).hidden) return;
     if (nextName !== activeName) {
       activeName = nextName;
     }
@@ -190,6 +209,31 @@ const initializeMenu = (root) => {
 
   runAction.addEventListener('click', () => startSimulation(activeName, 'run', true));
   refreshAction.addEventListener('click', () => startSimulation(activeName, 'refresh', true));
+  hideAction.addEventListener('click', () => {
+    const current = stateFor(activeName);
+    if (current.hidden) return;
+
+    const nextTrigger = visibleTriggers().find((trigger) => trigger.dataset.menuItem !== activeName);
+    current.hidden = true;
+    current.refreshing = false;
+    current.activity = null;
+    panelOpen = false;
+    diagnosticsVisible = false;
+    diagnostics.open = false;
+    activeName = nextTrigger?.dataset.menuItem ?? activeName;
+    updatePanel();
+    if (nextTrigger) {
+      nextTrigger.focus();
+    } else {
+      emptyState.focus();
+    }
+  });
+
+  emptyState.addEventListener('click', () => {
+    const configPanel = document.getElementById('sample-pinchos-config');
+    const disclosure = configPanel?.closest('details');
+    if (disclosure) disclosure.open = true;
+  });
 
   const errorCopy = panel.querySelector('[data-copy-error]');
   errorCopy?.addEventListener('click', () => {

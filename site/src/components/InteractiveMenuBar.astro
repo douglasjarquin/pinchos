@@ -10,6 +10,14 @@ const configValue = (itemName: string, key: string) => {
   return section.match(new RegExp(`^${key} = "([^"]*)"`, 'm'))?.[1] ?? '';
 };
 
+const configBoolean = (itemName: string, key: string) => {
+  const section = sampleConfig.match(
+    new RegExp(`\\[item\\.${itemName}\\]([\\s\\S]*?)(?=\\n\\[item\\.|$)`),
+  )?.[1] ?? '';
+
+  return section.match(new RegExp(`^${key} = (true|false)\\s*(?:#.*)?$`, 'm'))?.[1] === 'true';
+};
+
 type ConfiguredAction = { title: string; kind: 'run' | 'refresh' };
 
 const configActions = (itemName: string): ConfiguredAction[] => {
@@ -39,7 +47,7 @@ const codexClick = configValue('codex', 'click');
 
 <div class="interactive-menu" data-interactive-menu>
   <p class="interactive-menu__description" id="interactive-menu-description">
-    Interactive preview of the sample config. Each item has default Run and Refresh actions; configured TOML actions appear below them. Option-click an item, or press Alt+Enter while it is focused, to reveal diagnostics. Hover never reveals diagnostics. Values are illustrative; no local commands run in the browser.
+    Interactive preview of the sample config. Each item has default Run and Refresh actions, a config-backed Hide action, and any configured TOML actions below them. Option-click an item, or press Alt+Enter while it is focused, to reveal diagnostics. Hover never reveals diagnostics. Values are illustrative; no local commands run in the browser.
   </p>
 
   <div class="menu-bar" role="group" aria-label="Interactive sample pinchos menu bar" aria-describedby="interactive-menu-description">
@@ -50,7 +58,6 @@ const codexClick = configValue('codex', 'click');
       aria-expanded="false"
       aria-controls="example-menu-panel"
       aria-label="Claude, 82 percent, failed, showing last good value"
-      aria-haspopup="true"
       aria-keyshortcuts="Alt+Enter"
       data-menu-item="claude"
       data-item-label="Claude"
@@ -62,6 +69,7 @@ const codexClick = configValue('codex', 'click');
       data-click-url={clickTarget(claudeClick)}
       data-error-policy={configValue('claude', 'on_error')}
       data-stale-after={configValue('claude', 'stale_after')}
+      data-hidden={String(configBoolean('claude', 'hidden'))}
       data-initial-state="failed"
       data-actions={JSON.stringify(configActions('claude'))}
     >
@@ -74,7 +82,6 @@ const codexClick = configValue('codex', 'click');
       aria-expanded="false"
       aria-controls="example-menu-panel"
       aria-label="Codex, 68 percent, fresh"
-      aria-haspopup="true"
       aria-keyshortcuts="Alt+Enter"
       data-menu-item="codex"
       data-item-label="Codex"
@@ -86,6 +93,7 @@ const codexClick = configValue('codex', 'click');
       data-click-url={clickTarget(codexClick)}
       data-error-policy={configValue('codex', 'on_error')}
       data-stale-after={configValue('codex', 'stale_after')}
+      data-hidden={String(configBoolean('codex', 'hidden'))}
       data-actions={JSON.stringify(configActions('codex'))}
     >
       <span>codex</span><span data-item-display>68%</span>
@@ -97,7 +105,6 @@ const codexClick = configValue('codex', 'click');
       aria-expanded="false"
       aria-controls="example-menu-panel"
       aria-label="Clock, 14 colon 32, fresh"
-      aria-haspopup="true"
       aria-keyshortcuts="Alt+Enter"
       data-menu-item="clock"
       data-item-label="Clock"
@@ -109,6 +116,7 @@ const codexClick = configValue('codex', 'click');
       data-click-url={clickTarget(configValue('clock', 'click'))}
       data-error-policy={configValue('clock', 'on_error')}
       data-stale-after={configValue('clock', 'stale_after')}
+      data-hidden={String(configBoolean('clock', 'hidden'))}
       data-actions={JSON.stringify(configActions('clock'))}
     >
       <span>14:32</span>
@@ -120,7 +128,6 @@ const codexClick = configValue('codex', 'click');
       aria-expanded="false"
       aria-controls="example-menu-panel"
       aria-label="Battery, 94 percent, fresh"
-      aria-haspopup="true"
       aria-keyshortcuts="Alt+Enter"
       data-menu-item="battery"
       data-item-label="Battery"
@@ -132,10 +139,14 @@ const codexClick = configValue('codex', 'click');
       data-click-url={clickTarget(configValue('battery', 'click'))}
       data-error-policy={configValue('battery', 'on_error')}
       data-stale-after={configValue('battery', 'stale_after')}
+      data-hidden={String(configBoolean('battery', 'hidden'))}
       data-actions={JSON.stringify(configActions('battery'))}
     >
       <span>{batteryDisplay}</span>
     </button>
+    <a class="menu-bar__empty" href="#sample-pinchos-config" data-menu-empty hidden>
+      all sample items hidden · set hidden = false in See config to restore
+    </a>
   </div>
 
   <div
@@ -150,6 +161,7 @@ const codexClick = configValue('codex', 'click');
     <div class="example-menu__row-set" data-action-list>
       <button class="example-menu__action" type="button" data-run-action>Run Claude</button>
       <button class="example-menu__action" type="button" data-refresh-action>Refresh Now</button>
+      <button class="example-menu__action" type="button" data-hide-action>Hide</button>
       <div data-configured-actions></div>
       <a class="example-menu__action" data-click-link target="_blank" rel="noreferrer">
         <span>Open Claude usage page</span><span aria-hidden="true">↗</span>
@@ -175,6 +187,7 @@ const codexClick = configValue('codex', 'click');
         <p data-diagnostic-click>Click: open https://claude.ai/settings/usage</p>
         <p data-diagnostic-error>On error: keep_last</p>
         <p data-diagnostic-stale>Stale after: 15m</p>
+        <p data-diagnostic-hidden>Hidden: no</p>
       </div>
     </details>
     <p class="example-menu__feedback" data-feedback role="status" hidden></p>

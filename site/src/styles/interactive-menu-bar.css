@@ -58,6 +58,29 @@
   background: color-mix(in srgb, var(--color-dark-copy) 22%, transparent);
 }
 
+.interactive-menu .menu-bar__empty {
+  display: flex;
+  min-height: 44px;
+  min-width: 0;
+  flex: 1 1 auto;
+  align-items: center;
+  max-width: 100%;
+  padding-inline: var(--space-2);
+  color: var(--color-dark-copy);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  line-height: 1.35;
+  opacity: 0.76;
+  overflow-wrap: anywhere;
+  text-decoration: none;
+  white-space: normal;
+}
+
+.interactive-menu .menu-bar__empty:hover {
+  color: var(--color-dark-copy);
+  opacity: 1;
+}
+
 .interactive-menu .example-menu {
   width: min(360px, calc(100% - var(--space-8)));
   align-self: flex-end;
