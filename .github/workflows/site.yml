@@ -4,11 +4,13 @@ on:
   pull_request:
     paths:
       - 'site/**'
+      - 'recipes/**'
       - '.github/workflows/site.yml'
   push:
     branches: [main]
     paths:
       - 'site/**'
+      - 'recipes/**'
       - '.github/workflows/site.yml'
 
 concurrency:

@@ -7,12 +7,12 @@ import '../../styles/recipes.css';
 const recipes = loadRecipes();
 ---
 
-<BaseLayout title="pinchos recipes" description="Fifty copy-pasteable Pinchos recipes for useful menu-bar signals." recipes>
+<BaseLayout title="pinchos recipes" description={`${recipes.length} copy-pasteable Pinchos recipes for useful menu-bar signals.`} recipes>
   <div class="recipes-page container container--docs" data-recipe-explorer>
     <header class="recipes-intro">
       <div class="overline">recipe catalog · {recipes.length} configs</div>
       <h1 class="serif-heading">Signals you can pin.</h1>
-      <p class="body-copy">Fifty standalone TOML recipes for small, useful signals. Search the catalog, read the source, and see the shape of each item before you copy it into your own config.</p>
+      <p class="body-copy">{recipes.length} standalone TOML recipes for small, useful signals. Search the catalog, read the source, and see the shape of each item before you copy it into your own config.</p>
     </header>
 
     <section class="recipe-browser" aria-labelledby="recipe-browser-heading">
