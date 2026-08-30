@@ -1,4 +1,5 @@
 # Recipe: http-health
+# Category: Network
 #
 # Purpose: show the HTTP status code of a health/uptime endpoint, so a
 # non-2xx response (or curl failure) is visible from the menu bar.

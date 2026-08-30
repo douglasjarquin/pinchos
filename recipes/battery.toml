@@ -1,4 +1,5 @@
 # Recipe: battery
+# Category: Power
 #
 # Purpose: show battery charge percentage and power source in the menu bar.
 # Dependencies: none beyond the macOS base system (/usr/bin/pmset).

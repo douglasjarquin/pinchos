@@ -1,0 +1,16 @@
+# Recipe: kubectl-context (optional third-party tool)
+# Category: Development
+#
+# Purpose: show the current Kubernetes context so commands are not aimed at
+#   the wrong cluster by accident.
+# Dependencies: kubectl, install from https://kubernetes.io/docs/tasks/tools/.
+# Expected output: a context such as "kind-local" or "prod-us-east".
+# Limitations: the value is local kubeconfig state, not a health check; a
+#   missing context or unreadable config reports an error.
+
+[item.kubernetes]
+type = "command"
+run = "kubectl config current-context"
+interval = "1m"
+format = "k8s {output}"
+on_error = "keep_last"

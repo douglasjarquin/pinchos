@@ -1,4 +1,5 @@
 # Recipe: aws-profile (optional third-party tool)
+# Category: Cloud
 #
 # Purpose: show which AWS account a named CLI profile currently resolves
 # to, so you notice immediately if a terminal or script is pointed at the

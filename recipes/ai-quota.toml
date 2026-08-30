@@ -1,4 +1,5 @@
 # Recipe: ai-quota (optional third-party tool)
+# Category: AI
 #
 # Purpose: show a coding-agent provider's remaining weekly quota
 # percentage in the menu bar. This is the same pattern documented as the

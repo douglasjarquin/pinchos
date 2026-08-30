@@ -1,4 +1,5 @@
 # Recipe: github-status (optional third-party tool)
+# Category: GitHub
 #
 # Purpose: show your unread GitHub notification count in the menu bar.
 # Dependencies: the GitHub CLI (`gh`), which does not ship with macOS.

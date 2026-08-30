@@ -1,4 +1,5 @@
 # Recipe: vpn-network
+# Category: Network
 #
 # Purpose: two items covering network connectivity: which interface
 # currently owns the default route, and a best-effort heuristic for

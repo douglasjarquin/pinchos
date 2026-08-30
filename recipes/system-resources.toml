@@ -1,4 +1,5 @@
 # Recipe: system-resources (disk, memory, load)
+# Category: System
 #
 # Purpose: three independent items covering the classic "system health"
 # trio: root-volume disk usage, physical memory pressure, and 1-minute

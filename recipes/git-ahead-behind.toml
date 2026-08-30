@@ -1,0 +1,21 @@
+# Recipe: git-ahead-behind (optional path configuration)
+# Category: Development
+#
+# Purpose: show how many commits a branch is ahead of and behind its upstream.
+# Dependencies: Git, which ships with Xcode Command Line Tools.
+# Configuration: replace `/path/to/repository` in `REPO_PATH` below.
+# Expected output: "ahead 2 behind 1" for a branch with that divergence.
+# Limitations: a branch without an upstream cannot produce a comparison;
+#   the result is last-good under the error policy below.
+# This recipe uses a shell pipeline, so doctor will not identify one command
+#   to check safely.
+
+[item.git_sync]
+type = "command"
+run = "git -C \"$REPO_PATH\" rev-list --left-right --count '@{upstream}...HEAD' | awk '{print \"ahead \" $2 \" behind \" $1}'"
+interval = "2m"
+format = "{output}"
+on_error = "keep_last"
+
+[item.git_sync.env]
+REPO_PATH = "/path/to/repository"

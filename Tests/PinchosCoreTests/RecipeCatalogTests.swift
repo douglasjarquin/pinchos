@@ -15,6 +15,7 @@ final class RecipeCatalogTests: XCTestCase {
         )
         let recipes = entries.filter { $0.pathExtension == "toml" }.sorted { $0.path < $1.path }
         XCTAssertFalse(recipes.isEmpty, "expected at least one recipe under \(recipesDirectory.path)")
+        XCTAssertGreaterThanOrEqual(recipes.count, 50, "expected at least 50 recipes under \(recipesDirectory.path)")
         return recipes
     }
 

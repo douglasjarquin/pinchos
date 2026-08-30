@@ -1,0 +1,16 @@
+# Recipe: swift-version
+# Category: Development
+#
+# Purpose: show the Swift compiler version available on PATH.
+# Dependencies: Swift from Xcode or the Swift toolchain.
+# Expected output: "6.1.2" or the installed compiler version.
+# Limitations: the version can differ between terminal environments and
+#   GUI-launched processes if PATH is configured differently.
+# This recipe uses a shell pipeline, so doctor will not identify one command
+#   to check safely.
+
+[item.swift]
+type = "command"
+run = "swift --version | awk '/Swift version/{print $3; exit}'"
+interval = "30m"
+format = "Swift {output}"

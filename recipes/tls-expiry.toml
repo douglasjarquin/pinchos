@@ -1,0 +1,21 @@
+# Recipe: tls-expiry (network)
+# Category: Network
+#
+# Purpose: show the certificate expiry date for a host you monitor.
+# Dependencies: `/usr/bin/openssl`, which ships with macOS, plus network
+#   access to the configured host.
+# Expected output: "Jun 29 23:59:59 2027 GMT" for example.com at a given
+#   moment; it is host- and time-dependent.
+# Limitations: replace example.com in both host positions before use. TLS
+#   handshakes can fail for proxies, SNI differences, or network outages.
+# This recipe uses a shell pipeline, so doctor will not identify one command
+#   to check safely.
+
+[item.tls_expiry]
+type = "command"
+run = "echo | openssl s_client -servername example.com -connect example.com:443 2>/dev/null | openssl x509 -noout -enddate | sed 's/^notAfter=//'"
+interval = "1h"
+timeout = "15s"
+format = "TLS {output}"
+on_error = "keep_last"
+stale_after = "24h"

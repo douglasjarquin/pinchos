@@ -1,0 +1,18 @@
+# Recipe: http-latency (network)
+# Category: Network
+#
+# Purpose: show total HTTPS request time to a documentation endpoint.
+# Dependencies: `curl`, which ships with macOS, plus network access.
+# Expected output: "0.143" seconds for the example endpoint.
+# Limitations: example.com is a placeholder, not a service-level objective;
+#   replace it with an endpoint you own or care about. The command timeout
+#   and item timeout are independent bounds.
+
+[item.http_latency]
+type = "command"
+run = "curl -sS -o /dev/null -w '%{time_total}' --max-time 5 https://example.com"
+interval = "5m"
+timeout = "8s"
+format = "HTTP {output}s"
+on_error = "keep_last"
+stale_after = "15m"

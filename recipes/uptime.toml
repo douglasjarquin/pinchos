@@ -1,0 +1,15 @@
+# Recipe: uptime
+# Category: System
+#
+# Purpose: show how long the Mac has been running since its last boot.
+# Dependencies: none beyond the macOS base system (/usr/bin/uptime and
+#   /usr/bin/sed).
+# Expected output: "2 days, 03:14" or another machine-specific duration.
+# Limitations: the human-readable output follows macOS uptime formatting;
+#   the small sed cleanup intentionally drops the logged-in-user count.
+
+[item.uptime]
+type = "command"
+run = "uptime | sed 's/.*up //' | sed 's/, [0-9]* user.*//'"
+interval = "5m"
+format = "up {output}"

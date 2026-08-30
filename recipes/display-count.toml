@@ -1,0 +1,14 @@
+# Recipe: display-count
+# Category: Desktop
+#
+# Purpose: show the number of display sections reported by System Profiler.
+# Dependencies: `system_profiler`, which ships with macOS.
+# Expected output: "2" on a Mac with two reported displays.
+# Limitations: System Profiler output is descriptive and can count display
+#   controllers differently across macOS releases; it is not a pixel count.
+
+[item.displays]
+type = "command"
+run = "system_profiler SPDisplaysDataType | awk '/^[^[:space:]].*:$/{count++} END{print count+0}'"
+interval = "10m"
+format = "displays {output}"

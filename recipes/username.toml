@@ -1,0 +1,14 @@
+# Recipe: username
+# Category: System
+#
+# Purpose: show the short account name of the user running Pinchos.
+# Dependencies: none beyond the macOS base system (/usr/bin/id).
+# Expected output: "douglas" or another local account name.
+# Limitations: this is a local login identity, not a display name or a
+#   cloud-account identity.
+
+[item.username]
+type = "command"
+run = "id -un"
+interval = "10m"
+format = "{output}"

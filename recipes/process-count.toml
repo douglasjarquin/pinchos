@@ -1,0 +1,14 @@
+# Recipe: process-count
+# Category: System
+#
+# Purpose: show the number of processes currently visible to the user.
+# Dependencies: none beyond the macOS base system (/bin/ps, wc, tr).
+# Expected output: "384" or another machine- and workload-dependent count.
+# Limitations: process visibility follows the invoking user's permissions;
+#   this is a snapshot, not a historical or performance metric.
+
+[item.processes]
+type = "command"
+run = "ps -axo pid= | wc -l | tr -d ' '"
+interval = "1m"
+format = "procs {output}"

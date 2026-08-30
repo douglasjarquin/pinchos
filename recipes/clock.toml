@@ -1,4 +1,5 @@
 # Recipe: clock
+# Category: Time
 #
 # Purpose: show the current local time in the menu bar.
 # Dependencies: none beyond the macOS base system (/bin/date).

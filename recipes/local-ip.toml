@@ -1,0 +1,14 @@
+# Recipe: local-ip
+# Category: Network
+#
+# Purpose: show the IPv4 address assigned to the primary Wi-Fi interface.
+# Dependencies: none beyond the macOS base system (/usr/sbin/ipconfig).
+# Expected output: "192.168.1.42" while Wi-Fi is connected.
+# Limitations: this assumes Wi-Fi is `en0`; replace the interface when the
+#   Mac's network hardware uses another BSD name. Offline state is empty.
+
+[item.local_ip]
+type = "command"
+run = "ipconfig getifaddr en0 || echo offline"
+interval = "1m"
+format = "IP {output}"

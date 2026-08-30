@@ -1,4 +1,5 @@
 # Recipe: network-latency
+# Category: Network
 #
 # Purpose: show round-trip ICMP latency to a host, as a quick "is the
 # network slow right now" signal.

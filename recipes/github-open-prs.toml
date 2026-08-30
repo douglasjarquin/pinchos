@@ -1,0 +1,19 @@
+# Recipe: github-open-prs (optional third-party tool)
+# Category: GitHub
+#
+# Purpose: show the number of open pull requests visible to the GitHub CLI.
+# Dependencies: the GitHub CLI (`gh`), install from https://cli.github.com/.
+#   Authenticate with `gh auth login`; no token belongs in this file.
+# Expected output: "7" for seven open pull requests in the default scope.
+# Limitations: `gh pr list` defaults to the current repository when run from
+#   one, and to its configured context; replace the command with `--repo`
+#   when you need a fixed repository.
+
+[item.github_open_prs]
+type = "command"
+run = "gh pr list --state open --limit 100 --json number --jq 'length'"
+interval = "5m"
+timeout = "15s"
+format = "PRs {output}"
+on_error = "keep_last"
+stale_after = "30m"

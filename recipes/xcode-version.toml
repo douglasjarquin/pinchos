@@ -1,0 +1,17 @@
+# Recipe: xcode-version (optional developer tool)
+# Category: Development
+#
+# Purpose: show the selected Xcode version when Xcode is installed.
+# Dependencies: Xcode and `xcodebuild`, from the Mac App Store or Apple.
+# Expected output: "16.4" or the selected developer-directory version.
+# Limitations: Command Line Tools without full Xcode may not expose the
+#   version this way; `xcode-select` controls which installation is used.
+# This recipe uses a shell pipeline, so doctor will not identify one command
+#   to check safely.
+
+[item.xcode]
+type = "command"
+run = "xcodebuild -version | awk 'NR==1{print $2}'"
+interval = "30m"
+format = "Xcode {output}"
+on_error = "keep_last"

@@ -1,0 +1,17 @@
+# Recipe: mise-version (optional third-party tool)
+# Category: Development
+#
+# Purpose: show the Mise version managing the current tool environment.
+# Dependencies: Mise, install from https://mise.jdx.dev/.
+# Expected output: a version such as "2026.1.2".
+# Limitations: GUI-launched processes may not inherit Mise shims unless the
+#   app is started from an environment where Mise has been initialized.
+# This recipe uses a shell pipeline, so doctor will not identify one command
+#   to check safely.
+
+[item.mise]
+type = "command"
+run = "mise --version | awk '{print $1}'"
+interval = "30m"
+format = "mise {output}"
+on_error = "keep_last"
