@@ -143,11 +143,11 @@ const { compact = false, interactive = false } = Astro.props;
 
   .config-disclosure > summary {
     display: inline-flex;
-    min-height: 44px;
+    min-height: var(--mockup-menu-row-height);
     align-items: center;
     gap: var(--space-2);
     padding: var(--mockup-menu-config-padding) var(--space-3);
-    border: 1px solid var(--color-ink);
+    border: var(--mockup-menu-border-width) solid var(--color-ink);
     border-radius: var(--radius-button);
     background: var(--color-paper-raised);
     color: var(--color-link-readable);
@@ -174,8 +174,8 @@ const { compact = false, interactive = false } = Astro.props;
   }
 
   .config-disclosure > summary:focus-visible {
-    outline: 2px solid var(--color-link);
-    outline-offset: 2px;
+    outline: var(--mockup-menu-focus-width) solid var(--color-link);
+    outline-offset: var(--mockup-menu-focus-offset);
   }
 
   .config-disclosure[open] > summary {
@@ -193,10 +193,10 @@ const { compact = false, interactive = false } = Astro.props;
   }
 
   .config-panel {
-    width: min(520px, 100%);
+    width: min(var(--mockup-menu-config-width), 100%);
     margin-top: var(--space-3);
     overflow: hidden;
-    border: 1px solid var(--color-rule);
+    border: var(--mockup-menu-border-width) solid var(--color-rule);
     border-radius: var(--radius-panel);
     background: var(--color-ink);
     color: var(--color-dark-copy);
@@ -204,7 +204,7 @@ const { compact = false, interactive = false } = Astro.props;
 
   .config-panel pre {
     max-width: 100%;
-    max-height: min(60vh, 360px);
+    max-height: min(60vh, var(--mockup-menu-config-height));
     margin: 0;
     padding: var(--space-4);
     overflow: auto;
@@ -216,8 +216,8 @@ const { compact = false, interactive = false } = Astro.props;
   }
 
   .config-panel pre:focus-visible {
-    outline: 2px solid var(--color-dark-prompt);
-    outline-offset: -4px;
+    outline: var(--mockup-menu-focus-width) solid var(--color-dark-prompt);
+    outline-offset: var(--mockup-menu-focus-inset);
   }
 
   figcaption {

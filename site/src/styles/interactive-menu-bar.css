@@ -186,7 +186,7 @@
 
 .interactive-menu .example-menu__diagnostics-trigger {
   display: flex;
-  min-height: 44px;
+  min-height: var(--mockup-menu-row-height);
   align-items: center;
   justify-content: space-between;
   gap: var(--space-2);

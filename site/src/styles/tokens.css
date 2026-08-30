@@ -48,10 +48,15 @@
   --mockup-menu-panel-radius: 10px;
   --mockup-menu-chip-radius: 4px;
   --mockup-menu-border-width: 1px;
+  --mockup-menu-focus-width: 2px;
+  --mockup-menu-focus-offset: 2px;
+  --mockup-menu-focus-inset: -4px;
   --mockup-menu-item-padding: 14px;
   --mockup-menu-tight-space: 2px;
   --mockup-menu-rule-height: 1px;
   --mockup-menu-interactive-panel-width: 360px;
+  --mockup-menu-config-width: 520px;
+  --mockup-menu-config-height: 360px;
   --mockup-menu-static-bar-padding: 10px;
   --mockup-menu-static-item-padding: 9px;
   --mockup-menu-mobile-item-padding: 5px;
