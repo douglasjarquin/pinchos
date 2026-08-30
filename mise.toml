@@ -1,0 +1,27 @@
+[tools]
+node = "24"
+aube = "2.1"
+
+[tasks.build]
+description = "Build the Pinchos executable"
+run = "swift build -c release"
+
+[tasks.test]
+description = "Run the Swift package tests"
+run = "swift test"
+
+[tasks."site:install"]
+description = "Install site dependencies with Aube"
+run = "aube -C site install"
+
+[tasks."site:dev"]
+description = "Start the Astro development server"
+run = "aube -C site run dev -- --host 127.0.0.1"
+
+[tasks."site:build"]
+description = "Build the Astro site"
+run = "aube -C site run build"
+
+[tasks."site:preview"]
+description = "Preview the built Astro site"
+run = "aube -C site run preview -- --host 127.0.0.1"
