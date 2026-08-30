@@ -20,6 +20,8 @@ const initializeMenu = (root) => {
   const diagnosticHidden = panel?.querySelector('[data-diagnostic-hidden]');
   const feedback = panel?.querySelector('[data-feedback]');
   const emptyState = root.querySelector('[data-menu-empty]');
+  const configPreview = root.closest('.product-visual')?.querySelector('[data-sample-config]');
+  const initialConfig = configPreview?.textContent ?? '';
 
   if (!panel || !runAction || !refreshAction || !hideAction || !configuredActions || !clickLink || !noClick || !summary || !failureDetails || !meta || !diagnostics || !diagnosticItem || !diagnosticRefresh || !diagnosticFormat || !diagnosticClick || !diagnosticError || !diagnosticStale || !diagnosticHidden || !feedback || !emptyState || triggers.length === 0) {
     return;
@@ -52,6 +54,31 @@ const initializeMenu = (root) => {
     } catch {
       return [];
     }
+  };
+
+  const updateConfigPreview = () => {
+    if (!configPreview) return;
+
+    const hiddenNames = new Set(
+      [...states]
+        .filter(([, state]) => state.hidden)
+        .map(([itemName]) => itemName),
+    );
+    let currentItemName = null;
+    const lines = initialConfig.split('\n').map((line) => {
+      const header = line.match(/^\[item\.(?:"([^"]+)"|([A-Za-z0-9_-]+))\]$/);
+      if (header) {
+        currentItemName = header[1] ?? header[2];
+      } else if (line.startsWith('[')) {
+        currentItemName = null;
+      }
+
+      if (currentItemName && hiddenNames.has(currentItemName) && /^hidden = (?:true|false)(\s*(?:#.*)?)$/.test(line)) {
+        return line.replace(/^(hidden = )(?:true|false)/, '$1true');
+      }
+      return line;
+    });
+    configPreview.textContent = lines.join('\n');
   };
 
   const renderConfiguredActions = (trigger) => {
@@ -105,6 +132,8 @@ const initializeMenu = (root) => {
       if (itemDisplay) itemDisplay.textContent = itemState.failed ? itemTrigger.dataset.displayValue : itemTrigger.dataset.value;
     });
 
+    updateConfigPreview();
+
     if (!trigger) {
       panel.hidden = true;
       return;
@@ -151,6 +180,7 @@ const initializeMenu = (root) => {
     runAction.textContent = state.refreshing && state.activity === 'run' ? `Running ${label}…` : `Run ${label}`;
     refreshAction.disabled = state.refreshing;
     refreshAction.textContent = state.refreshing && state.activity === 'refresh' ? 'Refreshing…' : 'Refresh Now';
+    refreshAction.hidden = configuredActionData(trigger).some(({ kind }) => kind === 'refresh');
     hideAction.disabled = state.refreshing || hidden;
     configuredActions.querySelectorAll('[data-configured-action]').forEach((action) => {
       action.disabled = state.refreshing;

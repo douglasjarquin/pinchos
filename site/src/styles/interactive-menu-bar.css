@@ -68,7 +68,7 @@
   padding-inline: var(--space-2);
   color: var(--color-dark-copy);
   font-family: var(--font-mono);
-  font-size: 11px;
+  font-size: var(--font-size-caption);
   line-height: 1.35;
   opacity: 0.76;
   overflow-wrap: anywhere;

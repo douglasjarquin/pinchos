@@ -438,6 +438,16 @@ final class StatusItemController: StatusItemMenuDelegate {
         commandConfig: CommandItemConfig,
         to menu: NSMenu
     ) async {
+        let run = NSMenuItem(
+            title: "Run \(commandConfig.name)",
+            action: #selector(refreshAction(_:)),
+            keyEquivalent: ""
+        )
+        run.target = self
+        run.representedObject = RefreshActionTarget(item: item)
+        run.isEnabled = !commandConfig.disabled
+        menu.addItem(run)
+
         var hasConfiguredRefresh = false
         for (index, action) in item.actions.enumerated() {
             let menuItem = NSMenuItem(title: action.title, action: #selector(itemAction(_:)), keyEquivalent: "")
@@ -449,17 +459,14 @@ final class StatusItemController: StatusItemMenuDelegate {
                 hasConfiguredRefresh = true
             }
         }
-        if !item.actions.isEmpty {
-            menu.addItem(NSMenuItem.separator())
-        }
         if !hasConfiguredRefresh {
             let refresh = NSMenuItem(title: "Refresh Now", action: #selector(refreshAction(_:)), keyEquivalent: "")
             refresh.target = self
             refresh.representedObject = RefreshActionTarget(item: item)
             refresh.isEnabled = !commandConfig.disabled
             menu.addItem(refresh)
-            menu.addItem(NSMenuItem.separator())
         }
+        menu.addItem(NSMenuItem.separator())
         let runtime = await item.runtimeSnapshot()
         addRuntimeState(from: runtime, to: menu)
         if let note = item.iconDiagnosticNote {

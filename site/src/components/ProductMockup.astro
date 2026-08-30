@@ -41,7 +41,7 @@ const { compact = false, interactive = false } = Astro.props;
           <span class="config-disclosure__indicator" aria-hidden="true">+</span>
         </summary>
         <div class="config-panel" id="sample-pinchos-config" role="region" aria-label="Sample pinchos.toml configuration">
-          <pre tabindex="0"><code>{sampleConfig}</code></pre>
+          <pre tabindex="0"><code data-sample-config>{sampleConfig}</code></pre>
         </div>
       </details>
     )}
@@ -49,7 +49,7 @@ const { compact = false, interactive = false } = Astro.props;
   {!compact && (
     <figcaption>
       {interactive
-        ? 'click an item to open its submenu; choose Hide to preview hidden = true, set hidden = false in TOML to restore it; Option-click to reveal diagnostics.'
+        ? 'click an item to open its submenu; choose Hide to preview hidden = true in the TOML, set hidden = false to restore it; Option-click to reveal diagnostics.'
         : 'a failing item promotes its cause to the first level — one glance, one Copy Full Error.'}
     </figcaption>
   )}

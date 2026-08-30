@@ -35,6 +35,7 @@
   --font-body: 'Bricolage Grotesque', system-ui, sans-serif;
   --font-serif: 'Source Serif 4', Georgia, serif;
   --font-mono: 'IBM Plex Mono', ui-monospace, monospace;
+  --font-size-caption: 0.6875rem;
   --container-landing: 1080px;
   --container-docs: 1040px;
 }

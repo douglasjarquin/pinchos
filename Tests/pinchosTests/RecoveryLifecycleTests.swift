@@ -1297,8 +1297,7 @@ final class RecoveryLifecycleTests: XCTestCase {
 
         await item.prepareUpdate(config: visibleConfig)
         item.commitPreparedUpdate()
-        try await Task.sleep(for: .milliseconds(50))
-
+        _ = try await waitForRuntimeSnapshot(item) { _ in item.isVisible }
         XCTAssertTrue(item.isVisible)
     }
 

@@ -354,7 +354,7 @@ Every command-derived `NSMenuItem` title and tooltip expansion is a **bounded pr
 - Whenever a preview is actually shortened, it ends with an explicit marker naming the original byte and line counts, e.g. `… (truncated, 65536 bytes / 1 line total)`, and the corresponding menu item's accessibility label/help calls out the truncation for VoiceOver.
 - The preview never replaces the retained data: **Copy Full Output**, **Copy Full Error**, **Copy Click Output**/**Copy Click Error**, and each action's **Copy "&lt;title&gt;" Output**/**Copy "&lt;title&gt;" Error** place the exact retained stdout/stderr on the clipboard, unabridged, and are omitted whenever the corresponding stream is empty.
 - A malformed config keeps the last good config running untouched, and pinchos additionally shows a single `pinchos ⚠︎` item; click it to see the parse error (with line number when available), reload, or quit. Fix the file and it clears automatically on the next successful reload.
-- Right-click any item for its configured actions, **Refresh Now** when no built-in refresh action is configured, **Hide**, item diagnostics, then the global **Open Config**, **Reload Config**, and **Quit Pinchos** actions.
+- Right-click any item for the built-in **Run <name>** action, its configured actions, **Refresh Now** when no built-in refresh action is configured, item runtime details and diagnostics, **Hide**, then the global **Open Config**, **Reload Config**, and **Quit Pinchos** actions.
 - **Hide** updates only the matching `item.*` or `group.*` table, preserves the surrounding TOML, and triggers the same live reload as a manual edit.
 - Right-click the warning item for its recovery actions.
 - The app is fully usable without ever touching the config file.

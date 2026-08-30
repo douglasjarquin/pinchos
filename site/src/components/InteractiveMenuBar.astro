@@ -47,7 +47,7 @@ const codexClick = configValue('codex', 'click');
 
 <div class="interactive-menu" data-interactive-menu>
   <p class="interactive-menu__description" id="interactive-menu-description">
-    Interactive preview of the sample config. Each item has default Run and Refresh actions, a config-backed Hide action, and any configured TOML actions below them. Option-click an item, or press Alt+Enter while it is focused, to reveal diagnostics. Hover never reveals diagnostics. Values are illustrative; no local commands run in the browser.
+    Interactive preview of the sample config. Each item has a default Run action, a fallback Refresh Now action, a config-backed Hide action, and any configured TOML actions. Option-click an item, or press Alt+Enter while it is focused, to reveal diagnostics. Hover never reveals diagnostics. Values are illustrative; no local commands run in the browser.
   </p>
 
   <div class="menu-bar" role="group" aria-label="Interactive sample pinchos menu bar" aria-describedby="interactive-menu-description">
@@ -160,9 +160,8 @@ const codexClick = configValue('codex', 'click');
   >
     <div class="example-menu__row-set" data-action-list>
       <button class="example-menu__action" type="button" data-run-action>Run Claude</button>
-      <button class="example-menu__action" type="button" data-refresh-action>Refresh Now</button>
-      <button class="example-menu__action" type="button" data-hide-action>Hide</button>
       <div data-configured-actions></div>
+      <button class="example-menu__action" type="button" data-refresh-action>Refresh Now</button>
       <a class="example-menu__action" data-click-link target="_blank" rel="noreferrer">
         <span>Open Claude usage page</span><span aria-hidden="true">↗</span>
       </a>
@@ -190,6 +189,8 @@ const codexClick = configValue('codex', 'click');
         <p data-diagnostic-hidden>Hidden: no</p>
       </div>
     </details>
+    <div class="menu-rule" aria-hidden="true"></div>
+    <button class="example-menu__action" type="button" data-hide-action>Hide</button>
     <p class="example-menu__feedback" data-feedback role="status" hidden></p>
   </div>
 </div>

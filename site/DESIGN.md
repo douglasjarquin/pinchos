@@ -45,6 +45,7 @@ Olive never carries body copy meaning.
 | Body | Bricolage Grotesque | `1.03125rem` / `1.65` | 400 |
 | Small | Bricolage Grotesque | `.875rem` / `1.6` | 500 |
 | Overline | IBM Plex Mono | `.75rem` / `1.3`, `.09em` tracking | 500 |
+| Caption | IBM Plex Mono | `--font-size-caption` / `1.35` | 400 |
 | Code | IBM Plex Mono | `.84375rem` / `1.85` | 400 |
 
 Use three families deliberately: editorial serif for hierarchy, Bricolage Grotesque for readable interface copy, and IBM Plex Mono for technical metadata.
@@ -80,9 +81,9 @@ The mobile breakpoint is 720px; grids collapse to one column and horizontal padd
 
 ### Product mockup
 
-- **Structure:** dark system-font menu bar, failing item marker, and a native-looking in-place submenu with default run/refresh actions, a config-backed Hide action, TOML-configured actions, summary, bounded stderr, copy action, and a modifier-gated diagnostics disclosure.
+- **Structure:** dark system-font menu bar, failing item marker, and a native-looking in-place submenu with a default Run action, TOML-configured actions, a fallback Refresh Now action, a config-backed Hide action, summary, bounded stderr, copy action, and a modifier-gated diagnostics disclosure.
 - **Variants:** landing hero and docs component specimen.
-- **States:** healthy bar and failing menu are both represented; failure is textual, not color-only; the landing demo switches between the four canonical sample items, opens each item's submenu, exposes `Run <item name>`, `Refresh Now`, and `Hide` before configured actions, removes a hidden sample item from the bar, reveals diagnostics only on Option/Alt + left click or Alt+Enter, never reveals them on hover, and demonstrates refresh recovery.
+- **States:** healthy bar and failing menu are both represented; failure is textual, not color-only; the landing demo switches between the four canonical sample items, opens each item's submenu, exposes `Run <item name>`, configured actions, fallback `Refresh Now`, runtime details, modifier-gated diagnostics, and `Hide`, removes a hidden sample item from the bar, reveals diagnostics only on Option/Alt + left click or Alt+Enter, never reveals them on hover, and demonstrates refresh recovery.
 - **Accessibility:** `figure` has a meaningful label, menu-bar items are native buttons with expanded state and controlled-panel relationships, the first submenu action receives focus for normal keyboard activation, the Hide action is a keyboard-reachable button with an explicit restore-through-config explanation, the native diagnostics disclosure remains keyboard reachable after the Alt+Enter equivalent, menu actions are keyboard reachable, and all product vocabulary remains selectable text.
 - **Motion:** no idle motion; the landing demo uses instantaneous state changes and the existing 150ms color/background feedback for controls.
 
