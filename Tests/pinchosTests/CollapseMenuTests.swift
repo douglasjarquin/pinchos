@@ -152,6 +152,10 @@ final class CollapseMenuTests: XCTestCase {
         )
     }
 
+    private func createdItem(_ name: String, in factory: CollapseFakeFactory) throws -> CollapseFakeItem {
+        try XCTUnwrap(factory.created.first(where: { $0.config.name == name }))
+    }
+
     func testAnyPinchoMenuCanCollapseToOnePinchosIcon() async throws {
         let factory = CollapseFakeFactory()
         let host = CollapseFakeStatusItemHost()
@@ -159,7 +163,7 @@ final class CollapseMenuTests: XCTestCase {
         addTeardownBlock { @MainActor in await controller.shutdown() }
 
         await controller.apply(config: PinchosConfig(items: [command("alpha"), command("beta")]))
-        let menu = await controller.makeLifecycleMenu(forManagedItem: factory.created[1])
+        let menu = await controller.makeLifecycleMenu(forManagedItem: try createdItem("alpha", in: factory))
         let collapse = try XCTUnwrap(menu.items.first(where: { $0.title == "Collapse Pinchos" }))
 
         XCTAssertTrue(NSApplication.shared.sendAction(collapse.action!, to: collapse.target, from: collapse))
@@ -179,7 +183,7 @@ final class CollapseMenuTests: XCTestCase {
             group("team", title: "Team", members: ["alpha", "beta"]),
             command("standalone")
         ]))
-        let menu = await controller.makeLifecycleMenu(forManagedItem: factory.created[3])
+        let menu = await controller.makeLifecycleMenu(forManagedItem: try createdItem("standalone", in: factory))
         let collapse = try XCTUnwrap(menu.items.first(where: { $0.title == "Collapse Pinchos" }))
         XCTAssertTrue(NSApplication.shared.sendAction(collapse.action!, to: collapse.target, from: collapse))
 
@@ -229,7 +233,9 @@ final class CollapseMenuTests: XCTestCase {
         addTeardownBlock { @MainActor in await controller.shutdown() }
 
         await controller.apply(config: PinchosConfig(items: [command("alpha"), command("hidden", hidden: true)]))
-        let menu = await controller.makeLifecycleMenu(forManagedItem: factory.created[0])
+        let visibleItem = try createdItem("alpha", in: factory)
+        let hiddenItem = try createdItem("hidden", in: factory)
+        let menu = await controller.makeLifecycleMenu(forManagedItem: visibleItem)
         let collapse = try XCTUnwrap(menu.items.first(where: { $0.title == "Collapse Pinchos" }))
         XCTAssertTrue(NSApplication.shared.sendAction(collapse.action!, to: collapse.target, from: collapse))
 
@@ -239,8 +245,8 @@ final class CollapseMenuTests: XCTestCase {
 
         XCTAssertEqual(host.created, 1)
         XCTAssertEqual(host.removed, 1)
-        XCTAssertTrue(factory.created[0].statusItemVisible)
-        XCTAssertFalse(factory.created[1].statusItemVisible)
+        XCTAssertTrue(visibleItem.statusItemVisible)
+        XCTAssertFalse(hiddenItem.statusItemVisible)
     }
 
     func testRecoveryWarningReappearsAfterExpanding() async throws {
