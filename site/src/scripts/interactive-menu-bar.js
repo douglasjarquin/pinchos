@@ -107,7 +107,6 @@ const initializeMenu = (root) => {
 
     panel.hidden = !panelOpen;
     panel.dataset.state = state.refreshing ? 'running' : state.failed ? 'failed' : 'fresh';
-    panel.setAttribute('aria-labelledby', trigger.id);
     panel.setAttribute('aria-label', `${label} item submenu`);
     summary.textContent = `${displayValue} · ${stateText}`;
     meta.textContent = `Refresh: every ${interval} · Format: ${format}`;
