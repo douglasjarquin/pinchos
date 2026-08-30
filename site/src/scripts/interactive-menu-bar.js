@@ -32,6 +32,7 @@ const initializeMenu = (root) => {
   const timers = new Map();
   let activeName = triggers[0].dataset.menuItem;
   let panelOpen = false;
+  let diagnosticsVisible = false;
   let renderedActionName = null;
 
   const stateFor = (name) => states.get(name) ?? { failed: false, refreshing: false, activity: null };
@@ -106,6 +107,7 @@ const initializeMenu = (root) => {
     }
 
     panel.hidden = !panelOpen;
+    diagnostics.hidden = !diagnosticsVisible;
     panel.dataset.state = state.refreshing ? 'running' : state.failed ? 'failed' : 'fresh';
     panel.setAttribute('aria-label', `${label} item submenu`);
     summary.textContent = `${displayValue} · ${stateText}`;
@@ -153,15 +155,35 @@ const initializeMenu = (root) => {
     runAction.focus();
   };
 
+  const openItem = (trigger, showDiagnostics) => {
+    const nextName = trigger.dataset.menuItem;
+    if (nextName !== activeName) {
+      activeName = nextName;
+    }
+    diagnosticsVisible = showDiagnostics;
+    diagnostics.open = showDiagnostics;
+    panelOpen = true;
+    updatePanel();
+  };
+
+  const closePanel = () => {
+    panelOpen = false;
+    diagnosticsVisible = false;
+    diagnostics.open = false;
+    updatePanel();
+  };
+
   triggers.forEach((trigger) => {
-    trigger.addEventListener('click', (event) => {
-      const nextName = trigger.dataset.menuItem;
-      if (nextName !== activeName) {
-        activeName = nextName;
-        diagnostics.open = false;
+    trigger.addEventListener('keydown', (event) => {
+      if (event.altKey && event.key === 'Enter') {
+        event.preventDefault();
+        openItem(trigger, true);
+        diagnostics.querySelector('summary')?.focus();
       }
-      panelOpen = true;
-      updatePanel();
+    });
+
+    trigger.addEventListener('click', (event) => {
+      openItem(trigger, event.altKey && event.button === 0);
       if (panelOpen && event.detail === 0) focusFirstAction();
     });
   });
@@ -190,16 +212,14 @@ const initializeMenu = (root) => {
 
   document.addEventListener('click', (event) => {
     if (panelOpen && !root.contains(event.target)) {
-      panelOpen = false;
-      updatePanel();
+      closePanel();
     }
   });
 
   document.addEventListener('keydown', (event) => {
     if (event.key === 'Escape' && panelOpen && root.contains(document.activeElement)) {
       event.preventDefault();
-      panelOpen = false;
-      updatePanel();
+      closePanel();
       activeTrigger()?.focus();
     }
   });

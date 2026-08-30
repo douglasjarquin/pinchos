@@ -39,7 +39,7 @@ const codexClick = configValue('codex', 'click');
 
 <div class="interactive-menu" data-interactive-menu>
   <p class="interactive-menu__description" id="interactive-menu-description">
-    Interactive preview of the sample config. Each item has default Run and Refresh actions; configured TOML actions appear below them. Values are illustrative; no local commands run in the browser.
+    Interactive preview of the sample config. Each item has default Run and Refresh actions; configured TOML actions appear below them. Option-click an item, or press Alt+Enter while it is focused, to reveal diagnostics. Hover never reveals diagnostics. Values are illustrative; no local commands run in the browser.
   </p>
 
   <div class="menu-bar" role="group" aria-label="Interactive sample pinchos menu bar" aria-describedby="interactive-menu-description">
@@ -51,6 +51,7 @@ const codexClick = configValue('codex', 'click');
       aria-controls="example-menu-panel"
       aria-label="Claude, 82 percent, failed, showing last good value"
       aria-haspopup="true"
+      aria-keyshortcuts="Alt+Enter"
       data-menu-item="claude"
       data-item-label="Claude"
       data-value="82%"
@@ -74,6 +75,7 @@ const codexClick = configValue('codex', 'click');
       aria-controls="example-menu-panel"
       aria-label="Codex, 68 percent, fresh"
       aria-haspopup="true"
+      aria-keyshortcuts="Alt+Enter"
       data-menu-item="codex"
       data-item-label="Codex"
       data-value="68%"
@@ -96,6 +98,7 @@ const codexClick = configValue('codex', 'click');
       aria-controls="example-menu-panel"
       aria-label="Clock, 14 colon 32, fresh"
       aria-haspopup="true"
+      aria-keyshortcuts="Alt+Enter"
       data-menu-item="clock"
       data-item-label="Clock"
       data-value="14:32"
@@ -118,6 +121,7 @@ const codexClick = configValue('codex', 'click');
       aria-controls="example-menu-panel"
       aria-label="Battery, 94 percent, fresh"
       aria-haspopup="true"
+      aria-keyshortcuts="Alt+Enter"
       data-menu-item="battery"
       data-item-label="Battery"
       data-value={batteryDisplay}
@@ -160,7 +164,7 @@ const codexClick = configValue('codex', 'click');
       <button class="example-menu__action" type="button" data-copy-error data-error-text="jq: parse error: Invalid numeric literal">Copy Full Error</button>
     </div>
     <p class="example-menu__meta" data-item-meta>Refresh: every 5m · Format: &#123;output&#125;%</p>
-    <details class="example-menu__diagnostics" data-diagnostics>
+    <details class="example-menu__diagnostics" data-diagnostics hidden>
       <summary class="example-menu__diagnostics-trigger">
         <span>Diagnostics</span><span aria-hidden="true" data-diagnostics-indicator>▸</span>
       </summary>
