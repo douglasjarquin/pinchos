@@ -67,7 +67,7 @@ The mobile breakpoint is 720px; grids collapse to one column and horizontal padd
 ### Site chrome
 
 - **Structure:** shared header with mark, lowercase wordmark, mono navigation, and shared footer.
-- **Variants:** landing header, docs header.
+- **Variants:** landing header, docs header, recipe explorer header.
 - **States:** links have underline or a visible color change on hover and a 2px terracotta focus ring offset by 2px.
 - **Accessibility:** semantic `header`, `nav`, `footer`, descriptive mark label, keyboard-reachable links.
 - **Motion:** none; transitions are limited to interactive color/background changes.
@@ -87,6 +87,15 @@ The mobile breakpoint is 720px; grids collapse to one column and horizontal padd
 - **States:** healthy bar and failing menu are both represented; failure is textual, not color-only; the landing demo switches between the four canonical sample items, opens each item's submenu, exposes `Run <item name>`, configured actions, fallback `Refresh Now`, runtime details, modifier-gated diagnostics, and `Hide`, removes a hidden sample item from the bar, reveals diagnostics only on Option/Alt + left click or Alt+Enter, never reveals them on hover, and demonstrates refresh recovery.
 - **Accessibility:** `figure` has a meaningful label, menu-bar items are native buttons with expanded state and controlled-panel relationships, the first submenu action receives focus for normal keyboard activation, the Hide action is a keyboard-reachable button with an explicit restore-through-config explanation, the native diagnostics disclosure remains keyboard reachable after the Alt+Enter equivalent, menu actions are keyboard reachable, and all product vocabulary remains selectable text.
 - **Motion:** no idle motion; the landing demo uses instantaneous state changes and the existing 150ms color/background feedback for controls.
+
+### Recipe explorer
+
+- **Structure:** a single-column working surface with a compact intro, labelled search field, live result count, and recipe cards generated from `recipes/*.toml` at build time.
+- **Card anatomy:** each card places the complete TOML source in a scrollable charcoal code panel on the left and a theoretical menu-bar preview with item names, example values, and metadata on the right.
+- **Variants:** all recipes, filtered results, and an explicit no-results state; multi-item TOML files show each item in the same preview bar.
+- **States:** default, keyboard focus, filtered, no results, and responsive stacked cards below the mobile breakpoint.
+- **Accessibility:** the search has a visible label and search semantics, the result count is a polite live region, each card has a descriptive heading, source code remains selectable, and no result state explains how to clear the filter.
+- **Motion:** filtering is instantaneous; focus and link feedback reuse the existing 150ms color/background transition, with no decorative motion.
 
 ### Action and text link
 
@@ -112,6 +121,7 @@ The homepage product mockup is a deliberate scoped client-side exception: its sc
 The submenu keeps generated `Run <item name>` and `Refresh Now` defaults first, then renders `[[item.<name>.action]]` entries and the configured `click` action from the canonical TOML sample.
 The submenu's `Hide` action simulates setting `hidden = true` in the selected item's TOML table and removes that item from the sample bar; the real app persists that edit and restores the item when the key is removed or set to `false`.
 Diagnostics are hidden from the regular submenu and from hover, and the landing demo reveals the native details disclosure only for an Option/Alt + left click or the Alt+Enter keyboard equivalent.
+The recipe explorer's search filters the build-generated card list in place and announces the visible count without changing the URL or duplicating the catalog.
 Interactive state changes are instantaneous and respect the same reduced-motion rule as the rest of the site.
 All motion is disabled under `prefers-reduced-motion: reduce`.
 
@@ -125,7 +135,7 @@ There are no gradients, glass effects, decorative blobs, or dark page surfaces o
 
 - Target WCAG 2.2 AA with at least 4.5:1 body contrast and 3:1 large-text contrast.
 - Every route has one descriptive title, a language declaration, semantic landmarks, keyboard-reachable links, and visible focus.
-- The site has no client-side JavaScript except the homepage ProductMockup demo, whose scoped script only simulates the canonical sample config; the compact design-system specimen remains static.
+- The site has no client-side JavaScript except the homepage ProductMockup demo, whose scoped script only simulates the canonical sample config, and the recipe explorer's scoped filter; the compact design-system specimen remains static.
 - Long technical strings wrap or scroll inside their own code block without causing page-level overflow.
 - Respect `prefers-reduced-motion` even though the design intentionally has no decorative motion.
 
