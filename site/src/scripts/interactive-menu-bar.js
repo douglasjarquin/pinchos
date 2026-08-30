@@ -105,6 +105,7 @@ const initializeMenu = (root) => {
       action.className = 'example-menu__action';
       action.type = 'button';
       action.setAttribute('role', 'menuitem');
+      action.tabIndex = -1;
       action.dataset.configuredAction = kind;
       action.textContent = title;
       action.addEventListener('click', () => {
@@ -272,10 +273,31 @@ const initializeMenu = (root) => {
     openItem: (trigger, showDiagnostics) => openItem(trigger, showDiagnostics),
     closeRoot: closeCollapsedRoot,
     focusFirstAction,
+    focusDiagnostics: () => diagnosticsTrigger.focus(),
   });
 
   const visiblePanelItems = () => [...panel.querySelectorAll('[role="menuitem"]')]
     .filter((item) => !item.hidden && !item.disabled && item.getClientRects().length > 0);
+
+  const updateMenuTabStops = (menu, target) => {
+    menu.querySelectorAll('[role="menuitem"]').forEach((item) => {
+      item.tabIndex = item === target ? 0 : -1;
+    });
+  };
+
+  collapsedPanel.addEventListener('focusin', (event) => {
+    const target = event.target;
+    if (target instanceof HTMLElement && target.getAttribute('role') === 'menuitem') {
+      updateMenuTabStops(collapsedPanel, target);
+    }
+  });
+
+  panel.addEventListener('focusin', (event) => {
+    const target = event.target;
+    if (target instanceof HTMLElement && target.getAttribute('role') === 'menuitem') {
+      updateMenuTabStops(panel, target);
+    }
+  });
 
   panel.addEventListener('keydown', (event) => {
     const target = event.target;
@@ -383,7 +405,7 @@ const initializeMenu = (root) => {
     activeName = nextTrigger?.dataset.menuItem ?? activeName;
     updatePanel();
     if (collapsed) {
-      collapsedItems.querySelector('[data-collapsed-item]')?.focus();
+      (collapsedItems.querySelector('[data-collapsed-item]') ?? expandAction).focus();
     } else if (nextTrigger) {
       nextTrigger.focus();
     } else {

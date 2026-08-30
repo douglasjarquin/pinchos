@@ -11,6 +11,7 @@ export const createCollapsedMenuController = ({
   openItem,
   closeRoot,
   focusFirstAction,
+  focusDiagnostics,
 }) => {
   const rowsByName = new Map();
 
@@ -22,6 +23,7 @@ export const createCollapsedMenuController = ({
     row.setAttribute('role', 'menuitem');
     row.setAttribute('aria-haspopup', 'menu');
     row.setAttribute('aria-controls', 'example-menu-panel');
+    row.tabIndex = -1;
     row.dataset.collapsedItem = itemName;
 
     const name = document.createElement('span');
@@ -53,9 +55,13 @@ export const createCollapsedMenuController = ({
         event.preventDefault();
         const delta = event.key === 'ArrowDown' ? 1 : -1;
         rows[(index + delta + rows.length) % rows.length]?.focus();
-      } else if (event.key === 'ArrowRight' || event.key === 'Enter' || event.key === ' ') {
+      } else if (event.key === 'ArrowRight') {
         event.preventDefault();
         openCollapsedItem(trigger, false, true);
+      } else if (event.key === 'Enter' || event.key === ' ') {
+        event.preventDefault();
+        const showDiagnostics = event.altKey && event.key === 'Enter';
+        openCollapsedItem(trigger, showDiagnostics, !showDiagnostics);
       } else if (event.key === 'Escape') {
         event.preventDefault();
         closeRoot();
@@ -75,6 +81,12 @@ export const createCollapsedMenuController = ({
       const itemState = stateFor(itemName);
       const label = trigger.dataset.itemLabel ?? itemName;
       const value = itemState.failed ? trigger.dataset.displayValue : trigger.dataset.value;
+      const spokenValue = (value ?? '').replace('🔋 ', '').replace('%', ' percent');
+      const stateLabel = itemState.refreshing
+        ? 'running'
+        : itemState.failed
+          ? 'failed, showing last good value'
+          : 'fresh';
       const row = rowsByName.get(itemName) ?? createRow(trigger);
       row.setAttribute('aria-controls', 'example-menu-panel');
       row.setAttribute('aria-expanded', String(isRootOpen() && isPanelOpen() && activeName() === itemName));
@@ -83,7 +95,7 @@ export const createCollapsedMenuController = ({
       const valueElement = row.querySelector('.collapsed-menu__item-value');
       valueElement.hidden = !value;
       valueElement.textContent = value ?? '';
-      row.setAttribute('aria-label', `${label}${value ? `, ${value}` : ''}`);
+      row.setAttribute('aria-label', `${label}${spokenValue ? `, ${spokenValue}` : ''}, ${stateLabel}`);
       collapsedItems.append(row);
     });
 
@@ -95,7 +107,11 @@ export const createCollapsedMenuController = ({
   const openCollapsedItem = (trigger, showDiagnostics, focusActions) => {
     if (!isCollapsed() || !isRootOpen()) return;
     openItem(trigger, showDiagnostics);
-    if (focusActions) focusFirstAction();
+    if (showDiagnostics) {
+      focusDiagnostics();
+    } else if (focusActions) {
+      focusFirstAction();
+    }
   };
 
   return { render };

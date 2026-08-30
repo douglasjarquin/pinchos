@@ -178,7 +178,7 @@ const codexClick = configValue('codex', 'click');
       <div class="collapsed-menu__items" data-collapsed-items></div>
       <p class="collapsed-menu__empty" data-collapsed-empty hidden>No visible Pinchos</p>
       <div class="menu-rule" aria-hidden="true"></div>
-      <button class="example-menu__action" type="button" role="menuitem" data-expand-action>Expand Pinchos</button>
+      <button class="example-menu__action" type="button" role="menuitem" tabindex="-1" data-expand-action>Expand Pinchos</button>
     </div>
 
     <div
@@ -191,10 +191,10 @@ const codexClick = configValue('codex', 'click');
       data-example-panel
     >
       <div class="example-menu__row-set" role="none" data-action-list>
-        <button class="example-menu__action" type="button" role="menuitem" data-run-action>Run Claude</button>
+        <button class="example-menu__action" type="button" role="menuitem" tabindex="-1" data-run-action>Run Claude</button>
         <div role="none" data-configured-actions></div>
-        <button class="example-menu__action" type="button" role="menuitem" data-refresh-action>Refresh Now</button>
-        <a class="example-menu__action" role="menuitem" data-click-link target="_blank" rel="noreferrer">
+        <button class="example-menu__action" type="button" role="menuitem" tabindex="-1" data-refresh-action>Refresh Now</button>
+        <a class="example-menu__action" role="menuitem" tabindex="-1" data-click-link target="_blank" rel="noreferrer">
           <span>Open Claude usage page</span><span aria-hidden="true">↗</span>
         </a>
         <span class="example-menu__no-click" role="none" data-no-click hidden>no click action configured</span>
@@ -204,11 +204,11 @@ const codexClick = configValue('codex', 'click');
       <div class="example-menu__failure" role="none" data-failure-details>
         <p class="example-menu__failure-label">Failed · exit 1 · showing last good value</p>
         <code class="example-menu__error" data-error-preview>jq: parse error: Invalid numeric literal</code>
-        <button class="example-menu__action" type="button" role="menuitem" data-copy-error data-error-text="jq: parse error: Invalid numeric literal">Copy Full Error</button>
+        <button class="example-menu__action" type="button" role="menuitem" tabindex="-1" data-copy-error data-error-text="jq: parse error: Invalid numeric literal">Copy Full Error</button>
       </div>
       <p class="example-menu__meta" role="none" data-item-meta>Refresh: every 5m · Format: &#123;output&#125;%</p>
       <details class="example-menu__diagnostics" role="group" aria-label="Diagnostics" data-diagnostics hidden>
-        <summary class="example-menu__diagnostics-trigger" role="menuitem" aria-expanded="false" aria-controls="diagnostics-content">
+        <summary class="example-menu__diagnostics-trigger" role="menuitem" tabindex="-1" aria-expanded="false" aria-controls="diagnostics-content">
           <span>Diagnostics</span><span aria-hidden="true" data-diagnostics-indicator>▸</span>
         </summary>
         <div class="example-menu__diagnostics-content" id="diagnostics-content">
@@ -222,8 +222,8 @@ const codexClick = configValue('codex', 'click');
         </div>
       </details>
       <div class="menu-rule" role="separator" aria-hidden="true"></div>
-      <button class="example-menu__action" type="button" role="menuitem" data-hide-action>Hide</button>
-      <button class="example-menu__action" type="button" role="menuitem" data-collapse-action>Collapse Pinchos</button>
+      <button class="example-menu__action" type="button" role="menuitem" tabindex="-1" data-hide-action>Hide</button>
+      <button class="example-menu__action" type="button" role="menuitem" tabindex="-1" data-collapse-action>Collapse Pinchos</button>
       <p class="example-menu__feedback" data-feedback role="status" hidden></p>
     </div>
   </div>
