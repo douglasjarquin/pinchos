@@ -77,6 +77,7 @@ final class ManagedItem: ManagedItemLifecycle {
     private var stalePresentationTask: Task<Void, Never>?
     private var lastClickAttemptedAt: Date?
     private var lastClickCompletedAt: Date?
+    private var statusItemSuppressed = false
 
     /// Test-only seams that pause a queued click/action invocation after it has been
     /// accepted (bookkeeping incremented) but before it re-checks lifecycle state and
@@ -180,6 +181,11 @@ final class ManagedItem: ManagedItemLifecycle {
         guard isActive else { return }
         setVisibility(!commandConfig.hidden)
         startTimer()
+    }
+
+    func setStatusItemVisible(_ visible: Bool) {
+        statusItemSuppressed = !visible
+        statusItem?.isVisible = visible && isVisible
     }
 
     func owns(statusItem: NSStatusItem) -> Bool {
@@ -1045,6 +1051,6 @@ final class ManagedItem: ManagedItemLifecycle {
 
     private func setVisibility(_ visible: Bool) {
         isVisible = visible
-        statusItem?.isVisible = visible
+        statusItem?.isVisible = visible && !statusItemSuppressed
     }
 }

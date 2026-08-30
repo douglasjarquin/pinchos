@@ -12,6 +12,7 @@ private final class FakeManagedItem: ManagedItemLifecycle {
         config.commandConfig?.actions ?? []
     }
     var iconDiagnosticNote: String?
+    private(set) var isVisible: Bool
     let initiallyVisible: Bool
     let isTopLevel: Bool
     let ownedStatusItem: NSStatusItem?
@@ -36,6 +37,7 @@ private final class FakeManagedItem: ManagedItemLifecycle {
         self.initiallyVisible = initiallyVisible
         self.isTopLevel = isTopLevel
         self.ownedStatusItem = ownedStatusItem
+        self.isVisible = initiallyVisible && !config.hidden
     }
 
     func owns(statusItem: NSStatusItem) -> Bool {
@@ -43,8 +45,11 @@ private final class FakeManagedItem: ManagedItemLifecycle {
     }
 
     func activate() {
+        isVisible = !config.hidden
         eventLog.append("activate:\(config.name)")
     }
+
+    func setStatusItemVisible(_ visible: Bool) {}
 
     func prepareUpdate(config: ItemConfig, deadline: ContinuousClock.Instant) async {
         pendingConfig = config
@@ -57,6 +62,7 @@ private final class FakeManagedItem: ManagedItemLifecycle {
     func commitPreparedUpdate() {
         config = pendingConfig!
         pendingConfig = nil
+        isVisible = !config.hidden
         eventLog.append("commit-update:\(config.name)")
     }
 

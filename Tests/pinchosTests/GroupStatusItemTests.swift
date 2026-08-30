@@ -26,6 +26,7 @@ private final class GroupTestFakeItem: ManagedItemLifecycle {
     private(set) var config: ItemConfig
     var actions: [ItemAction] { config.commandConfig?.actions ?? [] }
     var iconDiagnosticNote: String?
+    private(set) var isVisible: Bool
     let isTopLevel: Bool
     var runtimeSnapshotValue: ItemRuntimeSnapshot?
     var actionSnapshotValues: [CommandRunnerSnapshot?] = []
@@ -34,10 +35,16 @@ private final class GroupTestFakeItem: ManagedItemLifecycle {
         self.config = config
         self.eventLog = eventLog
         self.isTopLevel = isTopLevel
+        self.isVisible = !config.hidden
     }
 
     func owns(statusItem: NSStatusItem) -> Bool { false }
-    func activate() { eventLog.append("activate:\(config.name)") }
+    func activate() {
+        isVisible = !config.hidden
+        eventLog.append("activate:\(config.name)")
+    }
+
+    func setStatusItemVisible(_ visible: Bool) {}
 
     func prepareUpdate(config: ItemConfig, deadline: ContinuousClock.Instant) async {
         pendingConfig = config
@@ -47,6 +54,7 @@ private final class GroupTestFakeItem: ManagedItemLifecycle {
     func commitPreparedUpdate() {
         config = pendingConfig!
         pendingConfig = nil
+        isVisible = !config.hidden
         eventLog.append("commit-update:\(config.name)")
     }
 

@@ -21,10 +21,12 @@ final class ManagedGroupItem: ManagedItemLifecycle {
     var config: ItemConfig { .group(groupConfig) }
     var actions: [ItemAction] { [] }
     private(set) var iconDiagnosticNote: String?
+    private(set) var isVisible = true
     private let iconRenderer: StatusItemIconRenderer
     private weak var menuDelegate: StatusItemMenuDelegate?
     private var isActive = true
     private var pendingGroupConfig: GroupItemConfig?
+    private var statusItemSuppressed = false
 
     init(
         config: ItemConfig,
@@ -47,12 +49,13 @@ final class ManagedGroupItem: ManagedItemLifecycle {
         // class simply no-ops.
         let statusItem = isTopLevel ? statusItemFactory() : nil
         self.statusItem = statusItem
+        self.isVisible = initiallyVisible && !groupConfig.hidden
         statusItem?.button?.target = self
         statusItem?.button?.action = #selector(handleClick)
         statusItem?.button?.sendAction(on: [.leftMouseUp, .rightMouseUp])
         applyTitle()
         applyIcon()
-        statusItem?.isVisible = initiallyVisible && !groupConfig.hidden
+        statusItem?.isVisible = isVisible
     }
 
     func owns(statusItem: NSStatusItem) -> Bool {
@@ -62,7 +65,13 @@ final class ManagedGroupItem: ManagedItemLifecycle {
 
     func activate() {
         guard isActive else { return }
-        statusItem?.isVisible = !groupConfig.hidden
+        isVisible = !groupConfig.hidden
+        statusItem?.isVisible = isVisible && !statusItemSuppressed
+    }
+
+    func setStatusItemVisible(_ visible: Bool) {
+        statusItemSuppressed = !visible
+        statusItem?.isVisible = visible && isVisible
     }
 
     /// A group has no click-through command or refresh-on-click of its own,
@@ -84,7 +93,8 @@ final class ManagedGroupItem: ManagedItemLifecycle {
         self.pendingGroupConfig = nil
         applyTitle()
         applyIcon()
-        statusItem?.isVisible = !groupConfig.hidden
+        isVisible = !groupConfig.hidden
+        statusItem?.isVisible = isVisible && !statusItemSuppressed
     }
 
     func prepareRemoval(deadline: ContinuousClock.Instant) async {

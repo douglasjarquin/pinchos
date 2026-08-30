@@ -7,12 +7,31 @@ protocol StatusItemMenuDelegate: AnyObject {
 }
 
 @MainActor
+protocol StatusItemHost: AnyObject {
+    func makeStatusItem() -> NSStatusItem?
+    func removeStatusItem(_ statusItem: NSStatusItem)
+}
+
+@MainActor
+private final class SystemStatusItemHost: StatusItemHost {
+    func makeStatusItem() -> NSStatusItem? {
+        NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
+    }
+
+    func removeStatusItem(_ statusItem: NSStatusItem) {
+        NSStatusBar.system.removeStatusItem(statusItem)
+    }
+}
+
+@MainActor
 protocol ManagedItemLifecycle: AnyObject {
     var config: ItemConfig { get }
     var actions: [ItemAction] { get }
     var iconDiagnosticNote: String? { get }
+    var isVisible: Bool { get }
     func owns(statusItem: NSStatusItem) -> Bool
     func activate()
+    func setStatusItemVisible(_ visible: Bool)
     func prepareUpdate(config: ItemConfig, deadline: ContinuousClock.Instant) async
     func commitPreparedUpdate()
     func prepareRemoval(deadline: ContinuousClock.Instant) async
@@ -136,7 +155,13 @@ private final class CopyTextTarget: NSObject {
 
 @MainActor
 final class StatusItemController: StatusItemMenuDelegate {
+    private enum BarPresentation {
+        case expanded
+        case collapsed
+    }
+
     private let itemFactory: any ManagedItemFactory
+    private let statusItemHost: any StatusItemHost
     /// The one application-scoped `CommandScheduler` shared by every
     /// `ManagedItem` this controller owns (see `README.md`'s "Scheduler"
     /// section for the bounded-concurrency/fairness/diagnostics policy).
@@ -147,6 +172,8 @@ final class StatusItemController: StatusItemMenuDelegate {
     private var items: [String: any ManagedItemLifecycle] = [:]
     private var order: [String] = []
     private var warningItem: NSStatusItem?
+    private var collapsedStatusItem: NSStatusItem?
+    private var barPresentation: BarPresentation = .expanded
     private var recoveryState = RecoveryState()
     private let configPath: String
     private let onReload: () -> Void
@@ -157,10 +184,12 @@ final class StatusItemController: StatusItemMenuDelegate {
         configPath: String,
         onReload: @escaping () -> Void,
         itemFactory: (any ManagedItemFactory)? = nil,
-        scheduler: CommandScheduler? = nil
+        scheduler: CommandScheduler? = nil,
+        statusItemHost: (any StatusItemHost)? = nil
     ) {
         let resolvedScheduler = scheduler ?? CommandScheduler()
         self.scheduler = resolvedScheduler
+        self.statusItemHost = statusItemHost ?? SystemStatusItemHost()
         self.itemFactory = itemFactory ?? DefaultManagedItemFactory(
             scheduler: resolvedScheduler,
             notificationSink: SystemItemNotificationSink()
@@ -190,8 +219,10 @@ final class StatusItemController: StatusItemMenuDelegate {
         } else {
             clearWarningItem()
         }
-        guard !diff.isEmpty else { return }
-        await apply(diff: diff, config: config)
+        if !diff.isEmpty {
+            await apply(diff: diff, config: config)
+        }
+        synchronizeCollapsedVisibility()
     }
 
     func showParseError(_ description: String) async {
@@ -214,7 +245,7 @@ final class StatusItemController: StatusItemMenuDelegate {
     private func updateRecoveryItem() {
         guard recoveryState.isVisible else { return }
         if warningItem == nil {
-            let statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
+            guard let statusItem = statusItemHost.makeStatusItem() else { return }
             statusItem.button?.target = self
             statusItem.button?.action = #selector(handleWarningClick)
             statusItem.button?.sendAction(on: [.leftMouseUp, .rightMouseUp])
@@ -228,7 +259,11 @@ final class StatusItemController: StatusItemMenuDelegate {
     func showLifecycleMenu(for statusItem: NSStatusItem) {
         Task { @MainActor [weak self] in
             guard let self else { return }
-            let menu = await self.makeLifecycleMenu(for: statusItem)
+            let menu = if self.collapsedStatusItem === statusItem {
+                await self.makeCollapsedMenu()
+            } else {
+                await self.makeLifecycleMenu(for: statusItem)
+            }
             self.present(menu: menu, on: statusItem)
         }
     }
@@ -322,6 +357,8 @@ final class StatusItemController: StatusItemMenuDelegate {
         items.removeAll()
         order.removeAll()
         clearWarningItem()
+        removeCollapsedStatusItem()
+        barPresentation = .expanded
     }
 
     private func enqueueLifecycleOperation(_ operation: @escaping @MainActor () async -> Void) async {
@@ -341,10 +378,71 @@ final class StatusItemController: StatusItemMenuDelegate {
 
     private func clearWarningItem() {
         if let warningItem {
-            NSStatusBar.system.removeStatusItem(warningItem)
+            statusItemHost.removeStatusItem(warningItem)
         }
         warningItem = nil
         recoveryState.dismiss()
+    }
+
+    private func synchronizeCollapsedVisibility() {
+        guard barPresentation == .collapsed else { return }
+        for item in items.values {
+            item.setStatusItemVisible(false)
+        }
+    }
+
+    private func restoreExpandedVisibility() {
+        for item in items.values {
+            item.setStatusItemVisible(true)
+        }
+    }
+
+    private func installCollapsedStatusItem() -> Bool {
+        guard collapsedStatusItem == nil, let statusItem = statusItemHost.makeStatusItem() else {
+            return collapsedStatusItem != nil
+        }
+        let image = NSImage(systemSymbolName: "pin.fill", accessibilityDescription: "Pinchos")
+        image?.isTemplate = true
+        statusItem.button?.image = image
+        statusItem.button?.imagePosition = .imageOnly
+        statusItem.button?.title = ""
+        statusItem.button?.toolTip = "Pinchos"
+        statusItem.button?.setAccessibilityLabel("Pinchos")
+        statusItem.button?.target = self
+        statusItem.button?.action = #selector(handleCollapsedClick)
+        statusItem.button?.sendAction(on: [.leftMouseUp, .rightMouseUp])
+        collapsedStatusItem = statusItem
+        return true
+    }
+
+    private func removeCollapsedStatusItem() {
+        if let collapsedStatusItem {
+            statusItemHost.removeStatusItem(collapsedStatusItem)
+        }
+        collapsedStatusItem = nil
+    }
+
+    @objc private func collapseAction() {
+        guard barPresentation == .expanded else { return }
+        guard installCollapsedStatusItem() else { return }
+        barPresentation = .collapsed
+        synchronizeCollapsedVisibility()
+    }
+
+    @objc private func expandAction() {
+        guard barPresentation == .collapsed else { return }
+        barPresentation = .expanded
+        restoreExpandedVisibility()
+        removeCollapsedStatusItem()
+    }
+
+    @objc private func handleCollapsedClick() {
+        guard collapsedStatusItem != nil else { return }
+        Task { @MainActor [weak self] in
+            guard let self, let collapsedStatusItem = self.collapsedStatusItem else { return }
+            let menu = await self.makeCollapsedMenu()
+            self.present(menu: menu, on: collapsedStatusItem)
+        }
     }
 
     @objc private func handleWarningClick() {
@@ -397,6 +495,69 @@ final class StatusItemController: StatusItemMenuDelegate {
         if let item {
             await addMenuContent(for: item, to: menu)
         }
+        menu.addItem(makePresentationMenuItem())
+        await addGlobalMenuContent(to: menu)
+        return menu
+    }
+
+    func makeCollapsedMenu() async -> NSMenu {
+        let menu = NSMenu()
+        let topLevelItems = topLevelManagedItems()
+        for item in topLevelItems {
+            let submenu = await makeLifecycleMenu(forManagedItem: item)
+            let row = NSMenuItem(title: await collapsedTitle(for: item), action: nil, keyEquivalent: "")
+            row.submenu = submenu
+            menu.addItem(row)
+        }
+        if topLevelItems.isEmpty {
+            menu.addItem(disabledItem(title: "No visible Pinchos"))
+        }
+        menu.addItem(NSMenuItem.separator())
+        menu.addItem(makePresentationMenuItem())
+        await addGlobalMenuContent(to: menu)
+        return menu
+    }
+
+    private func topLevelManagedItems() -> [any ManagedItemLifecycle] {
+        let topLevelNames = Set(currentConfig().topLevelItems.map(\.name))
+        return order.compactMap { name in
+            guard topLevelNames.contains(name), let item = items[name], item.isVisible else { return nil }
+            return item
+        }
+    }
+
+    private func collapsedTitle(for item: any ManagedItemLifecycle) async -> String {
+        switch item.config {
+        case .command:
+            let snapshot = await item.runtimeSnapshot()
+            let value = if let structuredText = snapshot.structuredOutput?.text {
+                DiagnosticPreviewFormatter.preview(structuredText, limits: .menuValue).text
+            } else {
+                snapshot.fullOutput.map { lastTrimmedLine(of: $0) } ?? ""
+            }
+            return value.isEmpty ? item.config.name : "\(item.config.name): \(truncateTitle(value, maxLength: 40))"
+        case .group(let group):
+            return group.title
+        }
+    }
+
+    private func makePresentationMenuItem() -> NSMenuItem {
+        let title: String
+        let selector: Selector
+        switch barPresentation {
+        case .expanded:
+            title = "Collapse Pinchos"
+            selector = #selector(collapseAction)
+        case .collapsed:
+            title = "Expand Pinchos"
+            selector = #selector(expandAction)
+        }
+        let item = NSMenuItem(title: title, action: selector, keyEquivalent: "")
+        item.target = self
+        return item
+    }
+
+    private func addGlobalMenuContent(to menu: NSMenu) async {
         await addSchedulerDiagnostics(to: menu)
         let openConfig = NSMenuItem(title: "Open Config", action: #selector(openConfigAction), keyEquivalent: "")
         openConfig.target = self
@@ -407,7 +568,6 @@ final class StatusItemController: StatusItemMenuDelegate {
         let quit = NSMenuItem(title: "Quit Pinchos", action: #selector(quitAction), keyEquivalent: "q")
         quit.target = self
         menu.addItem(quit)
-        return menu
     }
 
     /// Dispatches on `item.config`'s kind so a command item's own status-item
