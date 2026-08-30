@@ -1274,6 +1274,35 @@ final class RecoveryLifecycleTests: XCTestCase {
     }
 
     @MainActor
+    func testExplicitlyHiddenItemStaysHiddenUntilConfigReloadUnhidesIt() async throws {
+        let hiddenConfig = ItemConfig(
+            name: "manual-hidden",
+            run: "printf visible",
+            interval: .manual,
+            hidden: true
+        )
+        let visibleConfig = ItemConfig(
+            name: "manual-hidden",
+            run: "printf visible",
+            interval: .manual
+        )
+        let item = makeHeadlessItem(config: hiddenConfig, initiallyVisible: false)
+        addTeardownBlock { @MainActor in await item.tearDown() }
+
+        item.activate()
+        _ = try await waitForRuntimeSnapshot(item) { snapshot in
+            snapshot.fullOutput == "visible"
+        }
+        XCTAssertFalse(item.isVisible)
+
+        await item.prepareUpdate(config: visibleConfig)
+        item.commitPreparedUpdate()
+        try await Task.sleep(for: .milliseconds(50))
+
+        XCTAssertTrue(item.isVisible)
+    }
+
+    @MainActor
     func testHideOnErrorAndHideWhenEmptyNeverHideAnItemBeforeItsFirstAttempt() async throws {
         let item = makeHeadlessItem(
             config: ItemConfig(

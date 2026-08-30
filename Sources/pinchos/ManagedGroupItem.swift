@@ -9,7 +9,7 @@ import PinchosCore
 /// `addGroupContent`), reading each member's live `ManagedItemLifecycle`
 /// directly out of its own `items` dictionary rather than this class
 /// knowing anything about its siblings. This keeps `ManagedGroupItem`'s own
-/// lifecycle trivial: its config only ever changes `title`/`members`/`icon`/`symbol`,
+/// lifecycle trivial: its config only ever changes `title`/`members`/`icon`/`symbol`/`hidden`,
 /// none of which require quiescing any in-flight work, so `prepareUpdate`
 /// has nothing to await before `commitPreparedUpdate` can apply it.
 ///
@@ -52,7 +52,7 @@ final class ManagedGroupItem: ManagedItemLifecycle {
         statusItem?.button?.sendAction(on: [.leftMouseUp, .rightMouseUp])
         applyTitle()
         applyIcon()
-        statusItem?.isVisible = initiallyVisible
+        statusItem?.isVisible = initiallyVisible && !groupConfig.hidden
     }
 
     func owns(statusItem: NSStatusItem) -> Bool {
@@ -62,7 +62,7 @@ final class ManagedGroupItem: ManagedItemLifecycle {
 
     func activate() {
         guard isActive else { return }
-        statusItem?.isVisible = true
+        statusItem?.isVisible = !groupConfig.hidden
     }
 
     /// A group has no click-through command or refresh-on-click of its own,
@@ -84,6 +84,7 @@ final class ManagedGroupItem: ManagedItemLifecycle {
         self.pendingGroupConfig = nil
         applyTitle()
         applyIcon()
+        statusItem?.isVisible = !groupConfig.hidden
     }
 
     func prepareRemoval(deadline: ContinuousClock.Instant) async {

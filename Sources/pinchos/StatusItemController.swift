@@ -106,6 +106,15 @@ private final class RefreshActionTarget: NSObject {
 }
 
 @MainActor
+private final class HideActionTarget: NSObject {
+    let item: any ManagedItemLifecycle
+
+    init(item: any ManagedItemLifecycle) {
+        self.item = item
+    }
+}
+
+@MainActor
 private final class ItemActionTarget: NSObject {
     let item: any ManagedItemLifecycle
     let index: Int
@@ -413,6 +422,15 @@ final class StatusItemController: StatusItemMenuDelegate {
         case .group(let group):
             await addGroupContent(group, to: menu)
         }
+
+        if !item.config.hidden {
+            menu.addItem(NSMenuItem.separator())
+            let hide = NSMenuItem(title: "Hide", action: #selector(hideAction(_:)), keyEquivalent: "")
+            hide.target = self
+            hide.representedObject = HideActionTarget(item: item)
+            menu.addItem(hide)
+        }
+        menu.addItem(NSMenuItem.separator())
     }
 
     private func addCommandContent(
@@ -465,7 +483,6 @@ final class StatusItemController: StatusItemMenuDelegate {
             menu.addItem(NSMenuItem.separator())
             menu.addItem(disabledItem(title: "Disabled: yes"))
         }
-        menu.addItem(NSMenuItem.separator())
     }
 
     /// A group's own status item shows only the static, config-declared
@@ -482,7 +499,7 @@ final class StatusItemController: StatusItemMenuDelegate {
     private func addGroupContent(_ group: GroupItemConfig, to menu: NSMenu) async {
         var memberEntries: [(name: String, item: any ManagedItemLifecycle, valuePreview: String)] = []
         for memberName in group.members {
-            guard let member = items[memberName] else { continue }
+            guard let member = items[memberName], !member.config.hidden else { continue }
             let preview: String
             switch member.config {
             case .command:
@@ -515,7 +532,6 @@ final class StatusItemController: StatusItemMenuDelegate {
             memberItem.submenu = submenu
             menu.addItem(memberItem)
         }
-        menu.addItem(NSMenuItem.separator())
     }
 
     private func groupSummaryTitle(
@@ -792,6 +808,21 @@ final class StatusItemController: StatusItemMenuDelegate {
     @objc private func refreshAction(_ sender: NSMenuItem) {
         guard let target = sender.representedObject as? RefreshActionTarget else { return }
         target.item.refreshNow()
+    }
+
+    @objc private func hideAction(_ sender: NSMenuItem) {
+        guard let target = sender.representedObject as? HideActionTarget,
+              !target.item.config.hidden else { return }
+        do {
+            try ConfigFileEditor.setHidden(
+                true,
+                for: target.item.config,
+                at: URL(fileURLWithPath: configPath)
+            )
+            onReload()
+        } catch {
+            showRecoveryError(error)
+        }
     }
 
     @objc private func itemAction(_ sender: NSMenuItem) {

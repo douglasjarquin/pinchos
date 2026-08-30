@@ -27,6 +27,7 @@ final class ConfigParserTests: XCTestCase {
         XCTAssertNil(item.maxLength)
         XCTAssertFalse(item.hideWhenEmpty)
         XCTAssertFalse(item.hideOnError)
+        XCTAssertFalse(item.hidden)
         XCTAssertFalse(item.iconOnly)
         XCTAssertFalse(item.disabled)
     }
@@ -108,6 +109,7 @@ final class ConfigParserTests: XCTestCase {
         max_length = 24
         hide_when_empty = true
         hide_on_error = true
+        hidden = true
         icon_only = true
         disabled = true
         """
@@ -124,6 +126,7 @@ final class ConfigParserTests: XCTestCase {
         XCTAssertEqual(item.maxLength, 24)
         XCTAssertTrue(item.hideWhenEmpty)
         XCTAssertTrue(item.hideOnError)
+        XCTAssertTrue(item.hidden)
         XCTAssertTrue(item.iconOnly)
         XCTAssertTrue(item.disabled)
     }
@@ -153,6 +156,7 @@ final class ConfigParserTests: XCTestCase {
             (key: "max_length", value: "\"24\"", expectedMessage: "must be an integer"),
             (key: "hide_when_empty", value: "\"yes\"", expectedMessage: "must be a boolean"),
             (key: "hide_on_error", value: "\"yes\"", expectedMessage: "must be a boolean"),
+            (key: "hidden", value: "\"yes\"", expectedMessage: "must be a boolean"),
             (key: "icon_only", value: "\"yes\"", expectedMessage: "must be a boolean"),
             (key: "disabled", value: "\"yes\"", expectedMessage: "must be a boolean")
         ]
@@ -627,7 +631,7 @@ final class ConfigParserTests: XCTestCase {
     func testSupportedSchemaEnumeratesEveryCurrentItemAndActionKey() {
         XCTAssertEqual(ConfigParser.supportedRootKeys, ["item", "scheduler", "group"])
         XCTAssertEqual(ConfigParser.supportedSchedulerKeys, ["max_active_sessions"])
-        XCTAssertEqual(ConfigParser.supportedGroupKeys, ["title", "members", "icon", "symbol"])
+        XCTAssertEqual(ConfigParser.supportedGroupKeys, ["title", "members", "icon", "symbol", "hidden"])
         XCTAssertEqual(ConfigParser.supportedItemKeys, [
             "type",
             "run",
@@ -653,6 +657,7 @@ final class ConfigParserTests: XCTestCase {
             "max_length",
             "hide_when_empty",
             "hide_on_error",
+            "hidden",
             "icon_only",
             "disabled",
             "notify_on",

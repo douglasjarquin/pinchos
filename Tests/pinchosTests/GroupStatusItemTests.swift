@@ -366,6 +366,50 @@ final class GroupStatusItemTests: XCTestCase {
         XCTAssertEqual(menu.items.filter { $0.submenu != nil }.count, 1)
     }
 
+    func testGroupMenuOmitsMembersHiddenByConfig() async throws {
+        let factory = GroupTestFakeFactory()
+        let controller = makeController(factory: factory)
+        addTeardownBlock { @MainActor in await controller.shutdown() }
+
+        let hidden = ItemConfig(
+            name: "hidden",
+            run: "echo hidden",
+            interval: .scheduled(60),
+            hidden: true
+        )
+        await controller.apply(config: PinchosConfig(items: [
+            hidden,
+            command("visible"),
+            group("all", title: "All", members: ["hidden", "visible"])
+        ]))
+
+        let groupItem = try XCTUnwrap(factory.item(named: "all"))
+        let menu = await controller.makeLifecycleMenu(forManagedItem: groupItem)
+
+        XCTAssertFalse(menu.items.contains { $0.title.hasPrefix("hidden:") })
+        XCTAssertTrue(menu.items.contains { $0.title.hasPrefix("visible:") })
+    }
+
+    func testGroupMenuOmitsNestedGroupsHiddenByConfig() async throws {
+        let factory = GroupTestFakeFactory()
+        let controller = makeController(factory: factory)
+        addTeardownBlock { @MainActor in await controller.shutdown() }
+
+        let hiddenGroup = ItemConfig.group(
+            GroupItemConfig(name: "assistants", title: "Assistants", members: ["visible"], hidden: true)
+        )
+        await controller.apply(config: PinchosConfig(items: [
+            command("visible"),
+            hiddenGroup,
+            group("all", title: "All", members: ["assistants"])
+        ]))
+
+        let groupItem = try XCTUnwrap(factory.item(named: "all"))
+        let menu = await controller.makeLifecycleMenu(forManagedItem: groupItem)
+
+        XCTAssertFalse(menu.items.contains { $0.title.hasPrefix("assistants:") })
+    }
+
     // MARK: - Nested groups recurse in the menu
 
     func testNestedGroupMemberGetsASubmenuThatItselfListsItsMembers() async throws {

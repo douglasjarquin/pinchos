@@ -5,6 +5,7 @@ interval = "5m"
 timeout = "15s"
 max_output = "64KiB"
 format = "{output}%"
+hidden = false
 icon = "/path/to/pinchos/example/icons/claude.svg"
 click = "open https://claude.ai/settings/usage"
 error_text = "–"
@@ -17,6 +18,7 @@ type = "command"
 run = "quota-axi --provider codex --json | jq -r '.providers[0].windows[] | select(.label==\"week\") | .percentRemaining'"
 interval = "5m"
 format = "{output}%"
+hidden = false
 icon = "/path/to/pinchos/example/icons/codex.svg"
 click = "open https://chatgpt.com/codex/settings/usage"
 error_text = "–"
@@ -25,9 +27,11 @@ error_text = "–"
 type = "command"
 run = "date '+%H:%M'"
 interval = "30s"
+hidden = false
 
 [item.battery]
 type = "command"
 run = "pmset -g batt | grep -Eo '[0-9]+%' | head -1"
 interval = "1m"
+hidden = false
 format = "🔋 {output}"

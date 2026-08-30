@@ -164,6 +164,7 @@ final class ConfigDiffTests: XCTestCase {
                 maxLength: 24,
                 hideWhenEmpty: true,
                 hideOnError: true,
+                hidden: true,
                 iconOnly: true,
                 disabled: true
             )

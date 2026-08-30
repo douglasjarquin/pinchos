@@ -28,6 +28,7 @@ final class GroupConfigTests: XCTestCase {
         title = "AI"
         members = ["claude", "codex"]
         icon = "/path/to/icon.svg"
+        hidden = true
         """)
 
         let config = try ConfigParser.parse(toml)
@@ -36,6 +37,7 @@ final class GroupConfigTests: XCTestCase {
         XCTAssertEqual(group.title, "AI")
         XCTAssertEqual(group.members, ["claude", "codex"])
         XCTAssertEqual(group.icon, "/path/to/icon.svg")
+        XCTAssertTrue(group.hidden)
     }
 
     func testGroupWithoutIconDefaultsToNil() throws {
@@ -50,6 +52,23 @@ final class GroupConfigTests: XCTestCase {
         XCTAssertNil(group.icon)
         XCTAssertNil(group.symbol)
         XCTAssertNil(group.iconSource)
+        XCTAssertFalse(group.hidden)
+    }
+
+    func testGroupHiddenMustBeBooleanWithGroupContextAndSourceLine() {
+        let toml = members("""
+        [group.ai]
+        title = "AI"
+        members = ["claude"]
+        hidden = "yes"
+        """)
+
+        XCTAssertThrowsError(try ConfigParser.parse(toml)) { error in
+            let parseError = error as? ConfigParseError
+            XCTAssertTrue(parseError?.message.contains("group.ai.hidden") == true)
+            XCTAssertTrue(parseError?.message.contains("must be a boolean") == true)
+            XCTAssertEqual(parseError?.line, 12)
+        }
     }
 
     func testGroupParsesSymbolAsNativeSource() throws {

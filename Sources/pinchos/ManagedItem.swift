@@ -170,7 +170,7 @@ final class ManagedItem: ManagedItemLifecycle {
         statusItem?.button?.sendAction(on: [.leftMouseUp, .rightMouseUp])
         applyIcon()
         applyDisplayedTitle()
-        setVisibility(initiallyVisible)
+        setVisibility(initiallyVisible && !commandConfig.hidden)
         if initiallyVisible {
             startTimer()
         }
@@ -178,7 +178,7 @@ final class ManagedItem: ManagedItemLifecycle {
 
     func activate() {
         guard isActive else { return }
-        setVisibility(true)
+        setVisibility(!commandConfig.hidden)
         startTimer()
     }
 
@@ -229,6 +229,7 @@ final class ManagedItem: ManagedItemLifecycle {
             || previousConfig.maxLength != newCommandConfig.maxLength
             || previousConfig.hideWhenEmpty != newCommandConfig.hideWhenEmpty
             || previousConfig.hideOnError != newCommandConfig.hideOnError
+            || previousConfig.hidden != newCommandConfig.hidden
             || previousConfig.iconOnly != newCommandConfig.iconOnly
             || previousConfig.disabled != newCommandConfig.disabled
             || previousConfig.iconSource != newCommandConfig.iconSource
@@ -786,8 +787,10 @@ final class ManagedItem: ManagedItemLifecycle {
     /// `hide_when_empty` and `hide_on_error` only take effect after a completed
     /// attempt (`lastExecution` becomes non-nil), so an item never disappears before
     /// its first result lands. `disabled` overrides both policies to keep a disabled
-    /// item visible and inspectable via its right-click diagnostics menu.
+    /// item visible and inspectable via its right-click diagnostics menu unless the
+    /// persistent `hidden` policy is also enabled.
     private func computeVisibility(lastExecution: CommandExecution?, fullOutput: String?, hidden: Bool? = nil) -> Bool {
+        guard !commandConfig.hidden else { return false }
         guard !commandConfig.disabled else { return true }
         guard let lastExecution else { return true }
         if lastExecution.terminalReason != .exited(code: 0) {

@@ -27,6 +27,7 @@ public enum ConfigParser {
         "max_length",
         "hide_when_empty",
         "hide_on_error",
+        "hidden",
         "icon_only",
         "disabled",
         "notify_on",
@@ -36,7 +37,7 @@ public enum ConfigParser {
     static let supportedActionKeys: Set<String> = ["title", "run", "refresh"]
     static let supportedRootKeys: Set<String> = ["item", "scheduler", "group"]
     static let supportedSchedulerKeys: Set<String> = ["max_active_sessions"]
-    static let supportedGroupKeys: Set<String> = ["title", "members", "icon", "symbol"]
+    static let supportedGroupKeys: Set<String> = ["title", "members", "icon", "symbol", "hidden"]
 
     /// Which top-level namespace a scanned declaration name belongs to.
     /// Item and group names share one flat lookup space for membership
@@ -955,6 +956,12 @@ public enum ConfigParser {
             table: table,
             sourceLines: sourceLines
         ) ?? false
+        let hidden = try optionalBool(
+            name: name,
+            key: "hidden",
+            table: table,
+            sourceLines: sourceLines
+        ) ?? false
         let iconOnly = try optionalBool(
             name: name,
             key: "icon_only",
@@ -1033,6 +1040,7 @@ public enum ConfigParser {
             maxLength: maxLength,
             hideWhenEmpty: hideWhenEmpty,
             hideOnError: hideOnError,
+            hidden: hidden,
             iconOnly: iconOnly,
             disabled: disabled,
             notifyOn: notifyOn,
@@ -1157,6 +1165,13 @@ public enum ConfigParser {
 
         let title = try requiredGroupString(name: name, key: "title", table: table, sourceLines: sourceLines)
         let members = try parseGroupMembers(name: name, value: table["members"], sourceLines: sourceLines)
+        let hidden = try optionalBool(
+            name: name,
+            key: "hidden",
+            table: table,
+            sourceLines: sourceLines,
+            namespace: "group"
+        ) ?? false
         let iconSource = try parseIconSource(
             name: name,
             namespace: "group",
@@ -1170,7 +1185,8 @@ public enum ConfigParser {
             title: title,
             members: members,
             icon: iconSource?.filePath,
-            symbol: iconSource?.symbolName
+            symbol: iconSource?.symbolName,
+            hidden: hidden
         )
     }
 
@@ -1614,12 +1630,13 @@ public enum ConfigParser {
         name: String,
         key: String,
         table: TOMLTable,
-        sourceLines: SourceLineMap
+        sourceLines: SourceLineMap,
+        namespace: String = "item"
     ) throws -> Bool? {
         guard let value = table[key] else { return nil }
         guard let bool = value.bool else {
             throw typeError(
-                path: "item.\(name).\(key)",
+                path: "\(namespace).\(name).\(key)",
                 expected: "boolean",
                 value: value,
                 line: sourceLine(item: name, key: key, sourceLines: sourceLines)

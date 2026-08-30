@@ -155,10 +155,14 @@ final class StatusItemControllerTests: XCTestCase {
         ItemConfig(name: name, run: run ?? "echo \(name)", interval: .scheduled(60))
     }
 
-    private func makeController(factory: FakeManagedItemFactory) -> StatusItemController {
+    private func makeController(
+        factory: FakeManagedItemFactory,
+        configPath: String = "/tmp/pinchos-test.toml",
+        onReload: @escaping () -> Void = {}
+    ) -> StatusItemController {
         StatusItemController(
-            configPath: "/tmp/pinchos-test.toml",
-            onReload: {},
+            configPath: configPath,
+            onReload: onReload,
             itemFactory: factory
         )
     }
@@ -180,6 +184,64 @@ final class StatusItemControllerTests: XCTestCase {
         XCTAssertTrue(NSApplication.shared.sendAction(refresh.action!, to: refresh.target, from: refresh))
         XCTAssertEqual(factory.eventLog.events, ["refresh-now:alpha"])
         XCTAssertEqual(Array(menu.items.suffix(3).map(\.title)), ["Open Config", "Reload Config", "Quit Pinchos"])
+    }
+
+    func testLifecycleMenuOffersHideThatPersistsAndRequestsReload() async throws {
+        let configURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("pinchos-hide-menu-\(UUID().uuidString).toml")
+        let source = """
+        [item.alpha]
+        type = "command"
+        run = "echo alpha"
+        """
+        try Data(source.utf8).write(to: configURL)
+        addTeardownBlock {
+            try? FileManager.default.removeItem(at: configURL)
+        }
+        var reloadCount = 0
+        let factory = FakeManagedItemFactory()
+        let controller = makeController(
+            factory: factory,
+            configPath: configURL.path,
+            onReload: { reloadCount += 1 }
+        )
+        addTeardownBlock { @MainActor in
+            await controller.shutdown()
+        }
+
+        let config = try ConfigParser.parse(source, relativeTo: configURL)
+        await controller.apply(config: config)
+        let menu = await controller.makeLifecycleMenu(forManagedItem: factory.created[0])
+        let hide = try XCTUnwrap(menu.items.first(where: { $0.title == "Hide" }))
+
+        XCTAssertTrue(hide.isEnabled)
+        XCTAssertTrue(NSApplication.shared.sendAction(hide.action!, to: hide.target, from: hide))
+        XCTAssertEqual(reloadCount, 1)
+
+        let updated = try String(contentsOf: configURL, encoding: .utf8)
+        XCTAssertTrue(updated.contains("run = \"echo alpha\""))
+        XCTAssertTrue(updated.contains("hidden = true"))
+        XCTAssertTrue(try ConfigParser.parse(updated).items[0].hidden)
+    }
+
+    func testHiddenConfigUpdatesTheExistingManagedItemInPlace() async throws {
+        let factory = FakeManagedItemFactory()
+        let controller = makeController(factory: factory)
+        addTeardownBlock { @MainActor in
+            await controller.shutdown()
+        }
+
+        let visible = item("alpha")
+        let hidden = ItemConfig(name: "alpha", run: "echo alpha", interval: .scheduled(60), hidden: true)
+        await controller.apply(config: PinchosConfig(items: [visible]))
+        let managedItem = factory.created[0]
+        factory.eventLog.clear()
+
+        await controller.apply(config: PinchosConfig(items: [hidden]))
+
+        XCTAssertTrue(factory.created[0] === managedItem)
+        XCTAssertEqual(factory.eventLog.events, ["prepare-update:alpha", "commit-update:alpha"])
+        XCTAssertTrue(factory.created[0].config.hidden)
     }
 
     func testLifecycleMenuShowsRuntimeStateAndRunnerDiagnostics() async throws {

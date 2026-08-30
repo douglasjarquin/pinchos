@@ -104,6 +104,7 @@ public struct CommandItemConfig: Equatable, Sendable {
     public let maxLength: Int?
     public let hideWhenEmpty: Bool
     public let hideOnError: Bool
+    public let hidden: Bool
     public let iconOnly: Bool
     public let disabled: Bool
     public let notifyOn: Set<ItemNotificationEvent>
@@ -134,6 +135,7 @@ public struct CommandItemConfig: Equatable, Sendable {
         maxLength: Int? = nil,
         hideWhenEmpty: Bool = false,
         hideOnError: Bool = false,
+        hidden: Bool = false,
         iconOnly: Bool = false,
         disabled: Bool = false,
         notifyOn: Set<ItemNotificationEvent> = [],
@@ -162,6 +164,7 @@ public struct CommandItemConfig: Equatable, Sendable {
         self.maxLength = maxLength
         self.hideWhenEmpty = hideWhenEmpty
         self.hideOnError = hideOnError
+        self.hidden = hidden
         self.iconOnly = iconOnly
         self.disabled = disabled
         self.notifyOn = notifyOn
@@ -186,18 +189,21 @@ public struct GroupItemConfig: Equatable, Sendable {
     public let title: String
     public let members: [String]
     public let iconSource: ItemIconSource?
+    public let hidden: Bool
 
     public init(
         name: String,
         title: String,
         members: [String],
         icon: String? = nil,
-        symbol: String? = nil
+        symbol: String? = nil,
+        hidden: Bool = false
     ) {
         self.name = name
         self.title = title
         self.members = members
         self.iconSource = ItemIconSource.make(icon: icon, symbol: symbol)
+        self.hidden = hidden
     }
 
     public var icon: String? { iconSource?.filePath }
@@ -271,6 +277,13 @@ public enum ItemConfig: Equatable, Sendable {
         case .group(let config): return config.iconSource
         }
     }
+
+    public var hidden: Bool {
+        switch self {
+        case .command(let config): return config.hidden
+        case .group(let config): return config.hidden
+        }
+    }
 }
 
 extension ItemConfig {
@@ -302,6 +315,7 @@ extension ItemConfig {
         maxLength: Int? = nil,
         hideWhenEmpty: Bool = false,
         hideOnError: Bool = false,
+        hidden: Bool = false,
         iconOnly: Bool = false,
         disabled: Bool = false,
         notifyOn: Set<ItemNotificationEvent> = [],
@@ -333,6 +347,7 @@ extension ItemConfig {
                 maxLength: maxLength,
                 hideWhenEmpty: hideWhenEmpty,
                 hideOnError: hideOnError,
+                hidden: hidden,
                 iconOnly: iconOnly,
                 disabled: disabled,
                 notifyOn: notifyOn,
