@@ -16,7 +16,7 @@
 #   Claude Code or Codex CLI login) — it needs neither a value nor a
 #   token to be placed in this file or in `[item.<name>.env]`.
 #
-# Expected output: "42%" when the provider has an active auth session and
+# Expected output: "42" when the provider has an active auth session and
 #   a "week" quota window; the underlying JSON shape is
 #   `{"providers":[{"windows":[{"label":"week","percentRemaining":42}]}]}`.
 #   Locale-independent, but account- and provider-state-dependent: a

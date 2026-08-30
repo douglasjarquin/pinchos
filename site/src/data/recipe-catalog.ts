@@ -26,7 +26,7 @@ const readStringField = (section: string, key: string): string => {
   return match?.[1]?.replace(/\\"/g, '"').replace(/\\\\/g, '\\') ?? '';
 };
 
-const readExpectedOutput = (sourceBeforeHeader: string): string => {
+const readExpectedCommandOutput = (sourceBeforeHeader: string): string => {
   let raw = 'sample output';
   for (const match of sourceBeforeHeader.matchAll(/^# Expected output:\s*(.+)$/gm)) {
     if (match[1]) raw = match[1].trim();
@@ -48,7 +48,7 @@ const readItems = (source: string): readonly RecipeItem[] => {
     const section = source.slice(start, end);
     const format = readStringField(section, 'format') || '{output}';
     const interval = readStringField(section, 'interval') || 'on demand';
-    const example = readExpectedOutput(source.slice(0, start));
+    const example = readExpectedCommandOutput(source.slice(0, start));
 
     return [{
       name,

@@ -4,6 +4,8 @@ A curated catalog of 50 standalone, copy-pasteable `pinchos.toml` snippets for c
 
 Each file under `recipes/*.toml` is one self-contained recipe: valid v1 Pinchos configuration with at least one `[item.<name>]` table, ready to drop into your own config. This catalog is documentation and example configuration — it is not a plugin system, a registry, or a runtime input to the app. Pinchos never reads this directory; nothing here changes what the shipped binary does. See the [main README's config section](../README.md#config) for the schema these recipes use.
 
+The `# Expected output:` comment in each file describes the command's raw output. The website applies that item's `format` once when it renders the theoretical menu bar preview, so keep units or icons that the command itself emits in the expected output and leave display-only decoration to `format`.
+
 The [website recipes page](https://douglasjarquin.github.io/pinchos/recipes/) is generated from this directory at build time, so adding a valid `.toml` file and rebuilding automatically adds it to the searchable explorer.
 
 ## Spec decisions

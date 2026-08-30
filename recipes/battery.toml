@@ -3,7 +3,7 @@
 #
 # Purpose: show battery charge percentage and power source in the menu bar.
 # Dependencies: none beyond the macOS base system (/usr/bin/pmset).
-# Expected output: "🔋 80%" while running on battery or AC power.
+# Expected output: "80%" while running on battery or AC power.
 #   The value is machine-dependent (desktops and battery-less machines
 #   report no matching line, see limitations) and reflects whatever
 #   `pmset -g batt` reports at the moment the command runs.

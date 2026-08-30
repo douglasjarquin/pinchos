@@ -26,7 +26,7 @@ run = "df -h / | awk 'NR==2{print $5}'"
 interval = "5m"
 
 # --- memory ------------------------------------------------------------
-# Expected output: "82%" (used pages / (used + free + speculative) pages,
+# Expected output: "82" (used pages / (used + free + speculative) pages,
 #   a rough approximation of "memory pressure" similar to Activity Monitor's
 #   memory gauge, not an official Apple metric). Machine- and workload-
 #   dependent: it changes with every app you have open.

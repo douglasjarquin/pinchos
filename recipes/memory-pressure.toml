@@ -3,7 +3,7 @@
 #
 # Purpose: show a rough used-memory percentage from macOS VM page counts.
 # Dependencies: none beyond the macOS base system (/usr/bin/vm_stat and awk).
-# Expected output: "72%"; it changes with the apps and workload in use.
+# Expected output: "72"; it changes with the apps and workload in use.
 # Limitations: this is an approximation, not Apple's private memory-pressure
 #   score; field names can change across macOS releases.
 # This recipe uses a shell pipeline, so doctor will not identify one command
