@@ -159,6 +159,55 @@ CLI exit codes are suitable for scripts.
 `0` means success, `1` means `service status` found the agent not installed or not enabled, `2` means invalid command usage, `3` means config or open failure, and `4` means `doctor` found a problem.
 `run` preserves a configured command's exit code, uses `124` for timeouts, and uses `127` for launch failures.
 
+### Customize with an agent skill
+
+[`customize-pinchos`](skills/customize-pinchos/SKILL.md) is a standalone Agent Skill for creating, reviewing, and troubleshooting Pinchos TOML.
+It explains the current schema, shows a safe customization workflow, and makes the shell-command boundary explicit.
+It does not install or extend Pinchos.
+Pinchos does not load the skill at runtime.
+
+In Codex, invoke `$skill-installer` and ask it to install this GitHub directory:
+
+```text
+https://github.com/douglasjarquin/pinchos/tree/main/skills/customize-pinchos
+```
+
+The managed installer chooses the configured Codex skills root.
+After installation, run `/skills` on your next turn and select `$customize-pinchos` when you want to use it.
+Restart Codex if the skill does not appear.
+
+You can also install the skill from a checked-out Pinchos repository into the standard user skill directory.
+This block refuses to overwrite an existing destination:
+
+```sh
+(
+  skill_source="$PWD/skills/customize-pinchos"
+  skill_destination="$HOME/.agents/skills/customize-pinchos"
+  if [ -e "$skill_destination" ]; then
+    printf 'Refusing to overwrite %s\n' "$skill_destination" >&2
+    exit 1
+  fi
+  mkdir -p "$(dirname "$skill_destination")"
+  cp -R "$skill_source" "$skill_destination"
+)
+```
+
+The skill is discoverable from `$HOME/.agents/skills` for the user's Codex environments.
+That path is separate from a managed installer root when Codex is configured with a different location.
+
+Invoke it explicitly with a prompt such as:
+
+```text
+$customize-pinchos
+Add a read-only item that shows the current battery percentage.
+Use the existing config, preserve its declaration order, and validate the change before you run it.
+```
+
+The skill requires the agent to show new commands before adding them, ask for authorization before state-changing or credential-using commands, then run `pinchos validate`, `pinchos doctor`, and `pinchos run <item>`.
+Configured `run`, `click`, and action commands are shell commands executed with the user's permissions, and they are not sandboxed.
+Read the bundled [`configuration.md`](skills/customize-pinchos/references/configuration.md) for the full schema and command-safety guidance.
+The [public skill guide](https://douglasjarquin.github.io/pinchos/skills/) covers the same installation and invocation flow.
+
 ### Strict schema compatibility
 
 Pinchos validates the current TOML schema strictly at every entry point.
