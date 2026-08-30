@@ -1,0 +1,39 @@
+---
+import BaseLayout from '../../layouts/BaseLayout.astro';
+import RecipeCard from '../../components/RecipeCard.astro';
+import { loadRecipes } from '../../data/recipe-catalog';
+import '../../styles/recipes.css';
+
+const recipes = loadRecipes();
+---
+
+<BaseLayout title="pinchos recipes" description="Fifty copy-pasteable Pinchos recipes for useful menu-bar signals." recipes>
+  <div class="recipes-page container container--docs" data-recipe-explorer>
+    <header class="recipes-intro">
+      <div class="overline">recipe catalog · {recipes.length} configs</div>
+      <h1 class="serif-heading">Signals you can pin.</h1>
+      <p class="body-copy">Fifty standalone TOML recipes for small, useful signals. Search the catalog, read the source, and see the shape of each item before you copy it into your own config.</p>
+    </header>
+
+    <section class="recipe-browser" aria-labelledby="recipe-browser-heading">
+      <div class="recipe-toolbar">
+        <div>
+          <h2 id="recipe-browser-heading" class="serif-heading">Browse the catalog.</h2>
+          <p>Search by recipe name, signal, command, or dependency.</p>
+        </div>
+        <div class="recipe-search">
+          <label for="recipe-search-input">Filter recipes</label>
+          <input id="recipe-search-input" name="recipes" type="search" placeholder="try network or git" autocomplete="off" data-recipe-search aria-describedby="recipe-search-help" aria-controls="recipe-list" />
+          <p id="recipe-search-help">{recipes.length} recipes · source stays selectable</p>
+        </div>
+      </div>
+
+      <p class="recipe-result-count" data-recipe-result-count role="status" aria-live="polite">{recipes.length} recipes</p>
+
+      <div id="recipe-list" class="recipe-list">
+        {recipes.map((recipe) => <RecipeCard recipe={recipe} />)}
+      </div>
+      <p class="recipe-empty" data-recipe-empty role="status" hidden>No recipes match that filter. Clear the search to see the full catalog.</p>
+    </section>
+  </div>
+</BaseLayout>
