@@ -190,4 +190,26 @@ final class CollapseMenuTests: XCTestCase {
         XCTAssertTrue(factory.created[0].statusItemVisible)
         XCTAssertFalse(factory.created[1].statusItemVisible)
     }
+
+    func testRecoveryWarningReappearsAfterExpanding() async throws {
+        let factory = CollapseFakeFactory()
+        let host = CollapseFakeStatusItemHost()
+        let controller = makeController(factory: factory, host: host)
+        addTeardownBlock { @MainActor in await controller.shutdown() }
+
+        await controller.apply(config: PinchosConfig(items: [command("alpha")]))
+        let menu = await controller.makeLifecycleMenu(forManagedItem: factory.created[0])
+        let collapse = try XCTUnwrap(menu.items.first(where: { $0.title == "Collapse Pinchos" }))
+        XCTAssertTrue(NSApplication.shared.sendAction(collapse.action!, to: collapse.target, from: collapse))
+
+        await controller.showParseError("parse failed")
+        XCTAssertEqual(host.created, 1)
+
+        let collapsed = await controller.makeCollapsedMenu()
+        let expand = try XCTUnwrap(collapsed.items.first(where: { $0.title == "Expand Pinchos" }))
+        XCTAssertTrue(NSApplication.shared.sendAction(expand.action!, to: expand.target, from: expand))
+
+        XCTAssertEqual(host.created, 2)
+        XCTAssertTrue(factory.created[0].statusItemVisible)
+    }
 }

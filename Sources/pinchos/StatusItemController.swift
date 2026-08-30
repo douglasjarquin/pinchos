@@ -440,6 +440,7 @@ final class StatusItemController: StatusItemMenuDelegate {
         barPresentation = .expanded
         restoreExpandedVisibility()
         removeCollapsedStatusItem()
+        updateRecoveryItem()
     }
 
     @objc private func handleCollapsedClick() {
