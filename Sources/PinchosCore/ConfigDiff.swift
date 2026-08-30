@@ -31,7 +31,7 @@ public enum ConfigDiffEngine {
     /// status-item placement and therefore only ever consider *top-level*
     /// (non-hidden-member) names: a hidden group member has no native
     /// status item to place, so its position among hidden names is
-    /// irrelevant to whether AppKit's append-only insertion can preserve
+    /// irrelevant to whether native visual-left insertion can preserve
     /// declared order.
     public static func diff(old: PinchosConfig, new: PinchosConfig) -> ConfigDiff {
         let oldByName = Dictionary(uniqueKeysWithValues: old.items.map { ($0.name, $0) })
