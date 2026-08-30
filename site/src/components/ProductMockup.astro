@@ -37,7 +37,8 @@ const { compact = false, interactive = false } = Astro.props;
     {!compact && (
       <details class="config-disclosure">
         <summary aria-controls="sample-pinchos-config">
-          <span>See config</span>
+          <span class="config-disclosure__label config-disclosure__label--closed">See config</span>
+          <span class="config-disclosure__label config-disclosure__label--open">Hide config</span>
           <span class="config-disclosure__indicator" aria-hidden="true">+</span>
         </summary>
         <div class="config-panel" id="sample-pinchos-config" role="region" aria-label="Sample pinchos.toml configuration">
@@ -190,6 +191,18 @@ const { compact = false, interactive = false } = Astro.props;
   .config-disclosure__indicator {
     font-size: var(--mockup-menu-indicator-size);
     line-height: 1;
+  }
+
+  .config-disclosure__label--open {
+    display: none;
+  }
+
+  .config-disclosure[open] .config-disclosure__label--closed {
+    display: none;
+  }
+
+  .config-disclosure[open] .config-disclosure__label--open {
+    display: inline;
   }
 
   .config-panel {
