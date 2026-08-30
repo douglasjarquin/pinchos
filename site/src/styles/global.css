@@ -185,6 +185,7 @@ input:focus-visible {
 
 .code-block {
   overflow-x: auto;
+  overflow-wrap: anywhere;
   border-radius: var(--radius-panel);
   background: var(--color-ink);
   color: var(--color-dark-copy);

@@ -2,7 +2,8 @@
 
 The public pinchos marketing site is an Astro static site.
 
-It contains the landing page at `/pinchos/` and the web design-system page at `/pinchos/design-system/`.
+It contains the landing page at `/pinchos/`, the end-user customization guide at `/pinchos/skills/`, and the web design-system page at `/pinchos/design-system/`.
+The customization guide explains how to install and invoke the repository's `customize-pinchos` Agent Skill.
 The design-system page is intentionally not linked from the site header, footer, or any other navigation; it is reachable only by direct URL.
 GitHub Pages publishes it at <https://douglasjarquin.github.io/pinchos/> from the `main` branch.
 

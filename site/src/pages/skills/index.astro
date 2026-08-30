@@ -1,0 +1,100 @@
+---
+import BaseLayout from '../../layouts/BaseLayout.astro';
+import CodeBlock from '../../components/CodeBlock.astro';
+import Mark from '../../components/Mark.astro';
+import '../../styles/docs.css';
+---
+
+<BaseLayout title="customize Pinchos with an agent skill" description="Install the customize-pinchos Agent Skill to create and review Pinchos TOML with schema and command-safety guidance." docs>
+  <div class="docs-page container container--docs">
+    <header class="docs-intro">
+      <div class="docs-intro__identity">
+        <Mark size={26} label="pinchos mark" />
+        <strong>customize-pinchos</strong>
+        <span>standalone Agent Skill</span>
+      </div>
+      <h1 class="serif-heading">Change your config with a second set of eyes.</h1>
+      <p class="body-copy">The <code>customize-pinchos</code> skill helps an AI agent add and review Pinchos items, groups, actions, triggers, and structured output. It pairs the current schema with a cautious workflow for commands that can run with your user permissions.</p>
+    </header>
+
+    <section class="docs-section" aria-labelledby="install-heading">
+      <h2 id="install-heading" class="serif-heading">1 · Install the skill</h2>
+      <div class="component-grid">
+        <article class="component-card raised-card">
+          <div class="overline">managed install</div>
+          <p>In Codex, invoke <code>$skill-installer</code> and give it the skill directory in the Pinchos repository.</p>
+          <p><a href="https://github.com/douglasjarquin/pinchos/tree/main/skills/customize-pinchos">Open the customize-pinchos directory on GitHub</a>.</p>
+          <div class="note-callout">
+            <div class="overline">after install</div>
+            <p>Run <code>/skills</code> on your next turn and select <code>$customize-pinchos</code>. Restart Codex if it does not appear.</p>
+          </div>
+        </article>
+        <article class="component-card raised-card">
+          <div class="overline">manual install</div>
+          <p>From a checked-out Pinchos repository, copy the complete directory into the standard user skill path.</p>
+          <CodeBlock lines={['(if [ -e "$HOME/.agents/skills/customize-pinchos" ]; then printf \'Refusing to overwrite %s\\n\' "$HOME/.agents/skills/customize-pinchos" >&2; exit 1; fi; mkdir -p "$HOME/.agents/skills"; cp -R skills/customize-pinchos "$HOME/.agents/skills/customize-pinchos")']} />
+          <p>The full README block checks the destination first and refuses to overwrite an existing skill.</p>
+        </article>
+      </div>
+      <p class="docs-note">The managed installer may use a configured Codex skills root. The manual path is <code>$HOME/.agents/skills</code>. These paths are separate.</p>
+    </section>
+
+    <section class="docs-section" aria-labelledby="invoke-heading">
+      <h2 id="invoke-heading" class="serif-heading">2 · Invoke it for a change</h2>
+      <p>Use <code>$customize-pinchos</code> when you want the workflow explicitly.</p>
+      <div class="component-card raised-card">
+        <div class="overline">example request</div>
+        <div class="code-block" role="group" aria-label="Example customize-pinchos request" tabindex="0">
+          <div><span class="code-block__prompt">$ </span>$customize-pinchos</div>
+          <div>Add a read-only item that shows the current battery percentage.</div>
+          <div>Preserve the existing declaration order and validate the change before running it.</div>
+        </div>
+      </div>
+    </section>
+
+    <section class="docs-section" aria-labelledby="workflow-heading">
+      <h2 id="workflow-heading" class="serif-heading">3 · Follow the customization loop</h2>
+      <ol class="olive-list">
+        <li>Find the real file with <code>pinchos config-path</code>.</li>
+        <li>Read the current TOML and preserve unrelated tables and declaration order.</li>
+        <li>Start with one read-only command and show its exact executable, arguments, paths, and environment names.</li>
+        <li>Run <code>pinchos validate</code> to catch schema and type errors.</li>
+        <li>Run <code>pinchos doctor</code> to check known shell, path, and prerequisite problems.</li>
+        <li>Run <code>pinchos run &lt;item&gt;</code> to inspect the real output and exit status.</li>
+        <li>Save the file and confirm the running app reloads the intended path.</li>
+      </ol>
+      <p class="docs-note">The skill reference covers the current item, group, action, scheduler, and structured-output fields. It also explains declaration order, hidden members, error policies, output bounds, and event triggers.</p>
+    </section>
+
+    <section class="docs-section" aria-labelledby="safety-heading">
+      <h2 id="safety-heading" class="serif-heading">4 · Review commands before you add them</h2>
+      <div class="note-callout">
+        <div class="overline overline--terracotta">command boundary</div>
+        <p>Pinchos runs <code>run</code>, <code>click</code>, and action commands with your permissions. Those commands are not sandboxed. <code>validate</code> and <code>doctor</code> do not approve command intent.</p>
+      </div>
+      <ul class="olive-list">
+        <li>Ask for authorization before a command changes state, uses credentials, sends data, contacts a private service, or invokes a privileged tool.</li>
+        <li>Keep secrets out of TOML and use an existing login, keychain, or environment mechanism.</li>
+        <li>Reject <code>curl | sh</code>, remote script execution, <code>eval</code>, <code>sudo</code>, destructive commands, and broad file globs.</li>
+        <li>Set Pinchos <code>timeout</code> and a small <code>max_output</code> value for commands that contact a network or may produce unbounded output.</li>
+      </ul>
+    </section>
+
+    <section class="docs-section docs-section--last" aria-labelledby="reference-heading">
+      <h2 id="reference-heading" class="serif-heading">5 · Read the reference</h2>
+      <p>The installed skill routes detailed schema and safety guidance to its bundled reference instead of copying the whole schema into every prompt.</p>
+      <div class="component-grid">
+        <article class="component-card raised-card">
+          <div class="overline">inside the repository</div>
+          <p><a href="https://github.com/douglasjarquin/pinchos/blob/main/skills/customize-pinchos/SKILL.md">Read the skill entrypoint</a> for its scope and workflow.</p>
+          <p><a href="https://github.com/douglasjarquin/pinchos/blob/main/skills/customize-pinchos/references/configuration.md">Read the configuration reference</a> for the full v1 schema and safety rules.</p>
+        </article>
+        <article class="component-card raised-card">
+          <div class="overline">when the skill is missing</div>
+          <p>Check <code>/skills</code> after installation. If the skill is still absent, restart Codex.</p>
+          <p><a href="https://learn.chatgpt.com/docs/build-skills">Read the official skill installation and discovery guide</a>.</p>
+        </article>
+      </div>
+    </section>
+  </div>
+</BaseLayout>
