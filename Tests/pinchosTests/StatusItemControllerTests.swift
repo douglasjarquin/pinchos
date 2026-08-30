@@ -663,20 +663,20 @@ final class StatusItemControllerTests: XCTestCase {
         XCTAssertTrue(zip(initialItems, factory.created).allSatisfy { $0 === $1 })
     }
 
-    func testModifyUpdatesOnlyTheChangedManagedItem() async {
+    func testModifyUpdatesOnlyTheChangedManagedItem() async throws {
         let factory = FakeManagedItemFactory()
         let controller = makeController(factory: factory)
         await controller.apply(config: PinchosConfig(items: [item("alpha"), item("beta")]))
-        let alpha = factory.created[0]
-        let beta = factory.created[1]
+        let alpha = try XCTUnwrap(factory.created.first(where: { $0.config.name == "alpha" }))
+        let beta = try XCTUnwrap(factory.created.first(where: { $0.config.name == "beta" }))
         factory.eventLog.clear()
 
         await controller.apply(
             config: PinchosConfig(items: [item("alpha"), item("beta", run: "echo changed")])
         )
 
-        XCTAssertTrue(factory.created[0] === alpha)
-        XCTAssertTrue(factory.created[1] === beta)
+        XCTAssertTrue(factory.created.contains { $0 === alpha })
+        XCTAssertTrue(factory.created.contains { $0 === beta })
         XCTAssertEqual(factory.eventLog.events, [
             "prepare-update:beta",
             "commit-update:beta"
@@ -728,19 +728,19 @@ final class StatusItemControllerTests: XCTestCase {
         }))
     }
 
-    func testAddAndRemoveCommitAfterAllPreparation() async {
+    func testAddAndRemoveCommitAfterAllPreparation() async throws {
         let factory = FakeManagedItemFactory()
         let controller = makeController(factory: factory)
         await controller.apply(config: PinchosConfig(items: [item("alpha"), item("beta")]))
-        let alpha = factory.created[0]
-        let beta = factory.created[1]
+        let alpha = try XCTUnwrap(factory.created.first(where: { $0.config.name == "alpha" }))
+        let beta = try XCTUnwrap(factory.created.first(where: { $0.config.name == "beta" }))
         factory.eventLog.clear()
 
         await controller.apply(
-            config: PinchosConfig(items: [item("alpha", run: "echo changed"), item("gamma")])
+            config: PinchosConfig(items: [item("gamma"), item("alpha", run: "echo changed")])
         )
 
-        XCTAssertTrue(factory.created[0] === alpha)
+        XCTAssertTrue(factory.created.contains { $0 === alpha })
         XCTAssertTrue(beta !== factory.created[2])
         XCTAssertEqual(factory.created[2].config.name, "gamma")
         XCTAssertFalse(factory.created[2].initiallyVisible)
@@ -751,6 +751,50 @@ final class StatusItemControllerTests: XCTestCase {
             "commit-update:alpha",
             "activate:gamma"
         ])
+    }
+
+    func testCreatesNativeItemsInReverseConfigOrderForLeftToRightMenuBarOrder() async throws {
+        let factory = FakeManagedItemFactory()
+        let controller = makeController(factory: factory)
+        addTeardownBlock { @MainActor in
+            await controller.shutdown()
+        }
+
+        let config = try ConfigParser.parse("""
+        [item.zebra]
+        type = "command"
+        run = "echo z"
+
+        [item.apple]
+        type = "command"
+        run = "echo a"
+        """)
+        XCTAssertEqual(config.items.map(\.name), ["zebra", "apple"])
+
+        await controller.apply(config: config)
+
+        XCTAssertEqual(factory.created.map(\.config.name), ["apple", "zebra"])
+    }
+
+    func testPrefixAdditionsCreateInReverseOrderWithoutRebuilding() async {
+        let factory = FakeManagedItemFactory()
+        let controller = makeController(factory: factory)
+        addTeardownBlock { @MainActor in
+            await controller.shutdown()
+        }
+
+        await controller.apply(config: PinchosConfig(items: [item("alpha"), item("beta")]))
+        factory.eventLog.clear()
+
+        await controller.apply(config: PinchosConfig(items: [
+            item("gamma"),
+            item("delta"),
+            item("alpha"),
+            item("beta")
+        ]))
+
+        XCTAssertEqual(factory.created.suffix(2).map(\.config.name), ["delta", "gamma"])
+        XCTAssertEqual(factory.eventLog.events, ["activate:gamma", "activate:delta"])
     }
 
     func testReorderRebuildsAllManagedItemsInOneCommit() async {
@@ -765,7 +809,7 @@ final class StatusItemControllerTests: XCTestCase {
         let newItems = Array(factory.created.dropFirst(2))
         XCTAssertFalse(newItems[0] === oldItems[0])
         XCTAssertFalse(newItems[1] === oldItems[1])
-        XCTAssertEqual(newItems.map(\.config.name), ["beta", "alpha"])
+        XCTAssertEqual(newItems.map(\.config.name), ["alpha", "beta"])
         XCTAssertTrue(newItems.allSatisfy { !$0.initiallyVisible })
         // prepareRemoval for old items is fanned out via `withTaskGroup`
         // (see LifecycleSettlement.swift), so alpha/beta may settle in

@@ -294,7 +294,10 @@ final class StatusItemController: StatusItemMenuDelegate {
             }
         }
         let hidden = config.hiddenMemberNames
-        let newItems = config.items.map {
+        // NSStatusBar grows its collection from the right-side anchor toward
+        // the left, so creating items in reverse declaration order makes the
+        // rendered menu bar read left-to-right like the TOML file.
+        let newItems = config.items.reversed().map {
             itemFactory.make(config: $0, menuDelegate: self, initiallyVisible: false, isTopLevel: !hidden.contains($0.name))
         }
 
@@ -303,7 +306,7 @@ final class StatusItemController: StatusItemMenuDelegate {
         }
         items = Dictionary(uniqueKeysWithValues: newItems.map { ($0.config.name, $0) })
         order = config.items.map(\.name)
-        for item in newItems {
+        for item in newItems.reversed() {
             item.activate()
         }
     }
@@ -315,7 +318,10 @@ final class StatusItemController: StatusItemMenuDelegate {
         }
 
         let hidden = config.hiddenMemberNames
-        let addedItems = diff.added.map {
+        // Newly-created status items appear at the visual left edge. Reverse
+        // the desired added sequence so multiple prefix additions retain
+        // declaration order after AppKit inserts each one.
+        let addedItems = diff.added.reversed().map {
             itemFactory.make(config: $0, menuDelegate: self, initiallyVisible: false, isTopLevel: !hidden.contains($0.name))
         }
 
@@ -346,7 +352,7 @@ final class StatusItemController: StatusItemMenuDelegate {
         for item in diff.changed {
             items[item.name]?.commitPreparedUpdate()
         }
-        for item in addedItems {
+        for item in addedItems.reversed() {
             items[item.config.name] = item
             item.activate()
         }

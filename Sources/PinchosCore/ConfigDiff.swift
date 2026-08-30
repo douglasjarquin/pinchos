@@ -75,17 +75,18 @@ public enum ConfigDiffEngine {
             .filter { oldByName[$0] != nil && !addedNames.contains($0) }
         let orderChanged = oldVisibleSharedOrder != newVisibleSharedOrder
 
-        // Incremental apply can only append a newly-created native status
-        // item to the right (AppKit has no "insert before" for
-        // `NSStatusItem`) and cannot reorder an existing one, so the
-        // incrementally-achievable order keeps every kept item at its *old*
-        // relative position and appends every added item after them in its
-        // *new* relative position. If that does not equal the actually
-        // desired new order, only a full rebuild (tear down and recreate
-        // every native item in the new order) can realize it.
+        // Incremental apply can only insert a newly-created native status
+        // item at the visual left edge (the status bar grows left as items
+        // are added) and cannot reorder an existing one. The incrementally
+        // achievable final order therefore prepends newly-added items in their
+        // desired order to the kept items' old relative order. The controller
+        // creates that prefix in reverse so AppKit produces this final order.
+        // If it does not equal the desired new order, only a full rebuild
+        // (tear down and recreate every native item in the new order) can
+        // realize it.
         let newVisibleOrder = new.items.map(\.name).filter { !newHidden.contains($0) }
         let addedVisibleOrder = newVisibleOrder.filter { addedNames.contains($0) }
-        let incrementalVisibleOrder = oldVisibleSharedOrder + addedVisibleOrder
+        let incrementalVisibleOrder = addedVisibleOrder + oldVisibleSharedOrder
         let requiresNativeRebuild = incrementalVisibleOrder != newVisibleOrder
 
         return ConfigDiff(

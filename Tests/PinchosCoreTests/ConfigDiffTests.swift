@@ -37,7 +37,7 @@ final class ConfigDiffTests: XCTestCase {
         XCTAssertEqual(diff.added.map(\.name), ["b"])
         XCTAssertEqual(diff.removed, [])
         XCTAssertFalse(diff.orderChanged)
-        XCTAssertFalse(diff.requiresNativeRebuild)
+        XCTAssertTrue(diff.requiresNativeRebuild)
     }
 
     func testDetectsRemovedItem() {
@@ -199,7 +199,7 @@ final class ConfigDiffTests: XCTestCase {
         XCTAssertFalse(diff.requiresNativeRebuild)
     }
 
-    func testAddingItemBeforeExistingItemsRequiresNativeRebuild() {
+    func testAddingItemBeforeExistingItemsUsesNativeInsertion() {
         let old = PinchosConfig(items: [item("a"), item("b")])
         let new = PinchosConfig(items: [item("new"), item("a"), item("b")])
 
@@ -207,7 +207,7 @@ final class ConfigDiffTests: XCTestCase {
 
         XCTAssertEqual(diff.added.map(\.name), ["new"])
         XCTAssertFalse(diff.orderChanged)
-        XCTAssertTrue(diff.requiresNativeRebuild)
+        XCTAssertFalse(diff.requiresNativeRebuild)
     }
 
     func testAddedRemovedAndChangedTogether() {
