@@ -76,6 +76,25 @@ final class ConfigFileEditorTests: XCTestCase {
         XCTAssertFalse(try ConfigParser.parse(updated).items[1].hidden)
     }
 
+    func testUpdatesExistingDottedItemHiddenDeclaration() throws {
+        let source = """
+        item."my.clock".type = "command"
+        item."my.clock".run = "date"
+        item."my.clock".hidden = false
+        """
+        let url = try writeConfig(source)
+        let item = ItemConfig(name: "my.clock", run: "date", interval: .scheduled(60))
+
+        try ConfigFileEditor.setHidden(true, for: item, at: url)
+
+        let updated = try String(contentsOf: url, encoding: .utf8)
+        XCTAssertTrue(updated.contains("item.\"my.clock\".hidden = true"))
+        XCTAssertFalse(updated.contains("\nhidden = true"))
+        let parsed = try ConfigParser.parse(updated)
+        XCTAssertEqual(parsed.items.map(\.name), ["my.clock"])
+        XCTAssertTrue(parsed.items[0].hidden)
+    }
+
     func testSetsHiddenOnAGroupTable() throws {
         let source = """
         [item.alpha]
@@ -94,6 +113,27 @@ final class ConfigFileEditorTests: XCTestCase {
         let updated = try String(contentsOf: url, encoding: .utf8)
         XCTAssertTrue(updated.contains("[group.all]\nhidden = true\ntitle = \"All\""))
         XCTAssertTrue(try ConfigParser.parse(updated).items[1].hidden)
+    }
+
+    func testUpdatesExistingDottedGroupHiddenDeclaration() throws {
+        let source = """
+        item.alpha.type = "command"
+        item.alpha.run = "echo alpha"
+        group."all".title = "All"
+        group."all".members = ["alpha"]
+        group."all".hidden = false
+        """
+        let url = try writeConfig(source)
+        let group = ItemConfig.group(GroupItemConfig(name: "all", title: "All", members: ["alpha"]))
+
+        try ConfigFileEditor.setHidden(true, for: group, at: url)
+
+        let updated = try String(contentsOf: url, encoding: .utf8)
+        XCTAssertTrue(updated.contains("group.\"all\".hidden = true"))
+        XCTAssertFalse(updated.contains("\nhidden = true"))
+        let parsed = try ConfigParser.parse(updated)
+        XCTAssertEqual(parsed.items.map(\.name), ["alpha", "all"])
+        XCTAssertTrue(parsed.items[1].hidden)
     }
 
     func testMissingItemIsReportedWithoutChangingTheFile() throws {

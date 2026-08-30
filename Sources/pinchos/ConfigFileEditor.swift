@@ -180,9 +180,10 @@ enum ConfigFileEditor {
     }
 
     private static func replacedAssignmentLine(_ line: String, value: String) -> String {
-        let indentation = String(line.prefix { $0 == " " || $0 == "\t" })
+        guard let separator = assignmentSeparator(in: line) else { return line }
+        let assignmentPrefix = String(line[..<separator])
         let comment = inlineComment(in: line).map { " \($0)" } ?? ""
-        return "\(indentation)hidden = \(value)\(comment)"
+        return "\(assignmentPrefix)= \(value)\(comment)"
     }
 
     private static func tomlKey(_ value: String) -> String {
