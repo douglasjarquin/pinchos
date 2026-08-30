@@ -390,7 +390,7 @@ See [`example/pinchos.toml`](example/pinchos.toml) for a full working config wit
 
 ### Recipes
 
-[`recipes/`](recipes/README.md) is a curated catalog of standalone, copy-pasteable configs for common menu-bar signals — clock, battery, disk/memory/load, VPN/network state, network latency, HTTP health, and optional third-party integrations (`quota-axi`, `gh`, `aws`). It's documentation and example configuration, not a runtime plugin system; see [`recipes/README.md`](recipes/README.md) for the full index and how to copy, validate, diagnose, and run each one.
+[`recipes/`](recipes/README.md) is a curated catalog of 50 standalone, copy-pasteable configs for common menu-bar signals — clock, battery, disk/memory/load, VPN/network state, network latency, HTTP health, desktop state, development tools, and optional third-party integrations (`quota-axi`, `gh`, `aws`, `brew`, `docker`, `kubectl`, `mise`, `node`, and `tailscale`). The website's searchable [recipes explorer](https://douglasjarquin.github.io/pinchos/recipes/) is generated from the same directory at build time. It's documentation and example configuration, not a runtime plugin system; see [`recipes/README.md`](recipes/README.md) for the full index and how to copy, validate, diagnose, and run each one.
 
 ## Architecture
 

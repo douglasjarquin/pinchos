@@ -1,14 +1,16 @@
 # Pinchos recipes
 
-A curated catalog of standalone, copy-pasteable `pinchos.toml` snippets for common menu-bar signals.
+A curated catalog of 50 standalone, copy-pasteable `pinchos.toml` snippets for common menu-bar signals.
 
 Each file under `recipes/*.toml` is one self-contained recipe: valid v1 Pinchos configuration with at least one `[item.<name>]` table, ready to drop into your own config. This catalog is documentation and example configuration — it is not a plugin system, a registry, or a runtime input to the app. Pinchos never reads this directory; nothing here changes what the shipped binary does. See the [main README's config section](../README.md#config) for the schema these recipes use.
+
+The [website recipes page](https://douglasjarquin.github.io/pinchos/recipes/) is generated from this directory at build time, so adding a valid `.toml` file and rebuilding automatically adds it to the searchable explorer.
 
 ## Spec decisions
 
 The originating issue ([#16](https://github.com/douglasjarquin/pinchos/issues/16)) deliberately left three choices open. This catalog resolves them as follows:
 
-1. **Initial catalog scope.** Ship all nine candidate families from the issue in this first pass, including the three that depend on optional third-party CLIs (`quota-axi`, `gh`, `aws`). Each of those is clearly marked optional below, with an install/source link, and none of them embeds a credential — they read whatever auth each tool already has configured on your machine.
+1. **Initial catalog scope.** The catalog now contains 50 recipes across time, power, system, network, desktop, development, GitHub, cloud, and cluster signals, including recipes that depend on optional third-party CLIs (`quota-axi`, `gh`, `aws`, `brew`, `docker`, `kubectl`, `mise`, `node`, and `tailscale`). Each optional dependency is clearly marked below with an install/source link, and none of the recipes embeds a credential — they read whatever auth each tool already has configured on your machine.
 2. **Runtime boundary.** `recipes/` is documentation-only. It does not change `example/pinchos.toml` or the embedded `ExampleConfig.text` used by `pinchos init` and crash recovery; those remain separate, manually maintained artifacts. If a future issue wants `recipes/` to become their source of truth, that is a distinct decision to make deliberately, not a side effect of adding this catalog.
 3. **Network recipes.** The HTTP health and network latency recipes use `https://example.com` / `example.com` as a clearly documented placeholder the user must replace with an endpoint they actually own or care about, with explicit timeout bounds on both the underlying tool and the Pinchos item. No recipe requires network access in CI — `Tests/PinchosCoreTests/RecipeCatalogTests.swift` only parses the TOML text, it never runs `curl`, `ping`, `gh`, `aws`, or `quota-axi`.
 
