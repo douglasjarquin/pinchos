@@ -33,12 +33,36 @@ Follow this order for every customization.
 1. Run `pinchos config-path` to find the file Pinchos actually reads.
 2. Read the existing file before editing it.
 3. Preserve unrelated item tables and their declaration order.
-4. Start with one item and one read-only command.
-5. Run `pinchos validate` before saving a larger change.
-6. Run `pinchos doctor` to check the shell, simple command, working directory, icon, and known environment requirements.
-7. Run `pinchos run <item>` to inspect the real output and exit status.
-8. Save the file and let a running Pinchos process reload it.
-9. Open the item menu and confirm its displayed value, actions, and error behavior.
+4. Create an isolated staging root and copy the resolved file before editing it:
+
+   ```sh
+   config_path="$(pinchos config-path)"
+   staging_root="$(mktemp -d)"
+   mkdir -p "$staging_root/pinchos"
+   baseline_path="$staging_root/pinchos/pinchos.toml.baseline"
+   cp "$config_path" "$baseline_path"
+   cp "$baseline_path" "$staging_root/pinchos/pinchos.toml"
+   ```
+
+5. Start with one item and one read-only command in the staged file.
+6. Show the exact diff and every executable, argument, path, environment name, network destination, and write target before adding a risky command.
+7. Run the checks against the staged file, not the live file:
+
+   ```sh
+   XDG_CONFIG_HOME="$staging_root" pinchos validate
+   XDG_CONFIG_HOME="$staging_root" pinchos doctor
+   XDG_CONFIG_HOME="$staging_root" pinchos run <item>
+   ```
+
+The staging copy changes the base directory for relative `working_directory`, `watch`, and `icon` paths.
+Create safe staging fixtures or use absolute equivalents for any such path before relying on `doctor` or `run` results.
+Do not claim that a staged check exercised an original relative path when it did not.
+
+8. After the staged checks pass and the user authorizes promotion, confirm that the live file still matches the copied baseline with `cmp -s "$config_path" "$baseline_path"`.
+   Stop if it changed, and ask the user to reconcile the new live changes instead of overwriting them.
+9. Apply only the reviewed diff to the live file, then repeat `pinchos validate`, `pinchos doctor`, and `pinchos run <item>` without `XDG_CONFIG_HOME`.
+10. Save the file and let a running Pinchos process reload it.
+11. Open the item menu and confirm its displayed value, actions, and error behavior.
 
 Use the same Pinchos binary for `config-path`, `validate`, `doctor`, and `run <item>` that you use to run the menu-bar app.
 An installed binary may be available as `pinchos`.

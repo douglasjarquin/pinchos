@@ -18,11 +18,13 @@ Pinchos runs configured shell commands with the user's permissions, and those co
 2. Read the current configuration before editing it.
 3. Preserve unrelated tables and the user's declaration order.
 4. Read [references/configuration.md](references/configuration.md) before changing schema fields or commands.
-5. Start with the smallest read-only command that proves the requested signal.
-6. Show the exact command, executable, arguments, paths, environment names, network destinations, and write targets before adding a risky command.
-7. Ask for explicit authorization before adding or running a command that changes state, uses credentials, sends data, contacts a private service, or invokes a privileged tool.
-8. Run `pinchos validate`, then `pinchos doctor`, then `pinchos run <item>` for the changed item.
-9. Save the file and confirm the running app reloads the intended path.
+5. Copy the current file into an isolated temporary `XDG_CONFIG_HOME` root before editing it.
+6. Start with the smallest read-only command that proves the requested signal.
+7. Show the exact command, executable, arguments, paths, environment names, network destinations, and write targets before adding a risky command.
+8. Ask for explicit authorization before adding or running a command that changes state, uses credentials, sends data, contacts a private service, or invokes a privileged tool.
+9. Run `validate`, `doctor`, and `run <item>` against the staged root before promoting the edit.
+10. Apply only the reviewed diff to the live file when its baseline is unchanged, then repeat the checks against the live path.
+11. Save the file and confirm the running app reloads the intended path.
 
 Do not recommend embedded secrets, `curl | sh`, remote script execution, `eval`, `sudo`, destructive commands, broad file globs, or commands copied from an untrusted source.
 Do not treat `validate` or `doctor` as a security approval.

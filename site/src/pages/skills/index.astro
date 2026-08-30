@@ -56,14 +56,13 @@ import '../../styles/docs.css';
       <h2 id="workflow-heading" class="serif-heading">3 · Follow the customization loop</h2>
       <ol class="olive-list">
         <li>Find the real file with <code>pinchos config-path</code>.</li>
-        <li>Read the current TOML and preserve unrelated tables and declaration order.</li>
-        <li>Start with one read-only command and show its exact executable, arguments, paths, and environment names.</li>
-        <li>Run <code>pinchos validate</code> to catch schema and type errors.</li>
-        <li>Run <code>pinchos doctor</code> to check known shell, path, and prerequisite problems.</li>
-        <li>Run <code>pinchos run &lt;item&gt;</code> to inspect the real output and exit status.</li>
+        <li>Copy the current TOML into a temporary <code>XDG_CONFIG_HOME</code> root before editing it.</li>
+        <li>Preserve unrelated tables and declaration order, then show the exact executable, arguments, paths, and environment names.</li>
+        <li>Run <code>XDG_CONFIG_HOME=&lt;staging-root&gt; pinchos validate</code>, <code>doctor</code>, and <code>run &lt;item&gt;</code> against the staged file.</li>
+        <li>After approval, promote only the reviewed diff if the live file is unchanged, then repeat the checks against the live path.</li>
         <li>Save the file and confirm the running app reloads the intended path.</li>
       </ol>
-      <p class="docs-note">The skill reference covers the current item, group, action, scheduler, and structured-output fields. It also explains declaration order, hidden members, error policies, output bounds, and event triggers.</p>
+      <p class="docs-note">The skill reference covers the current item, group, action, scheduler, and structured-output fields. It also explains declaration order, hidden members, error policies, output bounds, event triggers, and how relative paths behave in a staging root.</p>
     </section>
 
     <section class="docs-section" aria-labelledby="safety-heading">

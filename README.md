@@ -203,7 +203,8 @@ Add a read-only item that shows the current battery percentage.
 Use the existing config, preserve its declaration order, and validate the change before you run it.
 ```
 
-The skill requires the agent to show new commands before adding them, ask for authorization before state-changing or credential-using commands, then run `pinchos validate`, `pinchos doctor`, and `pinchos run <item>`.
+The skill stages edits under a temporary `XDG_CONFIG_HOME`, shows the exact diff and commands, asks for authorization before state-changing or credential-using commands, and runs `validate`, `doctor`, and `run <item>` against the staged file.
+After the staged checks pass, it promotes only the reviewed diff when the live file is unchanged and repeats the checks against the live path.
 Configured `run`, `click`, and action commands are shell commands executed with the user's permissions, and they are not sandboxed.
 Read the bundled [`configuration.md`](skills/customize-pinchos/references/configuration.md) for the full schema and command-safety guidance.
 The [public skill guide](https://douglasjarquin.github.io/pinchos/skills/) covers the same installation and invocation flow.
