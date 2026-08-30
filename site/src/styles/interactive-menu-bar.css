@@ -246,6 +246,14 @@
   color: var(--color-link-readable);
 }
 
+.interactive-menu .example-menu__action:focus-visible,
+.interactive-menu .example-menu__diagnostics-trigger:focus-visible {
+  background: var(--color-paper-raised);
+  color: var(--color-link-readable);
+  outline: var(--mockup-menu-border-width) solid var(--color-link-readable);
+  outline-offset: calc(-1 * var(--mockup-menu-border-width));
+}
+
 .interactive-menu .example-menu__no-click {
   display: flex;
   min-height: var(--mockup-menu-row-height);

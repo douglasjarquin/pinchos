@@ -21,6 +21,7 @@ const initializeMenu = (root) => {
   const failureDetails = panel?.querySelector('[data-failure-details]');
   const meta = panel?.querySelector('[data-item-meta]');
   const diagnostics = panel?.querySelector('[data-diagnostics]');
+  const diagnosticsTrigger = diagnostics?.querySelector('summary');
   const diagnosticItem = panel?.querySelector('[data-diagnostic-item]');
   const diagnosticRefresh = panel?.querySelector('[data-diagnostic-refresh]');
   const diagnosticFormat = panel?.querySelector('[data-diagnostic-format]');
@@ -33,9 +34,13 @@ const initializeMenu = (root) => {
   const configPreview = root.closest('.product-visual')?.querySelector('[data-sample-config]');
   const initialConfig = configPreview?.textContent ?? '';
 
-  if (!menuBar || !menuSurface || !panel || !collapsedTrigger || !collapsedPanel || !collapsedItems || !collapsedEmpty || !expandAction || !collapseAction || !runAction || !refreshAction || !hideAction || !configuredActions || !clickLink || !noClick || !summary || !failureDetails || !meta || !diagnostics || !diagnosticItem || !diagnosticRefresh || !diagnosticFormat || !diagnosticClick || !diagnosticError || !diagnosticStale || !diagnosticHidden || !feedback || !emptyState || triggers.length === 0) {
+  if (!menuBar || !menuSurface || !panel || !collapsedTrigger || !collapsedPanel || !collapsedItems || !collapsedEmpty || !expandAction || !collapseAction || !runAction || !refreshAction || !hideAction || !configuredActions || !clickLink || !noClick || !summary || !failureDetails || !meta || !diagnostics || !diagnosticsTrigger || !diagnosticItem || !diagnosticRefresh || !diagnosticFormat || !diagnosticClick || !diagnosticError || !diagnosticStale || !diagnosticHidden || !feedback || !emptyState || triggers.length === 0) {
     return;
   }
+
+  diagnostics.addEventListener('toggle', () => {
+    diagnosticsTrigger.setAttribute('aria-expanded', String(diagnostics.open));
+  });
 
   const states = new Map(
     triggers.map((trigger) => [trigger.dataset.menuItem, {
@@ -183,6 +188,7 @@ const initializeMenu = (root) => {
 
     panel.hidden = !panelOpen;
     diagnostics.hidden = !diagnosticsVisible;
+    diagnosticsTrigger.setAttribute('aria-expanded', String(diagnostics.open));
     panel.dataset.state = state.refreshing ? 'running' : state.failed ? 'failed' : 'fresh';
     panel.setAttribute('aria-label', `${label} item submenu`);
     summary.textContent = `${displayValue} · ${stateText}`;
@@ -263,13 +269,13 @@ const initializeMenu = (root) => {
     isPanelOpen: () => panelOpen,
     activeName: () => activeName,
     expandAction,
-    openItem: (trigger) => openItem(trigger, false),
+    openItem: (trigger, showDiagnostics) => openItem(trigger, showDiagnostics),
     closeRoot: closeCollapsedRoot,
     focusFirstAction,
   });
 
   const visiblePanelItems = () => [...panel.querySelectorAll('[role="menuitem"]')]
-    .filter((item) => !item.hidden && !item.disabled);
+    .filter((item) => !item.hidden && !item.disabled && item.getClientRects().length > 0);
 
   panel.addEventListener('keydown', (event) => {
     const target = event.target;

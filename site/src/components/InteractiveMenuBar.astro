@@ -56,6 +56,7 @@ const codexClick = configValue('codex', 'click');
       class="menu-bar__collapsed-item"
       type="button"
       aria-label="Pinchos menu"
+      aria-haspopup="menu"
       aria-expanded="false"
       aria-controls="collapsed-menu-panel"
       data-collapsed-trigger
@@ -67,6 +68,7 @@ const codexClick = configValue('codex', 'click');
       class="menu-bar__item"
       id="example-menu-item-claude"
       type="button"
+      aria-haspopup="menu"
       aria-expanded="false"
       aria-controls="example-menu-panel"
       aria-label="Claude, 82 percent, failed, showing last good value"
@@ -91,6 +93,7 @@ const codexClick = configValue('codex', 'click');
       class="menu-bar__item"
       id="example-menu-item-codex"
       type="button"
+      aria-haspopup="menu"
       aria-expanded="false"
       aria-controls="example-menu-panel"
       aria-label="Codex, 68 percent, fresh"
@@ -114,6 +117,7 @@ const codexClick = configValue('codex', 'click');
       class="menu-bar__item"
       id="example-menu-item-clock"
       type="button"
+      aria-haspopup="menu"
       aria-expanded="false"
       aria-controls="example-menu-panel"
       aria-label="Clock, 14 colon 32, fresh"
@@ -137,6 +141,7 @@ const codexClick = configValue('codex', 'click');
       class="menu-bar__item"
       id="example-menu-item-battery"
       type="button"
+      aria-haspopup="menu"
       aria-expanded="false"
       aria-controls="example-menu-panel"
       aria-label="Battery, 94 percent, fresh"
@@ -203,10 +208,10 @@ const codexClick = configValue('codex', 'click');
       </div>
       <p class="example-menu__meta" role="none" data-item-meta>Refresh: every 5m · Format: &#123;output&#125;%</p>
       <details class="example-menu__diagnostics" role="group" aria-label="Diagnostics" data-diagnostics hidden>
-        <summary class="example-menu__diagnostics-trigger">
+        <summary class="example-menu__diagnostics-trigger" role="menuitem" aria-expanded="false" aria-controls="diagnostics-content">
           <span>Diagnostics</span><span aria-hidden="true" data-diagnostics-indicator>▸</span>
         </summary>
-        <div class="example-menu__diagnostics-content">
+        <div class="example-menu__diagnostics-content" id="diagnostics-content">
           <p data-diagnostic-item>[item.claude]</p>
           <p data-diagnostic-refresh>Refresh: every 5m</p>
           <p data-diagnostic-format>Format: &#123;output&#125;%</p>
