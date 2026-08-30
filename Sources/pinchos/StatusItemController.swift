@@ -10,6 +10,7 @@ protocol StatusItemMenuDelegate: AnyObject {
 protocol StatusItemHost: AnyObject {
     func makeStatusItem() -> NSStatusItem?
     func removeStatusItem(_ statusItem: NSStatusItem)
+    func present(menu: NSMenu, on statusItem: NSStatusItem)
 }
 
 @MainActor
@@ -20,6 +21,12 @@ private final class SystemStatusItemHost: StatusItemHost {
 
     func removeStatusItem(_ statusItem: NSStatusItem) {
         NSStatusBar.system.removeStatusItem(statusItem)
+    }
+
+    func present(menu: NSMenu, on statusItem: NSStatusItem) {
+        statusItem.menu = menu
+        statusItem.button?.performClick(nil)
+        statusItem.menu = nil
     }
 }
 
@@ -173,6 +180,7 @@ final class StatusItemController: StatusItemMenuDelegate {
     private var order: [String] = []
     private var warningItem: NSStatusItem?
     private var collapsedStatusItem: NSStatusItem?
+    private var collapsedMenuGeneration = 0
     private var barPresentation: BarPresentation = .expanded
     private var recoveryState = RecoveryState()
     private let configPath: String
@@ -418,6 +426,7 @@ final class StatusItemController: StatusItemMenuDelegate {
         statusItem.button?.action = #selector(handleCollapsedClick)
         statusItem.button?.sendAction(on: [.leftMouseUp, .rightMouseUp])
         collapsedStatusItem = statusItem
+        collapsedMenuGeneration += 1
         return true
     }
 
@@ -426,6 +435,7 @@ final class StatusItemController: StatusItemMenuDelegate {
             statusItemHost.removeStatusItem(collapsedStatusItem)
         }
         collapsedStatusItem = nil
+        collapsedMenuGeneration += 1
     }
 
     @objc private func collapseAction() {
@@ -444,10 +454,14 @@ final class StatusItemController: StatusItemMenuDelegate {
     }
 
     @objc private func handleCollapsedClick() {
-        guard collapsedStatusItem != nil else { return }
-        Task { @MainActor [weak self] in
-            guard let self, let collapsedStatusItem = self.collapsedStatusItem else { return }
+        guard barPresentation == .collapsed, let collapsedStatusItem else { return }
+        let menuGeneration = collapsedMenuGeneration
+        Task { @MainActor [weak self, collapsedStatusItem, menuGeneration] in
+            guard let self else { return }
             let menu = await self.makeCollapsedMenu()
+            guard self.barPresentation == .collapsed,
+                  self.collapsedStatusItem === collapsedStatusItem,
+                  self.collapsedMenuGeneration == menuGeneration else { return }
             self.present(menu: menu, on: collapsedStatusItem)
         }
     }
@@ -975,9 +989,7 @@ final class StatusItemController: StatusItemMenuDelegate {
     }
 
     private func present(menu: NSMenu, on statusItem: NSStatusItem) {
-        statusItem.menu = menu
-        statusItem.button?.performClick(nil)
-        statusItem.menu = nil
+        statusItemHost.present(menu: menu, on: statusItem)
     }
 
     @objc private func refreshAction(_ sender: NSMenuItem) {

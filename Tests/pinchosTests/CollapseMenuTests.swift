@@ -6,10 +6,13 @@ import XCTest
 @MainActor
 private final class CollapseFakeItem: ManagedItemLifecycle {
     private var pendingConfig: ItemConfig?
+    private var runtimeSnapshotStartWaiter: CheckedContinuation<Void, Never>?
+    private var runtimeSnapshotRelease: CheckedContinuation<Void, Never>?
     private(set) var config: ItemConfig
     let isTopLevel: Bool
     private(set) var isVisible: Bool
     private(set) var statusItemVisible = false
+    var blocksRuntimeSnapshot = false
 
     init(config: ItemConfig, isTopLevel: Bool) {
         self.config = config
@@ -50,7 +53,15 @@ private final class CollapseFakeItem: ManagedItemLifecycle {
     }
 
     func runtimeSnapshot() async -> ItemRuntimeSnapshot {
-        ItemRuntimeSnapshot(
+        if blocksRuntimeSnapshot {
+            blocksRuntimeSnapshot = false
+            runtimeSnapshotStartWaiter?.resume()
+            runtimeSnapshotStartWaiter = nil
+            await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+                runtimeSnapshotRelease = continuation
+            }
+        }
+        return ItemRuntimeSnapshot(
             isRunning: false,
             fullOutput: nil,
             lastAttemptedAt: nil,
@@ -60,6 +71,17 @@ private final class CollapseFakeItem: ManagedItemLifecycle {
             skippedRefreshes: 0,
             now: Date()
         )
+    }
+
+    func waitForRuntimeSnapshotStart() async {
+        await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+            runtimeSnapshotStartWaiter = continuation
+        }
+    }
+
+    func releaseRuntimeSnapshot() {
+        runtimeSnapshotRelease?.resume()
+        runtimeSnapshotRelease = nil
     }
 
     func actionSnapshot(at index: Int) async -> CommandRunnerSnapshot? { nil }
@@ -88,14 +110,23 @@ private final class CollapseFakeFactory: ManagedItemFactory {
 private final class CollapseFakeStatusItemHost: StatusItemHost {
     private(set) var created = 0
     private(set) var removed = 0
+    private(set) var presented = 0
+    private(set) var statusItems: [NSStatusItem] = []
 
     func makeStatusItem() -> NSStatusItem? {
         created += 1
-        return NSStatusItem()
+        let statusItem = NSStatusItem()
+        statusItems.append(statusItem)
+        return statusItem
     }
 
     func removeStatusItem(_ item: NSStatusItem) {
         removed += 1
+        item.menu = nil
+    }
+
+    func present(menu: NSMenu, on statusItem: NSStatusItem) {
+        presented += 1
     }
 }
 
@@ -232,5 +263,37 @@ final class CollapseMenuTests: XCTestCase {
 
         XCTAssertEqual(host.created, 2)
         XCTAssertTrue(factory.created[0].statusItemVisible)
+    }
+
+    func testCollapsedMenuDoesNotPresentAfterIconIsRemovedWhileBuilding() async throws {
+        let factory = CollapseFakeFactory()
+        let host = CollapseFakeStatusItemHost()
+        let controller = makeController(factory: factory, host: host)
+        addTeardownBlock { @MainActor in await controller.shutdown() }
+
+        await controller.apply(config: PinchosConfig(items: [command("alpha")]))
+        let menu = await controller.makeLifecycleMenu(forManagedItem: factory.created[0])
+        let collapse = try XCTUnwrap(menu.items.first(where: { $0.title == "Collapse Pinchos" }))
+        XCTAssertTrue(NSApplication.shared.sendAction(collapse.action!, to: collapse.target, from: collapse))
+
+        let item = factory.created[0]
+        item.blocksRuntimeSnapshot = true
+        let collapsedStatusItem = try XCTUnwrap(host.statusItems.first)
+        let snapshotStarted = Task { @MainActor in
+            await item.waitForRuntimeSnapshotStart()
+        }
+        XCTAssertTrue(NSApplication.shared.sendAction(
+            NSSelectorFromString("handleCollapsedClick"),
+            to: controller,
+            from: collapsedStatusItem
+        ))
+        await snapshotStarted.value
+
+        await controller.shutdown()
+        item.releaseRuntimeSnapshot()
+        try await Task.sleep(for: .milliseconds(10))
+
+        XCTAssertEqual(host.removed, 1)
+        XCTAssertEqual(host.presented, 0)
     }
 }
