@@ -1,4 +1,6 @@
 ---
+import sampleConfig from '../../../example/pinchos.toml?raw';
+
 interface Props {
   compact?: boolean;
 }
@@ -7,21 +9,34 @@ const { compact = false } = Astro.props;
 ---
 
 <figure class:list={['product-figure', { 'product-figure--compact': compact }]}>
-  <div class="menu-bar" role="group" aria-label="Example menu bar with a failed deploy item">
-    <span>disk 82%</span>
-    <span>vpn up</span>
-    <span class="menu-bar__warning">deploy ⚠︎</span>
-    <span>14:32</span>
-  </div>
-  <div class="failure-menu" role="group" aria-label="Example pinchos failure menu">
-    <div class="failure-menu__row">Run Deploy Check</div>
-    <div class="failure-menu__row">Refresh Now</div>
-    <div class="menu-rule"></div>
-    <div class="failure-menu__row failure-menu__row--strong">Failed 2 minutes ago — exit 1</div>
-    <div class="failure-menu__error">jq: parse error: Invalid numeric literal</div>
-    <div class="failure-menu__row">Copy Full Error</div>
-    <div class="menu-rule"></div>
-    <div class="failure-menu__row failure-menu__row--between"><span>Diagnostics</span><span>▸</span></div>
+  <div class="product-visual">
+    <div class="menu-bar" role="group" aria-label="Example menu bar with a failed deploy item">
+      <span>disk 82%</span>
+      <span>vpn up</span>
+      <span class="menu-bar__warning">deploy ⚠︎</span>
+      <span>14:32</span>
+    </div>
+    <div class="failure-menu" role="group" aria-label="Example pinchos failure menu">
+      <div class="failure-menu__row">Run Deploy Check</div>
+      <div class="failure-menu__row">Refresh Now</div>
+      <div class="menu-rule"></div>
+      <div class="failure-menu__row failure-menu__row--strong">Failed 2 minutes ago — exit 1</div>
+      <div class="failure-menu__error">jq: parse error: Invalid numeric literal</div>
+      <div class="failure-menu__row">Copy Full Error</div>
+      <div class="menu-rule"></div>
+      <div class="failure-menu__row failure-menu__row--between"><span>Diagnostics</span><span>▸</span></div>
+    </div>
+    {!compact && (
+      <details class="config-disclosure">
+        <summary aria-controls="sample-pinchos-config">
+          <span>See config</span>
+          <span class="config-disclosure__indicator" aria-hidden="true">+</span>
+        </summary>
+        <div class="config-panel" id="sample-pinchos-config" role="region" aria-label="Sample pinchos.toml configuration">
+          <pre tabindex="0"><code>{sampleConfig}</code></pre>
+        </div>
+      </details>
+    )}
   </div>
   {!compact && <figcaption>a failing item promotes its cause to the first level — one glance, one Copy Full Error.</figcaption>}
 </figure>
@@ -34,6 +49,11 @@ const { compact = false } = Astro.props;
     align-items: stretch;
     gap: 0;
     margin: 0;
+  }
+
+  .product-visual {
+    position: relative;
+    min-width: 0;
   }
 
   .menu-bar {
@@ -104,6 +124,92 @@ const { compact = false } = Astro.props;
     background: rgba(0, 0, 0, 0.1);
   }
 
+  .config-disclosure {
+    min-width: 0;
+  }
+
+  .config-disclosure > summary {
+    position: absolute;
+    z-index: 1;
+    inset-block-start: 0;
+    inset-inline-start: 0;
+    display: inline-flex;
+    min-height: 44px;
+    align-items: center;
+    gap: var(--space-2);
+    padding: 10px var(--space-3);
+    border: 1px solid var(--color-ink);
+    border-radius: var(--radius-button);
+    background: var(--color-paper-raised);
+    color: var(--color-link-readable);
+    cursor: pointer;
+    font-family: var(--font-mono);
+    font-size: 12px;
+    font-weight: 500;
+    list-style: none;
+    user-select: none;
+  }
+
+  .config-disclosure > summary::-webkit-details-marker {
+    display: none;
+  }
+
+  .config-disclosure > summary::marker {
+    content: '';
+  }
+
+  .config-disclosure > summary:hover {
+    background: var(--color-paper-field);
+    color: var(--color-link);
+  }
+
+  .config-disclosure > summary:focus-visible {
+    outline: 2px solid var(--color-link);
+    outline-offset: 2px;
+  }
+
+  .config-disclosure[open] > summary {
+    background: var(--color-ink);
+    color: var(--color-dark-copy);
+  }
+
+  .config-disclosure[open] .config-disclosure__indicator {
+    transform: rotate(45deg);
+  }
+
+  .config-disclosure__indicator {
+    font-size: 16px;
+    line-height: 1;
+  }
+
+  .config-panel {
+    width: min(520px, 100%);
+    margin-top: var(--space-3);
+    overflow: hidden;
+    border: 1px solid var(--color-rule);
+    border-radius: var(--radius-panel);
+    background: var(--color-ink);
+    color: var(--color-dark-copy);
+  }
+
+  .config-panel pre {
+    max-width: 100%;
+    max-height: min(60vh, 360px);
+    margin: 0;
+    padding: var(--space-4);
+    overflow: auto;
+    color: var(--color-dark-copy);
+    font-family: var(--font-mono);
+    font-size: 13.5px;
+    line-height: 1.85;
+    white-space: pre;
+  }
+
+  .config-panel pre:focus-visible {
+    outline: 2px solid var(--color-dark-prompt);
+    outline-offset: -4px;
+  }
+
   figcaption {
     margin-top: 22px;
     color: var(--color-meta-readable);
@@ -122,6 +228,10 @@ const { compact = false } = Astro.props;
     display: none;
   }
 
+  .product-figure--compact .config-disclosure {
+    display: none;
+  }
+
   @media (max-width: 720px) {
     .menu-bar {
       align-self: stretch;
@@ -136,6 +246,15 @@ const { compact = false } = Astro.props;
 
     .failure-menu {
       width: min(296px, calc(100% - 20px));
+    }
+
+    .config-disclosure > summary {
+      position: static;
+      margin-top: var(--space-3);
+    }
+
+    .config-panel {
+      width: 100%;
     }
   }
 </style>
