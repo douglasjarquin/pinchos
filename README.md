@@ -33,6 +33,23 @@ The binary lands at `.build/release/pinchos`. Run it directly:
 .build/release/pinchos
 ```
 
+### Public site development
+
+The marketing site is an Astro static site in `site/`.
+Mise pins its Node and Aube toolchain in `mise.toml`.
+
+From the repository root:
+
+```sh
+mise install
+mise run site:install
+mise run site:dev
+```
+
+Open `http://127.0.0.1:4321/pinchos/` in a browser.
+Use `mise run site:build` to create the static output in `site/dist/`, or `mise run site:preview` to serve an existing build.
+See [`site/README.md`](site/README.md) for site-specific details.
+
 It has no Dock icon and no main window (`NSApp.setActivationPolicy(.accessory)`) — it lives entirely in the menu bar.
 Quit it from any item's right-click menu, or `killall pinchos`.
 `killall pinchos` sends SIGTERM to each matching Pinchos process, and each process runs the same bounded cleanup used by the native Quit action.
