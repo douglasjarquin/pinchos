@@ -50,6 +50,7 @@ Olive never carries body copy meaning.
 
 Use three families deliberately: editorial serif for hierarchy, Bricolage Grotesque for readable interface copy, and IBM Plex Mono for technical metadata.
 All text is sentence case except mono overlines.
+Product mockup-specific system typography, native palette values, row geometry, and static specimen dimensions use the `--mockup-menu-*` token family in `tokens.css`.
 
 ## 4. Spacing and layout
 

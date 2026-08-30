@@ -73,46 +73,46 @@ const { compact = false, interactive = false } = Astro.props;
     display: flex;
     align-items: center;
     align-self: flex-end;
-    height: 27px;
+    height: var(--mockup-menu-bar-height);
     max-width: 100%;
-    padding-inline: 10px;
-    border-radius: 7px;
-    background: rgba(28, 28, 32, 0.95);
+    padding-inline: var(--mockup-menu-static-bar-padding);
+    border-radius: var(--mockup-menu-bar-radius);
+    background: var(--mockup-menu-static-bar-background);
     box-shadow: var(--shadow-product);
-    color: #F5F5F7;
-    font-family: -apple-system, BlinkMacSystemFont, 'Helvetica Neue', sans-serif;
-    font-size: 13px;
+    color: var(--mockup-menu-static-bar-foreground);
+    font-family: var(--mockup-menu-font);
+    font-size: var(--mockup-menu-size);
     white-space: nowrap;
   }
 
   .menu-bar span {
-    padding-inline: 9px;
+    padding-inline: var(--mockup-menu-static-item-padding);
   }
 
   .menu-bar__warning {
-    border-radius: 4px;
-    background: rgba(255, 255, 255, 0.22);
+    border-radius: var(--mockup-menu-chip-radius);
+    background: var(--mockup-menu-static-warning-background);
   }
 
   .failure-menu {
-    width: min(296px, calc(100% - 52px));
+    width: min(var(--mockup-menu-static-panel-width), calc(100% - var(--mockup-menu-static-panel-inset)));
     align-self: flex-end;
-    margin-top: 5px;
-    padding-block: 5px;
-    border-radius: 10px;
-    background: rgba(248, 248, 250, 0.99);
-    box-shadow: 0 18px 44px rgba(43, 42, 40, 0.28), 0 0 0 1px rgba(0, 0, 0, 0.09);
-    color: #1D1D1F;
-    font-family: -apple-system, BlinkMacSystemFont, 'Helvetica Neue', sans-serif;
-    font-size: 13px;
+    margin-top: var(--mockup-menu-static-panel-margin);
+    padding-block: var(--mockup-menu-static-panel-padding);
+    border-radius: var(--mockup-menu-panel-radius);
+    background: var(--mockup-menu-static-panel-background);
+    box-shadow: var(--mockup-menu-static-shadow);
+    color: var(--mockup-menu-static-panel-foreground);
+    font-family: var(--mockup-menu-font);
+    font-size: var(--mockup-menu-size);
   }
 
   .failure-menu__row {
-    padding: 4px 14px;
+    padding: var(--mockup-menu-static-row-padding) var(--mockup-menu-item-padding);
   }
 
   .failure-menu__row--strong {
-    padding-bottom: 1px;
+    padding-bottom: var(--mockup-menu-rule-height);
     font-weight: 600;
   }
 
@@ -123,18 +123,18 @@ const { compact = false, interactive = false } = Astro.props;
 
   .failure-menu__error {
     overflow: hidden;
-    padding: 1px 14px 4px;
-    color: #6E6E73;
-    font-family: 'SF Mono', ui-monospace, monospace;
-    font-size: 11px;
+    padding: var(--mockup-menu-rule-height) var(--mockup-menu-item-padding) var(--mockup-menu-static-row-padding);
+    color: var(--mockup-menu-static-muted);
+    font-family: var(--mockup-menu-mono-font);
+    font-size: var(--mockup-menu-small-size);
     text-overflow: ellipsis;
     white-space: nowrap;
   }
 
   .menu-rule {
-    height: 1px;
-    margin: 4px 14px;
-    background: rgba(0, 0, 0, 0.1);
+    height: var(--mockup-menu-rule-height);
+    margin: var(--mockup-menu-static-row-padding) var(--mockup-menu-item-padding);
+    background: var(--mockup-menu-static-rule);
   }
 
   .config-disclosure {
@@ -146,14 +146,14 @@ const { compact = false, interactive = false } = Astro.props;
     min-height: 44px;
     align-items: center;
     gap: var(--space-2);
-    padding: 10px var(--space-3);
+    padding: var(--mockup-menu-config-padding) var(--space-3);
     border: 1px solid var(--color-ink);
     border-radius: var(--radius-button);
     background: var(--color-paper-raised);
     color: var(--color-link-readable);
     cursor: pointer;
     font-family: var(--font-mono);
-    font-size: 12px;
+    font-size: var(--mockup-menu-mobile-size);
     font-weight: 500;
     list-style: none;
     margin-top: var(--space-3);
@@ -188,7 +188,7 @@ const { compact = false, interactive = false } = Astro.props;
   }
 
   .config-disclosure__indicator {
-    font-size: 16px;
+    font-size: var(--mockup-menu-indicator-size);
     line-height: 1;
   }
 
@@ -210,7 +210,7 @@ const { compact = false, interactive = false } = Astro.props;
     overflow: auto;
     color: var(--color-dark-copy);
     font-family: var(--font-mono);
-    font-size: 13.5px;
+    font-size: var(--mockup-menu-config-size);
     line-height: 1.85;
     white-space: pre;
   }
@@ -221,17 +221,17 @@ const { compact = false, interactive = false } = Astro.props;
   }
 
   figcaption {
-    margin-top: 22px;
+    margin-top: var(--mockup-menu-caption-margin);
     color: var(--color-meta-readable);
     font-family: var(--font-mono);
-    font-size: 11px;
+    font-size: var(--mockup-menu-small-size);
     line-height: 1.6;
     text-align: right;
   }
 
   .product-figure--compact .menu-bar {
     align-self: flex-start;
-    font-size: 12.5px;
+    font-size: var(--mockup-menu-compact-size);
   }
 
   .product-figure--compact .failure-menu {
@@ -247,15 +247,15 @@ const { compact = false, interactive = false } = Astro.props;
       align-self: stretch;
       justify-content: center;
       overflow: hidden;
-      font-size: 12px;
+      font-size: var(--mockup-menu-mobile-size);
     }
 
     .menu-bar span {
-      padding-inline: 5px;
+      padding-inline: var(--mockup-menu-mobile-item-padding);
     }
 
     .failure-menu {
-      width: min(296px, calc(100% - 20px));
+      width: min(var(--mockup-menu-static-panel-width), calc(100% - var(--mockup-menu-mobile-panel-inset)));
     }
 
     .config-panel {
