@@ -1,5 +1,13 @@
 const initializeMenu = (root) => {
+  const menuBar = root.querySelector('.menu-bar');
+  const menuSurface = root.querySelector('[data-menu-surface]');
   const panel = root.querySelector('[data-example-panel]');
+  const collapsedTrigger = root.querySelector('[data-collapsed-trigger]');
+  const collapsedPanel = root.querySelector('[data-collapsed-panel]');
+  const collapsedItems = root.querySelector('[data-collapsed-items]');
+  const collapsedEmpty = root.querySelector('[data-collapsed-empty]');
+  const expandAction = root.querySelector('[data-expand-action]');
+  const collapseAction = panel?.querySelector('[data-collapse-action]');
   const triggers = [...root.querySelectorAll('[data-menu-item]')];
   const runAction = panel?.querySelector('[data-run-action]');
   const refreshAction = panel?.querySelector('[data-refresh-action]');
@@ -23,7 +31,7 @@ const initializeMenu = (root) => {
   const configPreview = root.closest('.product-visual')?.querySelector('[data-sample-config]');
   const initialConfig = configPreview?.textContent ?? '';
 
-  if (!panel || !runAction || !refreshAction || !hideAction || !configuredActions || !clickLink || !noClick || !summary || !failureDetails || !meta || !diagnostics || !diagnosticItem || !diagnosticRefresh || !diagnosticFormat || !diagnosticClick || !diagnosticError || !diagnosticStale || !diagnosticHidden || !feedback || !emptyState || triggers.length === 0) {
+  if (!menuBar || !menuSurface || !panel || !collapsedTrigger || !collapsedPanel || !collapsedItems || !collapsedEmpty || !expandAction || !collapseAction || !runAction || !refreshAction || !hideAction || !configuredActions || !clickLink || !noClick || !summary || !failureDetails || !meta || !diagnostics || !diagnosticItem || !diagnosticRefresh || !diagnosticFormat || !diagnosticClick || !diagnosticError || !diagnosticStale || !diagnosticHidden || !feedback || !emptyState || triggers.length === 0) {
     return;
   }
 
@@ -40,6 +48,8 @@ const initializeMenu = (root) => {
   const visibleTriggers = () => triggers.filter((trigger) => !stateFor(trigger.dataset.menuItem).hidden);
   let activeName = visibleTriggers()[0]?.dataset.menuItem ?? triggers[0].dataset.menuItem;
   let panelOpen = false;
+  let collapsed = false;
+  let collapsedRootOpen = false;
   let diagnosticsVisible = false;
   let renderedActionName = null;
 
@@ -54,6 +64,69 @@ const initializeMenu = (root) => {
     } catch {
       return [];
     }
+  };
+
+  const renderCollapsedItems = () => {
+    collapsedItems.replaceChildren();
+    const visible = visibleTriggers();
+    collapsedEmpty.hidden = visible.length !== 0;
+
+    visible.forEach((trigger) => {
+      const itemName = trigger.dataset.menuItem;
+      const itemState = stateFor(itemName);
+      const label = trigger.dataset.itemLabel ?? itemName;
+      const value = itemState.failed ? trigger.dataset.displayValue : trigger.dataset.value;
+      const row = document.createElement('button');
+      row.className = 'collapsed-menu__item';
+      row.type = 'button';
+      row.setAttribute('role', 'menuitem');
+      row.setAttribute('aria-haspopup', 'menu');
+      row.setAttribute('aria-controls', 'example-menu-panel');
+      row.setAttribute('aria-expanded', String(collapsedRootOpen && panelOpen && activeName === itemName));
+      row.dataset.collapsedItem = itemName;
+      row.dataset.state = itemState.refreshing ? 'running' : itemState.failed ? 'failed' : 'fresh';
+
+      const name = document.createElement('span');
+      name.className = 'collapsed-menu__item-name';
+      name.textContent = label;
+      row.append(name);
+
+      if (value) {
+        const preview = document.createElement('span');
+        preview.className = 'collapsed-menu__item-value';
+        preview.textContent = value;
+        row.append(preview);
+      }
+
+      const indicator = document.createElement('span');
+      indicator.className = 'collapsed-menu__item-indicator';
+      indicator.setAttribute('aria-hidden', 'true');
+      indicator.textContent = '›';
+      row.append(indicator);
+
+      row.setAttribute('aria-label', `${label}${value ? `, ${value}` : ''}`);
+      row.addEventListener('pointerenter', () => openCollapsedItem(trigger, false));
+      row.addEventListener('click', (event) => {
+        event.stopPropagation();
+        openCollapsedItem(trigger, event.detail === 0);
+      });
+      row.addEventListener('keydown', (event) => {
+        const rows = [...collapsedItems.querySelectorAll('[data-collapsed-item]')];
+        const index = rows.indexOf(row);
+        if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+          event.preventDefault();
+          const delta = event.key === 'ArrowDown' ? 1 : -1;
+          rows[(index + delta + rows.length) % rows.length]?.focus();
+        } else if (event.key === 'ArrowRight' || event.key === 'Enter' || event.key === ' ') {
+          event.preventDefault();
+          openCollapsedItem(trigger, true);
+        } else if (event.key === 'Escape') {
+          event.preventDefault();
+          closeCollapsedRoot();
+        }
+      });
+      collapsedItems.append(row);
+    });
   };
 
   const updateConfigPreview = () => {
@@ -120,17 +193,25 @@ const initializeMenu = (root) => {
       activeName = visible[0]?.dataset.menuItem ?? activeName;
     }
     const trigger = activeTrigger();
-    emptyState.hidden = visible.length !== 0;
+    menuBar.classList.toggle('menu-bar--collapsed', collapsed);
+    menuSurface.classList.toggle('interactive-menu__surface--collapsed', collapsed);
+    menuBar.setAttribute('aria-label', collapsed ? 'Collapsed sample pinchos menu bar' : 'Interactive sample pinchos menu bar');
+    collapsedTrigger.hidden = !collapsed;
+    collapsedTrigger.setAttribute('aria-expanded', String(collapsedRootOpen));
+    collapsedPanel.hidden = !collapsedRootOpen;
+    emptyState.hidden = collapsed || visible.length !== 0;
 
     triggers.forEach((itemTrigger) => {
       const isActive = itemTrigger === trigger;
       const itemState = stateFor(itemTrigger.dataset.menuItem);
-      itemTrigger.hidden = itemState.hidden;
+      itemTrigger.hidden = collapsed || itemState.hidden;
       itemTrigger.setAttribute('aria-expanded', String(panelOpen && isActive));
       itemTrigger.dataset.state = itemState.refreshing ? 'running' : itemState.failed ? 'failed' : 'fresh';
       const itemDisplay = itemTrigger.querySelector('[data-item-display]');
       if (itemDisplay) itemDisplay.textContent = itemState.failed ? itemTrigger.dataset.displayValue : itemTrigger.dataset.value;
     });
+
+    renderCollapsedItems();
 
     updateConfigPreview();
 
@@ -187,6 +268,7 @@ const initializeMenu = (root) => {
     });
     clickLink.hidden = !clickCommand;
     noClick.hidden = Boolean(clickCommand);
+    collapseAction.textContent = collapsed ? 'Expand Pinchos' : 'Collapse Pinchos';
 
     if (clickCommand) {
       clickLink.href = trigger.dataset.clickUrl ?? '';
@@ -215,12 +297,56 @@ const initializeMenu = (root) => {
     updatePanel();
   };
 
+  const openCollapsedItem = (trigger, focusActions) => {
+    if (!collapsed || !collapsedRootOpen) return;
+    openItem(trigger, false);
+    if (focusActions) focusFirstAction();
+  };
+
+  const closeCollapsedRoot = () => {
+    collapsedRootOpen = false;
+    panelOpen = false;
+    diagnosticsVisible = false;
+    diagnostics.open = false;
+    updatePanel();
+    collapsedTrigger.focus();
+  };
+
   const closePanel = () => {
     panelOpen = false;
     diagnosticsVisible = false;
     diagnostics.open = false;
     updatePanel();
   };
+
+  collapsedTrigger.addEventListener('click', () => {
+    collapsedRootOpen = !collapsedRootOpen;
+    panelOpen = false;
+    diagnosticsVisible = false;
+    diagnostics.open = false;
+    updatePanel();
+    if (collapsedRootOpen) collapsedItems.querySelector('[data-collapsed-item]')?.focus();
+  });
+
+  collapseAction.addEventListener('click', () => {
+    collapsed = true;
+    collapsedRootOpen = false;
+    panelOpen = false;
+    diagnosticsVisible = false;
+    diagnostics.open = false;
+    updatePanel();
+    collapsedTrigger.focus();
+  });
+
+  expandAction.addEventListener('click', () => {
+    collapsed = false;
+    collapsedRootOpen = false;
+    panelOpen = false;
+    diagnosticsVisible = false;
+    diagnostics.open = false;
+    updatePanel();
+    activeTrigger()?.focus();
+  });
 
   triggers.forEach((trigger) => {
     trigger.addEventListener('keydown', (event) => {
@@ -254,11 +380,14 @@ const initializeMenu = (root) => {
     current.refreshing = false;
     current.activity = null;
     panelOpen = false;
+    collapsedRootOpen = collapsed;
     diagnosticsVisible = false;
     diagnostics.open = false;
     activeName = nextTrigger?.dataset.menuItem ?? activeName;
     updatePanel();
-    if (nextTrigger) {
+    if (collapsed) {
+      collapsedItems.querySelector('[data-collapsed-item]')?.focus();
+    } else if (nextTrigger) {
       nextTrigger.focus();
     } else {
       emptyState.focus();
@@ -291,13 +420,25 @@ const initializeMenu = (root) => {
   });
 
   document.addEventListener('click', (event) => {
-    if (panelOpen && !root.contains(event.target)) {
-      closePanel();
+    if ((panelOpen || collapsedRootOpen) && !root.contains(event.target)) {
+      panelOpen = false;
+      collapsedRootOpen = false;
+      diagnosticsVisible = false;
+      diagnostics.open = false;
+      updatePanel();
     }
   });
 
   document.addEventListener('keydown', (event) => {
-    if (event.key === 'Escape' && panelOpen && root.contains(document.activeElement)) {
+    if (event.key !== 'Escape' || !root.contains(document.activeElement)) return;
+    if (collapsed && panelOpen) {
+      event.preventDefault();
+      closePanel();
+      collapsedItems.querySelector(`[data-collapsed-item="${activeName}"]`)?.focus();
+    } else if (collapsedRootOpen) {
+      event.preventDefault();
+      closeCollapsedRoot();
+    } else if (panelOpen) {
       event.preventDefault();
       closePanel();
       activeTrigger()?.focus();

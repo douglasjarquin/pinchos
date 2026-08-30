@@ -1,5 +1,6 @@
 ---
 import sampleConfig from '../../../example/pinchos.toml?raw';
+import Mark from './Mark.astro';
 import '../styles/interactive-menu-bar.css';
 
 const configValue = (itemName: string, key: string) => {
@@ -47,10 +48,21 @@ const codexClick = configValue('codex', 'click');
 
 <div class="interactive-menu" data-interactive-menu>
   <p class="interactive-menu__description" id="interactive-menu-description">
-    Interactive preview of the sample config. Each item has a default Run action, a fallback Refresh Now action, a config-backed Hide action, and any configured TOML actions. Option-click an item, or press Alt+Enter while it is focused, to reveal diagnostics. Hover never reveals diagnostics. Values are illustrative; no local commands run in the browser.
+    Interactive preview of the sample config. Each item has a default Run action, a fallback Refresh Now action, a config-backed Hide action, and any configured TOML actions. Collapse Pinchos turns the bar into one icon with first-level pinchos and nested original menus. Option-click an item, or press Alt+Enter while it is focused, to reveal diagnostics. Hover never reveals diagnostics. Values are illustrative; no local commands run in the browser.
   </p>
 
   <div class="menu-bar" role="group" aria-label="Interactive sample pinchos menu bar" aria-describedby="interactive-menu-description">
+    <button
+      class="menu-bar__collapsed-item"
+      type="button"
+      aria-label="Pinchos menu"
+      aria-expanded="false"
+      aria-controls="collapsed-menu-panel"
+      data-collapsed-trigger
+      hidden
+    >
+      <Mark size={16} />
+    </button>
     <button
       class="menu-bar__item"
       id="example-menu-item-claude"
@@ -149,15 +161,30 @@ const codexClick = configValue('codex', 'click');
     </a>
   </div>
 
-  <div
-    class="example-menu"
-    id="example-menu-panel"
-    role="region"
-    aria-label="Claude item submenu"
-    aria-live="polite"
-    hidden
-    data-example-panel
-  >
+  <div class="interactive-menu__surface" data-menu-surface>
+    <div
+      class="collapsed-menu"
+      id="collapsed-menu-panel"
+      role="menu"
+      aria-label="Collapsed Pinchos menu"
+      hidden
+      data-collapsed-panel
+    >
+      <div class="collapsed-menu__items" data-collapsed-items></div>
+      <p class="collapsed-menu__empty" data-collapsed-empty hidden>No visible Pinchos</p>
+      <div class="menu-rule" aria-hidden="true"></div>
+      <button class="example-menu__action" type="button" role="menuitem" data-expand-action>Expand Pinchos</button>
+    </div>
+
+    <div
+      class="example-menu"
+      id="example-menu-panel"
+      role="region"
+      aria-label="Claude item submenu"
+      aria-live="polite"
+      hidden
+      data-example-panel
+    >
     <div class="example-menu__row-set" data-action-list>
       <button class="example-menu__action" type="button" data-run-action>Run Claude</button>
       <div data-configured-actions></div>
@@ -191,7 +218,9 @@ const codexClick = configValue('codex', 'click');
     </details>
     <div class="menu-rule" aria-hidden="true"></div>
     <button class="example-menu__action" type="button" data-hide-action>Hide</button>
+    <button class="example-menu__action" type="button" data-collapse-action>Collapse Pinchos</button>
     <p class="example-menu__feedback" data-feedback role="status" hidden></p>
+    </div>
   </div>
 </div>
 
