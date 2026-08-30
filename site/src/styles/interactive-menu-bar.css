@@ -50,12 +50,12 @@
   cursor: pointer;
   font: inherit;
   white-space: nowrap;
-  transition: background-color 150ms ease-out, color 150ms ease-out;
+  transition: background-color var(--mockup-menu-transition-duration) ease-out, color var(--mockup-menu-transition-duration) ease-out;
 }
 
 .interactive-menu .menu-bar__item:hover,
 .interactive-menu .menu-bar__item[aria-expanded='true'] {
-  background: color-mix(in srgb, var(--color-dark-copy) 22%, transparent);
+  background: color-mix(in srgb, var(--color-dark-copy) var(--mockup-menu-hover-mix), transparent);
 }
 
 .interactive-menu .menu-bar__empty {
@@ -69,8 +69,8 @@
   color: var(--color-dark-copy);
   font-family: var(--font-mono);
   font-size: var(--font-size-caption);
-  line-height: 1.35;
-  opacity: 0.76;
+  line-height: var(--mockup-menu-row-line-height);
+  opacity: var(--mockup-menu-muted-opacity);
   overflow-wrap: anywhere;
   text-decoration: none;
   white-space: normal;
@@ -113,10 +113,10 @@
   color: var(--color-ink);
   cursor: pointer;
   font: inherit;
-  line-height: 1.35;
+  line-height: var(--mockup-menu-row-line-height);
   text-align: left;
   text-decoration: none;
-  transition: background-color 150ms ease-out, color 150ms ease-out;
+  transition: background-color var(--mockup-menu-transition-duration) ease-out, color var(--mockup-menu-transition-duration) ease-out;
 }
 
 .interactive-menu .example-menu__action:hover {
@@ -150,7 +150,7 @@
 .interactive-menu .example-menu__summary {
   padding-block: var(--space-1) var(--mockup-menu-tight-space);
   font-weight: 600;
-  line-height: 1.35;
+  line-height: var(--mockup-menu-row-line-height);
 }
 
 .interactive-menu .example-menu__failure {
@@ -159,7 +159,7 @@
 
 .interactive-menu .example-menu__failure-label {
   font-weight: 600;
-  line-height: 1.35;
+  line-height: var(--mockup-menu-row-line-height);
 }
 
 .interactive-menu .example-menu__error {
@@ -169,7 +169,7 @@
   color: var(--color-meta-readable);
   font-family: var(--font-mono);
   font-size: var(--mockup-menu-small-size);
-  line-height: 1.5;
+  line-height: var(--mockup-menu-meta-line-height);
 }
 
 .interactive-menu .example-menu__meta {
@@ -177,7 +177,7 @@
   color: var(--color-meta-readable);
   font-family: var(--font-mono);
   font-size: var(--mockup-menu-small-size);
-  line-height: 1.5;
+  line-height: var(--mockup-menu-meta-line-height);
 }
 
 .interactive-menu .example-menu__diagnostics {
@@ -218,7 +218,7 @@
   color: var(--color-meta-readable);
   font-family: var(--font-mono);
   font-size: var(--mockup-menu-small-size);
-  line-height: 1.55;
+  line-height: var(--mockup-menu-diagnostics-line-height);
 }
 
 .interactive-menu .example-menu__diagnostics-content p {

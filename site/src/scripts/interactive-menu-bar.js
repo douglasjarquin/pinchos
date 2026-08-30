@@ -228,6 +228,12 @@ const initializeMenu = (root) => {
         event.preventDefault();
         openItem(trigger, true);
         diagnostics.querySelector('summary')?.focus();
+        return;
+      }
+      if (event.key === 'Enter' || event.key === ' ') {
+        event.preventDefault();
+        openItem(trigger, false);
+        focusFirstAction();
       }
     });
 
