@@ -244,6 +244,10 @@ final class StatusItemController: StatusItemMenuDelegate {
 
     private func updateRecoveryItem() {
         guard recoveryState.isVisible else { return }
+        if barPresentation == .collapsed {
+            warningItem?.isVisible = false
+            return
+        }
         if warningItem == nil {
             guard let statusItem = statusItemHost.makeStatusItem() else { return }
             statusItem.button?.target = self
@@ -386,12 +390,14 @@ final class StatusItemController: StatusItemMenuDelegate {
 
     private func synchronizeCollapsedVisibility() {
         guard barPresentation == .collapsed else { return }
+        warningItem?.isVisible = false
         for item in items.values {
             item.setStatusItemVisible(false)
         }
     }
 
     private func restoreExpandedVisibility() {
+        warningItem?.isVisible = recoveryState.isVisible
         for item in items.values {
             item.setStatusItemVisible(true)
         }
