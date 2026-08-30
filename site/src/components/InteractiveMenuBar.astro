@@ -1,0 +1,150 @@
+---
+import sampleConfig from '../../../example/pinchos.toml?raw';
+import '../styles/interactive-menu-bar.css';
+
+const configValue = (itemName: string, key: string) => {
+  const section = sampleConfig.match(
+    new RegExp(`\\[item\\.${itemName}\\]([\\s\\S]*?)(?=\\n\\[item\\.|$)`),
+  )?.[1] ?? '';
+
+  return section.match(new RegExp(`^${key} = "([^"]*)"`, 'm'))?.[1] ?? '';
+};
+
+const clickTarget = (command: string) => command.replace(/^open /, '');
+const batteryFormat = configValue('battery', 'format');
+const batteryDisplay = batteryFormat.replace('{output}', '94%');
+const claudeClick = configValue('claude', 'click');
+const codexClick = configValue('codex', 'click');
+---
+
+<div class="interactive-menu" data-interactive-menu>
+  <p class="interactive-menu__description" id="interactive-menu-description">
+    Interactive preview of the sample config. Values are illustrative; no local commands run in the browser.
+  </p>
+
+  <div class="menu-bar" role="group" aria-label="Interactive sample pinchos menu bar" aria-describedby="interactive-menu-description">
+    <button
+      class="menu-bar__item"
+      id="example-menu-item-claude"
+      type="button"
+      aria-expanded="true"
+      aria-controls="example-menu-panel"
+      aria-label="Claude, 82 percent, failed, showing last good value"
+      data-menu-item="claude"
+      data-item-label="Claude"
+      data-value="82%"
+      data-display-value="82% ⚠︎"
+      data-interval={configValue('claude', 'interval')}
+      data-format={configValue('claude', 'format')}
+      data-click-command={claudeClick}
+      data-click-url={clickTarget(claudeClick)}
+      data-error-policy={configValue('claude', 'on_error')}
+      data-stale-after={configValue('claude', 'stale_after')}
+      data-initial-state="failed"
+    >
+      <span>claude</span><span data-item-display>82% ⚠︎</span>
+    </button>
+    <button
+      class="menu-bar__item"
+      id="example-menu-item-codex"
+      type="button"
+      aria-expanded="false"
+      aria-controls="example-menu-panel"
+      aria-label="Codex, 68 percent, fresh"
+      data-menu-item="codex"
+      data-item-label="Codex"
+      data-value="68%"
+      data-display-value="68%"
+      data-interval={configValue('codex', 'interval')}
+      data-format={configValue('codex', 'format')}
+      data-click-command={codexClick}
+      data-click-url={clickTarget(codexClick)}
+      data-error-policy={configValue('codex', 'on_error')}
+      data-stale-after={configValue('codex', 'stale_after')}
+    >
+      <span>codex</span><span data-item-display>68%</span>
+    </button>
+    <button
+      class="menu-bar__item"
+      id="example-menu-item-clock"
+      type="button"
+      aria-expanded="false"
+      aria-controls="example-menu-panel"
+      aria-label="Clock, 14 colon 32, fresh"
+      data-menu-item="clock"
+      data-item-label="Clock"
+      data-value="14:32"
+      data-display-value="14:32"
+      data-interval={configValue('clock', 'interval')}
+      data-format={configValue('clock', 'format')}
+      data-click-command={configValue('clock', 'click')}
+      data-click-url={clickTarget(configValue('clock', 'click'))}
+      data-error-policy={configValue('clock', 'on_error')}
+      data-stale-after={configValue('clock', 'stale_after')}
+    >
+      <span>14:32</span>
+    </button>
+    <button
+      class="menu-bar__item"
+      id="example-menu-item-battery"
+      type="button"
+      aria-expanded="false"
+      aria-controls="example-menu-panel"
+      aria-label="Battery, 94 percent, fresh"
+      data-menu-item="battery"
+      data-item-label="Battery"
+      data-value={batteryDisplay}
+      data-display-value={batteryDisplay}
+      data-interval={configValue('battery', 'interval')}
+      data-format={batteryFormat}
+      data-click-command={configValue('battery', 'click')}
+      data-click-url={clickTarget(configValue('battery', 'click'))}
+      data-error-policy={configValue('battery', 'on_error')}
+      data-stale-after={configValue('battery', 'stale_after')}
+    >
+      <span>{batteryDisplay}</span>
+    </button>
+  </div>
+
+  <div
+    class="example-menu"
+    id="example-menu-panel"
+    role="region"
+    aria-label="Claude item menu"
+    aria-labelledby="example-menu-item-claude"
+    aria-live="polite"
+    data-example-panel
+  >
+    <div class="example-menu__row-set">
+      <a class="example-menu__action" data-click-link target="_blank" rel="noreferrer">
+        <span>Open Claude usage page</span><span aria-hidden="true">↗</span>
+      </a>
+      <span class="example-menu__no-click" data-no-click hidden>no click action configured</span>
+      <button class="example-menu__action" type="button" data-refresh-action>Refresh Now</button>
+    </div>
+    <div class="menu-rule" aria-hidden="true"></div>
+    <p class="example-menu__summary" data-summary>82% · failed · showing last good value</p>
+    <div class="example-menu__failure" data-failure-details>
+      <p class="example-menu__failure-label">Failed · exit 1 · showing last good value</p>
+      <code class="example-menu__error" data-error-preview>jq: parse error: Invalid numeric literal</code>
+      <button class="example-menu__action" type="button" data-copy-error data-error-text="jq: parse error: Invalid numeric literal">Copy Full Error</button>
+    </div>
+    <p class="example-menu__meta" data-item-meta>Refresh: every 5m · Format: &#123;output&#125;%</p>
+    <details class="example-menu__diagnostics" data-diagnostics>
+      <summary class="example-menu__diagnostics-trigger">
+        <span>Diagnostics</span><span aria-hidden="true" data-diagnostics-indicator>▸</span>
+      </summary>
+      <div class="example-menu__diagnostics-content">
+        <p data-diagnostic-item>[item.claude]</p>
+        <p data-diagnostic-refresh>Refresh: every 5m</p>
+        <p data-diagnostic-format>Format: &#123;output&#125;%</p>
+        <p data-diagnostic-click>Click: open https://claude.ai/settings/usage</p>
+        <p data-diagnostic-error>On error: keep_last</p>
+        <p data-diagnostic-stale>Stale after: 15m</p>
+      </div>
+    </details>
+    <p class="example-menu__feedback" data-feedback role="status" hidden></p>
+  </div>
+</div>
+
+<script src="../scripts/interactive-menu-bar.js"></script>

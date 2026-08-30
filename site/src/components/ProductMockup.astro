@@ -1,31 +1,39 @@
 ---
 import sampleConfig from '../../../example/pinchos.toml?raw';
+import InteractiveMenuBar from './InteractiveMenuBar.astro';
 
 interface Props {
   compact?: boolean;
+  interactive?: boolean;
 }
 
-const { compact = false } = Astro.props;
+const { compact = false, interactive = false } = Astro.props;
 ---
 
 <figure class:list={['product-figure', { 'product-figure--compact': compact }]}>
   <div class="product-visual">
-    <div class="menu-bar" role="group" aria-label="Example menu bar with a failed deploy item">
-      <span>disk 82%</span>
-      <span>vpn up</span>
-      <span class="menu-bar__warning">deploy ⚠︎</span>
-      <span>14:32</span>
-    </div>
-    <div class="failure-menu" role="group" aria-label="Example pinchos failure menu">
-      <div class="failure-menu__row">Run Deploy Check</div>
-      <div class="failure-menu__row">Refresh Now</div>
-      <div class="menu-rule"></div>
-      <div class="failure-menu__row failure-menu__row--strong">Failed 2 minutes ago — exit 1</div>
-      <div class="failure-menu__error">jq: parse error: Invalid numeric literal</div>
-      <div class="failure-menu__row">Copy Full Error</div>
-      <div class="menu-rule"></div>
-      <div class="failure-menu__row failure-menu__row--between"><span>Diagnostics</span><span>▸</span></div>
-    </div>
+    {interactive ? (
+      <InteractiveMenuBar />
+    ) : (
+      <>
+        <div class="menu-bar" role="group" aria-label="Example menu bar with a failed deploy item">
+          <span>disk 82%</span>
+          <span>vpn up</span>
+          <span class="menu-bar__warning">deploy ⚠︎</span>
+          <span>14:32</span>
+        </div>
+        <div class="failure-menu" role="group" aria-label="Example pinchos failure menu">
+          <div class="failure-menu__row">Run Deploy Check</div>
+          <div class="failure-menu__row">Refresh Now</div>
+          <div class="menu-rule"></div>
+          <div class="failure-menu__row failure-menu__row--strong">Failed 2 minutes ago — exit 1</div>
+          <div class="failure-menu__error">jq: parse error: Invalid numeric literal</div>
+          <div class="failure-menu__row">Copy Full Error</div>
+          <div class="menu-rule"></div>
+          <div class="failure-menu__row failure-menu__row--between"><span>Diagnostics</span><span>▸</span></div>
+        </div>
+      </>
+    )}
     {!compact && (
       <details class="config-disclosure">
         <summary aria-controls="sample-pinchos-config">
@@ -38,7 +46,13 @@ const { compact = false } = Astro.props;
       </details>
     )}
   </div>
-  {!compact && <figcaption>a failing item promotes its cause to the first level — one glance, one Copy Full Error.</figcaption>}
+  {!compact && (
+    <figcaption>
+      {interactive
+        ? 'click an item to explore its configured menu; refreshes are simulated in the browser.'
+        : 'a failing item promotes its cause to the first level — one glance, one Copy Full Error.'}
+    </figcaption>
+  )}
 </figure>
 
 <style>

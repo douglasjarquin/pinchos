@@ -1,0 +1,224 @@
+.interactive-menu {
+  min-width: 0;
+}
+
+.interactive-menu [hidden] {
+  display: none !important;
+}
+
+.interactive-menu__description {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.interactive-menu .menu-bar {
+  display: flex;
+  min-width: 0;
+  min-height: 44px;
+  align-items: center;
+  align-self: flex-end;
+  max-width: 100%;
+  padding-inline: var(--space-1);
+  overflow-x: auto;
+  border-radius: 7px;
+  background: var(--color-ink);
+  box-shadow: var(--shadow-product);
+  color: var(--color-dark-copy);
+  font-family: -apple-system, BlinkMacSystemFont, 'Helvetica Neue', sans-serif;
+  font-size: 13px;
+  white-space: nowrap;
+}
+
+.interactive-menu .menu-bar__item {
+  display: inline-flex;
+  min-height: 44px;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: var(--space-1);
+  padding-inline: var(--space-2);
+  border: 0;
+  border-radius: var(--radius-button);
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  font: inherit;
+  white-space: nowrap;
+  transition: background-color 150ms ease-out, color 150ms ease-out;
+}
+
+.interactive-menu .menu-bar__item:hover,
+.interactive-menu .menu-bar__item[aria-expanded='true'] {
+  background: color-mix(in srgb, var(--color-dark-copy) 22%, transparent);
+}
+
+.interactive-menu .example-menu {
+  width: min(360px, calc(100% - var(--space-8)));
+  align-self: flex-end;
+  margin-top: var(--space-1);
+  padding-block: var(--space-1);
+  border: 1px solid var(--color-rule);
+  border-radius: 10px;
+  background: var(--color-paper-field);
+  box-shadow: var(--shadow-product);
+  color: var(--color-ink);
+  font-family: -apple-system, BlinkMacSystemFont, 'Helvetica Neue', sans-serif;
+  font-size: 13px;
+}
+
+.interactive-menu .example-menu__row-set {
+  display: flex;
+  flex-direction: column;
+}
+
+.interactive-menu .example-menu__action {
+  display: flex;
+  width: 100%;
+  min-height: 44px;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  padding: var(--space-2) 14px;
+  border: 0;
+  background: transparent;
+  color: var(--color-ink);
+  cursor: pointer;
+  font: inherit;
+  line-height: 1.35;
+  text-align: left;
+  text-decoration: none;
+  transition: background-color 150ms ease-out, color 150ms ease-out;
+}
+
+.interactive-menu .example-menu__action:hover {
+  background: var(--color-paper-raised);
+  color: var(--color-link-readable);
+}
+
+.interactive-menu .example-menu__no-click {
+  display: flex;
+  min-height: 44px;
+  align-items: center;
+  padding: var(--space-2) 14px;
+  color: var(--color-meta-readable);
+  font-family: var(--font-mono);
+  font-size: 11px;
+}
+
+.interactive-menu .menu-rule {
+  height: 1px;
+  margin: var(--space-1) 14px;
+  background: var(--color-rule);
+}
+
+.interactive-menu .example-menu__summary,
+.interactive-menu .example-menu__meta,
+.interactive-menu .example-menu__failure-label {
+  margin: 0;
+  padding-inline: 14px;
+}
+
+.interactive-menu .example-menu__summary {
+  padding-block: var(--space-1) 2px;
+  font-weight: 600;
+  line-height: 1.35;
+}
+
+.interactive-menu .example-menu__failure {
+  padding-top: 2px;
+}
+
+.interactive-menu .example-menu__failure-label {
+  font-weight: 600;
+  line-height: 1.35;
+}
+
+.interactive-menu .example-menu__error {
+  display: block;
+  overflow-wrap: anywhere;
+  padding: 2px 14px var(--space-1);
+  color: var(--color-meta-readable);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.interactive-menu .example-menu__meta {
+  padding-block: var(--space-1) var(--space-2);
+  color: var(--color-meta-readable);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.interactive-menu .example-menu__diagnostics {
+  border-top: 1px solid var(--color-rule);
+}
+
+.interactive-menu .example-menu__diagnostics-trigger {
+  display: flex;
+  min-height: 44px;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  padding: var(--space-2) 14px;
+  cursor: pointer;
+  list-style: none;
+}
+
+.interactive-menu .example-menu__diagnostics-trigger::-webkit-details-marker {
+  display: none;
+}
+
+.interactive-menu .example-menu__diagnostics-trigger::marker {
+  content: '';
+}
+
+.interactive-menu .example-menu__diagnostics-trigger:hover {
+  background: var(--color-paper-raised);
+  color: var(--color-link-readable);
+}
+
+.interactive-menu .example-menu__diagnostics[open] [data-diagnostics-indicator] {
+  transform: rotate(90deg);
+}
+
+.interactive-menu .example-menu__diagnostics-content {
+  padding: var(--space-1) 14px var(--space-2);
+  border-top: 1px solid var(--color-rule);
+  color: var(--color-meta-readable);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  line-height: 1.55;
+}
+
+.interactive-menu .example-menu__diagnostics-content p {
+  overflow-wrap: anywhere;
+  margin: 0;
+}
+
+.interactive-menu .example-menu__feedback {
+  margin: 0;
+  padding: 0 14px var(--space-1);
+  color: var(--color-link-readable);
+  font-family: var(--font-mono);
+  font-size: 11px;
+}
+
+@media (max-width: 720px) {
+  .interactive-menu .menu-bar {
+    align-self: stretch;
+    justify-content: flex-start;
+    font-size: 12px;
+  }
+
+  .interactive-menu .example-menu {
+    width: 100%;
+  }
+}

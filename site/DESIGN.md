@@ -82,9 +82,9 @@ The mobile breakpoint is 720px; grids collapse to one column and horizontal padd
 
 - **Structure:** dark system-font menu bar, failing item marker, native-looking menu with summary, bounded stderr, and copy action.
 - **Variants:** landing hero and docs component specimen.
-- **States:** healthy bar and failing menu are both represented; failure is textual, not color-only.
-- **Accessibility:** `figure` has a meaningful label and all product vocabulary remains selectable text.
-- **Motion:** none, matching the product design system.
+- **States:** healthy bar and failing menu are both represented; failure is textual, not color-only; the landing demo also switches between the four canonical sample items and demonstrates refresh recovery.
+- **Accessibility:** `figure` has a meaningful label, menu-bar items are native buttons, menu actions are keyboard reachable, and all product vocabulary remains selectable text.
+- **Motion:** no idle motion; the landing demo uses instantaneous state changes and the existing 150ms color/background feedback for controls.
 
 ### Action and text link
 
@@ -106,6 +106,8 @@ The mobile breakpoint is 720px; grids collapse to one column and horizontal padd
 
 The source designs call for no idle motion.
 Interactive anchors use only a 150ms ease-out transition for affordance feedback.
+The homepage product mockup is a deliberate scoped client-side exception: its script simulates the sample TOML menu without reading local config or executing commands.
+Interactive state changes are instantaneous and respect the same reduced-motion rule as the rest of the site.
 All motion is disabled under `prefers-reduced-motion: reduce`.
 
 ## 7. Depth and surface
@@ -118,7 +120,7 @@ There are no gradients, glass effects, decorative blobs, or dark page surfaces o
 
 - Target WCAG 2.2 AA with at least 4.5:1 body contrast and 3:1 large-text contrast.
 - Every route has one descriptive title, a language declaration, semantic landmarks, keyboard-reachable links, and visible focus.
-- The site has no client-side JavaScript because the current routes are static.
+- The site has no client-side JavaScript except the homepage ProductMockup demo, whose scoped script only simulates the canonical sample config; the compact design-system specimen remains static.
 - Long technical strings wrap or scroll inside their own code block without causing page-level overflow.
 - Respect `prefers-reduced-motion` even though the design intentionally has no decorative motion.
 
