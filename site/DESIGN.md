@@ -80,10 +80,10 @@ The mobile breakpoint is 720px; grids collapse to one column and horizontal padd
 
 ### Product mockup
 
-- **Structure:** dark system-font menu bar, failing item marker, native-looking menu with summary, bounded stderr, and copy action.
+- **Structure:** dark system-font menu bar, failing item marker, and a native-looking in-place submenu with default run/refresh actions, TOML-configured actions, summary, bounded stderr, and copy action.
 - **Variants:** landing hero and docs component specimen.
-- **States:** healthy bar and failing menu are both represented; failure is textual, not color-only; the landing demo also switches between the four canonical sample items and demonstrates refresh recovery.
-- **Accessibility:** `figure` has a meaningful label, menu-bar items are native buttons, menu actions are keyboard reachable, and all product vocabulary remains selectable text.
+- **States:** healthy bar and failing menu are both represented; failure is textual, not color-only; the landing demo switches between the four canonical sample items, opens each item's submenu, exposes `Run <item name>` and `Refresh Now` before configured actions, and demonstrates refresh recovery.
+- **Accessibility:** `figure` has a meaningful label, menu-bar items are native buttons with expanded state and controlled-panel relationships, the first submenu action receives focus for keyboard activation, menu actions are keyboard reachable, and all product vocabulary remains selectable text.
 - **Motion:** no idle motion; the landing demo uses instantaneous state changes and the existing 150ms color/background feedback for controls.
 
 ### Action and text link
@@ -107,6 +107,7 @@ The mobile breakpoint is 720px; grids collapse to one column and horizontal padd
 The source designs call for no idle motion.
 Interactive anchors use only a 150ms ease-out transition for affordance feedback.
 The homepage product mockup is a deliberate scoped client-side exception: its script simulates the sample TOML menu without reading local config or executing commands.
+The submenu keeps generated `Run <item name>` and `Refresh Now` defaults first, then renders `[[item.<name>.action]]` entries and the configured `click` action from the canonical TOML sample.
 Interactive state changes are instantaneous and respect the same reduced-motion rule as the rest of the site.
 All motion is disabled under `prefers-reduced-motion: reduce`.
 

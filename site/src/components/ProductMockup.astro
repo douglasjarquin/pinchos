@@ -49,7 +49,7 @@ const { compact = false, interactive = false } = Astro.props;
   {!compact && (
     <figcaption>
       {interactive
-        ? 'click an item to explore its configured menu; refreshes are simulated in the browser.'
+        ? 'click an item to open its submenu; default Run and Refresh actions come first, followed by configured TOML actions.'
         : 'a failing item promotes its cause to the first level — one glance, one Copy Full Error.'}
     </figcaption>
   )}

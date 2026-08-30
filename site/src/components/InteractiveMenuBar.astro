@@ -10,6 +10,26 @@ const configValue = (itemName: string, key: string) => {
   return section.match(new RegExp(`^${key} = "([^"]*)"`, 'm'))?.[1] ?? '';
 };
 
+type ConfiguredAction = { title: string; kind: 'run' | 'refresh' };
+
+const configActions = (itemName: string): ConfiguredAction[] => {
+  const actionPattern = new RegExp(
+    `\\[\\[item\\.${itemName}\\.action\\]\\]([\\s\\S]*?)(?=\\n\\[\\[item\\.|\\n\\[item\\.|$)`,
+    'g',
+  );
+
+  return [...sampleConfig.matchAll(actionPattern)].flatMap(([, block]) => {
+    const title = block.match(/^title = "([^"]*)"/m)?.[1];
+    const run = block.match(/^run = "([^"]*)"/m)?.[1];
+    const refresh = /^refresh = true\s*$/m.test(block);
+
+    if (!title) return [];
+    if (run) return [{ title, kind: 'run' }];
+    if (refresh) return [{ title, kind: 'refresh' }];
+    return [];
+  });
+};
+
 const clickTarget = (command: string) => command.replace(/^open /, '');
 const batteryFormat = configValue('battery', 'format');
 const batteryDisplay = batteryFormat.replace('{output}', '94%');
@@ -19,7 +39,7 @@ const codexClick = configValue('codex', 'click');
 
 <div class="interactive-menu" data-interactive-menu>
   <p class="interactive-menu__description" id="interactive-menu-description">
-    Interactive preview of the sample config. Values are illustrative; no local commands run in the browser.
+    Interactive preview of the sample config. Each item has default Run and Refresh actions; configured TOML actions appear below them. Values are illustrative; no local commands run in the browser.
   </p>
 
   <div class="menu-bar" role="group" aria-label="Interactive sample pinchos menu bar" aria-describedby="interactive-menu-description">
@@ -27,9 +47,10 @@ const codexClick = configValue('codex', 'click');
       class="menu-bar__item"
       id="example-menu-item-claude"
       type="button"
-      aria-expanded="true"
+      aria-expanded="false"
       aria-controls="example-menu-panel"
       aria-label="Claude, 82 percent, failed, showing last good value"
+      aria-haspopup="true"
       data-menu-item="claude"
       data-item-label="Claude"
       data-value="82%"
@@ -41,6 +62,7 @@ const codexClick = configValue('codex', 'click');
       data-error-policy={configValue('claude', 'on_error')}
       data-stale-after={configValue('claude', 'stale_after')}
       data-initial-state="failed"
+      data-actions={JSON.stringify(configActions('claude'))}
     >
       <span>claude</span><span data-item-display>82% ⚠︎</span>
     </button>
@@ -51,6 +73,7 @@ const codexClick = configValue('codex', 'click');
       aria-expanded="false"
       aria-controls="example-menu-panel"
       aria-label="Codex, 68 percent, fresh"
+      aria-haspopup="true"
       data-menu-item="codex"
       data-item-label="Codex"
       data-value="68%"
@@ -61,6 +84,7 @@ const codexClick = configValue('codex', 'click');
       data-click-url={clickTarget(codexClick)}
       data-error-policy={configValue('codex', 'on_error')}
       data-stale-after={configValue('codex', 'stale_after')}
+      data-actions={JSON.stringify(configActions('codex'))}
     >
       <span>codex</span><span data-item-display>68%</span>
     </button>
@@ -71,6 +95,7 @@ const codexClick = configValue('codex', 'click');
       aria-expanded="false"
       aria-controls="example-menu-panel"
       aria-label="Clock, 14 colon 32, fresh"
+      aria-haspopup="true"
       data-menu-item="clock"
       data-item-label="Clock"
       data-value="14:32"
@@ -81,6 +106,7 @@ const codexClick = configValue('codex', 'click');
       data-click-url={clickTarget(configValue('clock', 'click'))}
       data-error-policy={configValue('clock', 'on_error')}
       data-stale-after={configValue('clock', 'stale_after')}
+      data-actions={JSON.stringify(configActions('clock'))}
     >
       <span>14:32</span>
     </button>
@@ -91,6 +117,7 @@ const codexClick = configValue('codex', 'click');
       aria-expanded="false"
       aria-controls="example-menu-panel"
       aria-label="Battery, 94 percent, fresh"
+      aria-haspopup="true"
       data-menu-item="battery"
       data-item-label="Battery"
       data-value={batteryDisplay}
@@ -101,6 +128,7 @@ const codexClick = configValue('codex', 'click');
       data-click-url={clickTarget(configValue('battery', 'click'))}
       data-error-policy={configValue('battery', 'on_error')}
       data-stale-after={configValue('battery', 'stale_after')}
+      data-actions={JSON.stringify(configActions('battery'))}
     >
       <span>{batteryDisplay}</span>
     </button>
@@ -110,17 +138,20 @@ const codexClick = configValue('codex', 'click');
     class="example-menu"
     id="example-menu-panel"
     role="region"
-    aria-label="Claude item menu"
+    aria-label="Claude item submenu"
     aria-labelledby="example-menu-item-claude"
     aria-live="polite"
+    hidden
     data-example-panel
   >
-    <div class="example-menu__row-set">
+    <div class="example-menu__row-set" data-action-list>
+      <button class="example-menu__action" type="button" data-run-action>Run Claude</button>
+      <button class="example-menu__action" type="button" data-refresh-action>Refresh Now</button>
+      <div data-configured-actions></div>
       <a class="example-menu__action" data-click-link target="_blank" rel="noreferrer">
         <span>Open Claude usage page</span><span aria-hidden="true">↗</span>
       </a>
       <span class="example-menu__no-click" data-no-click hidden>no click action configured</span>
-      <button class="example-menu__action" type="button" data-refresh-action>Refresh Now</button>
     </div>
     <div class="menu-rule" aria-hidden="true"></div>
     <p class="example-menu__summary" data-summary>82% · failed · showing last good value</p>

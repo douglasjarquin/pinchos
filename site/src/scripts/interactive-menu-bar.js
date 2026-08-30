@@ -1,7 +1,9 @@
 const initializeMenu = (root) => {
   const panel = root.querySelector('[data-example-panel]');
   const triggers = [...root.querySelectorAll('[data-menu-item]')];
+  const runAction = panel?.querySelector('[data-run-action]');
   const refreshAction = panel?.querySelector('[data-refresh-action]');
+  const configuredActions = panel?.querySelector('[data-configured-actions]');
   const clickLink = panel?.querySelector('[data-click-link]');
   const noClick = panel?.querySelector('[data-no-click]');
   const summary = panel?.querySelector('[data-summary]');
@@ -16,7 +18,7 @@ const initializeMenu = (root) => {
   const diagnosticStale = panel?.querySelector('[data-diagnostic-stale]');
   const feedback = panel?.querySelector('[data-feedback]');
 
-  if (!panel || !refreshAction || !clickLink || !noClick || !summary || !failureDetails || !meta || !diagnostics || !diagnosticItem || !diagnosticRefresh || !diagnosticFormat || !diagnosticClick || !diagnosticError || !diagnosticStale || !feedback || triggers.length === 0) {
+  if (!panel || !runAction || !refreshAction || !configuredActions || !clickLink || !noClick || !summary || !failureDetails || !meta || !diagnostics || !diagnosticItem || !diagnosticRefresh || !diagnosticFormat || !diagnosticClick || !diagnosticError || !diagnosticStale || !feedback || triggers.length === 0) {
     return;
   }
 
@@ -24,14 +26,60 @@ const initializeMenu = (root) => {
     triggers.map((trigger) => [trigger.dataset.menuItem, {
       failed: trigger.dataset.initialState === 'failed',
       refreshing: false,
+      activity: null,
     }]),
   );
   const timers = new Map();
   let activeName = triggers[0].dataset.menuItem;
-  let panelOpen = true;
+  let panelOpen = false;
+  let renderedActionName = null;
 
-  const stateFor = (name) => states.get(name) ?? { failed: false, refreshing: false };
+  const stateFor = (name) => states.get(name) ?? { failed: false, refreshing: false, activity: null };
   const activeTrigger = () => triggers.find((trigger) => trigger.dataset.menuItem === activeName);
+
+  const configuredActionData = (trigger) => {
+    try {
+      const actions = JSON.parse(trigger.dataset.actions ?? '[]');
+      return Array.isArray(actions)
+        ? actions.filter((action) => action && typeof action.title === 'string' && (action.kind === 'run' || action.kind === 'refresh'))
+        : [];
+    } catch {
+      return [];
+    }
+  };
+
+  const renderConfiguredActions = (trigger) => {
+    configuredActions.replaceChildren();
+    configuredActionData(trigger).forEach(({ title, kind }) => {
+      const action = document.createElement('button');
+      action.className = 'example-menu__action';
+      action.type = 'button';
+      action.dataset.configuredAction = kind;
+      action.textContent = title;
+      action.addEventListener('click', () => {
+        if (activeName !== trigger.dataset.menuItem) return;
+        startSimulation(activeName, kind === 'refresh' ? 'refresh' : 'action', kind === 'refresh');
+      });
+      configuredActions.append(action);
+    });
+  };
+
+  const startSimulation = (itemName, activity, recover) => {
+    const state = stateFor(itemName);
+    if (state.refreshing) return;
+
+    state.refreshing = true;
+    state.activity = activity;
+    updatePanel();
+    const timer = window.setTimeout(() => {
+      state.refreshing = false;
+      state.activity = null;
+      if (recover) state.failed = false;
+      timers.delete(itemName);
+      updatePanel();
+    }, 450);
+    timers.set(itemName, timer);
+  };
 
   const updatePanel = () => {
     const trigger = activeTrigger();
@@ -47,15 +95,20 @@ const initializeMenu = (root) => {
     const errorPolicy = trigger.dataset.errorPolicy || 'default';
     const staleAfter = trigger.dataset.staleAfter || 'not configured';
     const stateText = state.refreshing
-      ? 'refreshing…'
+      ? state.activity === 'run' || state.activity === 'action' ? 'running…' : 'refreshing…'
       : state.failed
         ? 'failed · showing last good value'
         : 'updated just now';
 
+    if (renderedActionName !== activeName) {
+      renderConfiguredActions(trigger);
+      renderedActionName = activeName;
+    }
+
     panel.hidden = !panelOpen;
     panel.dataset.state = state.refreshing ? 'running' : state.failed ? 'failed' : 'fresh';
     panel.setAttribute('aria-labelledby', trigger.id);
-    panel.setAttribute('aria-label', `${label} item menu`);
+    panel.setAttribute('aria-label', `${label} item submenu`);
     summary.textContent = `${displayValue} · ${stateText}`;
     meta.textContent = `Refresh: every ${interval} · Format: ${format}`;
     feedback.hidden = true;
@@ -67,8 +120,13 @@ const initializeMenu = (root) => {
     diagnosticError.textContent = `On error: ${errorPolicy}`;
     diagnosticStale.textContent = `Stale after: ${staleAfter}`;
     failureDetails.hidden = !state.failed;
+    runAction.disabled = state.refreshing;
+    runAction.textContent = state.refreshing && state.activity === 'run' ? `Running ${label}…` : `Run ${label}`;
     refreshAction.disabled = state.refreshing;
-    refreshAction.textContent = state.refreshing ? 'Refreshing…' : 'Refresh Now';
+    refreshAction.textContent = state.refreshing && state.activity === 'refresh' ? 'Refreshing…' : 'Refresh Now';
+    configuredActions.querySelectorAll('[data-configured-action]').forEach((action) => {
+      action.disabled = state.refreshing;
+    });
     clickLink.hidden = !clickCommand;
     noClick.hidden = Boolean(clickCommand);
 
@@ -93,40 +151,24 @@ const initializeMenu = (root) => {
   };
 
   const focusFirstAction = () => {
-    const firstAction = panel.querySelector('[data-click-link]:not([hidden])') ?? refreshAction;
-    firstAction.focus();
+    runAction.focus();
   };
 
   triggers.forEach((trigger) => {
     trigger.addEventListener('click', (event) => {
       const nextName = trigger.dataset.menuItem;
-      if (nextName === activeName) {
-        panelOpen = !panelOpen;
-      } else {
+      if (nextName !== activeName) {
         activeName = nextName;
-        panelOpen = true;
         diagnostics.open = false;
       }
+      panelOpen = true;
       updatePanel();
       if (panelOpen && event.detail === 0) focusFirstAction();
     });
   });
 
-  refreshAction.addEventListener('click', () => {
-    const itemName = activeName;
-    const state = stateFor(itemName);
-    if (state.refreshing) return;
-
-    state.refreshing = true;
-    updatePanel();
-    const timer = window.setTimeout(() => {
-      state.refreshing = false;
-      state.failed = false;
-      timers.delete(itemName);
-      updatePanel();
-    }, 450);
-    timers.set(itemName, timer);
-  });
+  runAction.addEventListener('click', () => startSimulation(activeName, 'run', true));
+  refreshAction.addEventListener('click', () => startSimulation(activeName, 'refresh', true));
 
   const errorCopy = panel.querySelector('[data-copy-error]');
   errorCopy?.addEventListener('click', () => {
@@ -147,12 +189,12 @@ const initializeMenu = (root) => {
     });
   });
 
-  document.addEventListener('pointerdown', (event) => {
+  document.addEventListener('click', (event) => {
     if (panelOpen && !root.contains(event.target)) {
       panelOpen = false;
       updatePanel();
     }
-  }, { capture: true });
+  });
 
   document.addEventListener('keydown', (event) => {
     if (event.key === 'Escape' && panelOpen && root.contains(document.activeElement)) {
