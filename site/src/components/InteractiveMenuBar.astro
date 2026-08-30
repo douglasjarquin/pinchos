@@ -179,47 +179,47 @@ const codexClick = configValue('codex', 'click');
     <div
       class="example-menu"
       id="example-menu-panel"
-      role="region"
+      role="menu"
       aria-label="Claude item submenu"
       aria-live="polite"
       hidden
       data-example-panel
     >
-    <div class="example-menu__row-set" data-action-list>
-      <button class="example-menu__action" type="button" data-run-action>Run Claude</button>
-      <div data-configured-actions></div>
-      <button class="example-menu__action" type="button" data-refresh-action>Refresh Now</button>
-      <a class="example-menu__action" data-click-link target="_blank" rel="noreferrer">
-        <span>Open Claude usage page</span><span aria-hidden="true">↗</span>
-      </a>
-      <span class="example-menu__no-click" data-no-click hidden>no click action configured</span>
-    </div>
-    <div class="menu-rule" aria-hidden="true"></div>
-    <p class="example-menu__summary" data-summary>82% · failed · showing last good value</p>
-    <div class="example-menu__failure" data-failure-details>
-      <p class="example-menu__failure-label">Failed · exit 1 · showing last good value</p>
-      <code class="example-menu__error" data-error-preview>jq: parse error: Invalid numeric literal</code>
-      <button class="example-menu__action" type="button" data-copy-error data-error-text="jq: parse error: Invalid numeric literal">Copy Full Error</button>
-    </div>
-    <p class="example-menu__meta" data-item-meta>Refresh: every 5m · Format: &#123;output&#125;%</p>
-    <details class="example-menu__diagnostics" data-diagnostics hidden>
-      <summary class="example-menu__diagnostics-trigger">
-        <span>Diagnostics</span><span aria-hidden="true" data-diagnostics-indicator>▸</span>
-      </summary>
-      <div class="example-menu__diagnostics-content">
-        <p data-diagnostic-item>[item.claude]</p>
-        <p data-diagnostic-refresh>Refresh: every 5m</p>
-        <p data-diagnostic-format>Format: &#123;output&#125;%</p>
-        <p data-diagnostic-click>Click: open https://claude.ai/settings/usage</p>
-        <p data-diagnostic-error>On error: keep_last</p>
-        <p data-diagnostic-stale>Stale after: 15m</p>
-        <p data-diagnostic-hidden>Hidden: no</p>
+      <div class="example-menu__row-set" role="none" data-action-list>
+        <button class="example-menu__action" type="button" role="menuitem" data-run-action>Run Claude</button>
+        <div role="none" data-configured-actions></div>
+        <button class="example-menu__action" type="button" role="menuitem" data-refresh-action>Refresh Now</button>
+        <a class="example-menu__action" role="menuitem" data-click-link target="_blank" rel="noreferrer">
+          <span>Open Claude usage page</span><span aria-hidden="true">↗</span>
+        </a>
+        <span class="example-menu__no-click" role="none" data-no-click hidden>no click action configured</span>
       </div>
-    </details>
-    <div class="menu-rule" aria-hidden="true"></div>
-    <button class="example-menu__action" type="button" data-hide-action>Hide</button>
-    <button class="example-menu__action" type="button" data-collapse-action>Collapse Pinchos</button>
-    <p class="example-menu__feedback" data-feedback role="status" hidden></p>
+      <div class="menu-rule" role="separator" aria-hidden="true"></div>
+      <p class="example-menu__summary" role="none" data-summary>82% · failed · showing last good value</p>
+      <div class="example-menu__failure" role="none" data-failure-details>
+        <p class="example-menu__failure-label">Failed · exit 1 · showing last good value</p>
+        <code class="example-menu__error" data-error-preview>jq: parse error: Invalid numeric literal</code>
+        <button class="example-menu__action" type="button" role="menuitem" data-copy-error data-error-text="jq: parse error: Invalid numeric literal">Copy Full Error</button>
+      </div>
+      <p class="example-menu__meta" role="none" data-item-meta>Refresh: every 5m · Format: &#123;output&#125;%</p>
+      <details class="example-menu__diagnostics" role="group" aria-label="Diagnostics" data-diagnostics hidden>
+        <summary class="example-menu__diagnostics-trigger">
+          <span>Diagnostics</span><span aria-hidden="true" data-diagnostics-indicator>▸</span>
+        </summary>
+        <div class="example-menu__diagnostics-content">
+          <p data-diagnostic-item>[item.claude]</p>
+          <p data-diagnostic-refresh>Refresh: every 5m</p>
+          <p data-diagnostic-format>Format: &#123;output&#125;%</p>
+          <p data-diagnostic-click>Click: open https://claude.ai/settings/usage</p>
+          <p data-diagnostic-error>On error: keep_last</p>
+          <p data-diagnostic-stale>Stale after: 15m</p>
+          <p data-diagnostic-hidden>Hidden: no</p>
+        </div>
+      </details>
+      <div class="menu-rule" role="separator" aria-hidden="true"></div>
+      <button class="example-menu__action" type="button" role="menuitem" data-hide-action>Hide</button>
+      <button class="example-menu__action" type="button" role="menuitem" data-collapse-action>Collapse Pinchos</button>
+      <p class="example-menu__feedback" data-feedback role="status" hidden></p>
     </div>
   </div>
 </div>
