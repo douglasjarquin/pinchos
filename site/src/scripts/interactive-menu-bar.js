@@ -262,9 +262,42 @@ const initializeMenu = (root) => {
     isRootOpen: () => collapsedRootOpen,
     isPanelOpen: () => panelOpen,
     activeName: () => activeName,
+    expandAction,
     openItem: (trigger) => openItem(trigger, false),
     closeRoot: closeCollapsedRoot,
     focusFirstAction,
+  });
+
+  const visiblePanelItems = () => [...panel.querySelectorAll('[role="menuitem"]')]
+    .filter((item) => !item.hidden && !item.disabled);
+
+  panel.addEventListener('keydown', (event) => {
+    const target = event.target;
+    if (!(target instanceof HTMLElement) || target.getAttribute('role') !== 'menuitem') return;
+    if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+      event.preventDefault();
+      const items = visiblePanelItems();
+      const index = items.indexOf(target);
+      const delta = event.key === 'ArrowDown' ? 1 : -1;
+      items[(index + delta + items.length) % items.length]?.focus();
+    } else if (event.key === 'ArrowLeft' && collapsed) {
+      event.preventDefault();
+      closePanel();
+      collapsedItems.querySelector(`[data-collapsed-item="${activeName}"]`)?.focus();
+    }
+  });
+
+  expandAction.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape') {
+      event.preventDefault();
+      closeCollapsedRoot();
+      return;
+    }
+    if (event.key !== 'ArrowDown' && event.key !== 'ArrowUp') return;
+    const rows = [...collapsedItems.querySelectorAll('[data-collapsed-item]')];
+    if (rows.length === 0) return;
+    event.preventDefault();
+    rows[event.key === 'ArrowDown' ? 0 : rows.length - 1]?.focus();
   });
 
   collapsedTrigger.addEventListener('click', () => {

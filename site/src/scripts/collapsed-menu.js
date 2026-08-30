@@ -7,6 +7,7 @@ export const createCollapsedMenuController = ({
   isRootOpen,
   isPanelOpen,
   activeName,
+  expandAction,
   openItem,
   closeRoot,
   focusFirstAction,
@@ -56,7 +57,7 @@ export const createCollapsedMenuController = ({
         openCollapsedItem(trigger, event.detail === 0);
       });
       row.addEventListener('keydown', (event) => {
-        const rows = [...collapsedItems.querySelectorAll('[data-collapsed-item]')];
+        const rows = [...collapsedItems.querySelectorAll('[data-collapsed-item]'), expandAction];
         const index = rows.indexOf(row);
         if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
           event.preventDefault();
