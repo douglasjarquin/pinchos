@@ -213,6 +213,7 @@ final class StatusItemController: StatusItemMenuDelegate {
     }
 
     private func applyNow(config: PinchosConfig) async {
+        collapsedMenuGeneration += 1
         // Always applied, independent of the item diff below: a config
         // reload that only touches `[scheduler]` (no item changes) must
         // still take effect.
@@ -454,9 +455,14 @@ final class StatusItemController: StatusItemMenuDelegate {
     }
 
     @objc private func handleCollapsedClick() {
-        guard barPresentation == .collapsed, let collapsedStatusItem else { return }
+        _ = requestCollapsedMenu()
+    }
+
+    @discardableResult
+    func requestCollapsedMenu() -> Task<Void, Never>? {
+        guard barPresentation == .collapsed, let collapsedStatusItem else { return nil }
         let menuGeneration = collapsedMenuGeneration
-        Task { @MainActor [weak self, collapsedStatusItem, menuGeneration] in
+        return Task { @MainActor [weak self, collapsedStatusItem, menuGeneration] in
             guard let self else { return }
             let menu = await self.makeCollapsedMenu()
             guard self.barPresentation == .collapsed,

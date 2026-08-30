@@ -247,7 +247,8 @@
 }
 
 .interactive-menu .example-menu__action:focus-visible,
-.interactive-menu .example-menu__diagnostics-trigger:focus-visible {
+.interactive-menu .example-menu__diagnostics-trigger:focus-visible,
+.interactive-menu .collapsed-menu__item:focus-visible {
   background: var(--color-paper-raised);
   color: var(--color-link-readable);
   outline: var(--mockup-menu-focus-width) solid var(--color-link-readable);

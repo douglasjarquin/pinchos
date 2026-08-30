@@ -13,6 +13,7 @@ private final class CollapseFakeItem: ManagedItemLifecycle {
     private(set) var isVisible: Bool
     private(set) var statusItemVisible = false
     var blocksRuntimeSnapshot = false
+    private(set) var runtimeSnapshotStarted = false
 
     init(config: ItemConfig, isTopLevel: Bool) {
         self.config = config
@@ -55,6 +56,7 @@ private final class CollapseFakeItem: ManagedItemLifecycle {
     func runtimeSnapshot() async -> ItemRuntimeSnapshot {
         if blocksRuntimeSnapshot {
             blocksRuntimeSnapshot = false
+            runtimeSnapshotStarted = true
             runtimeSnapshotStartWaiter?.resume()
             runtimeSnapshotStartWaiter = nil
             await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
@@ -74,6 +76,7 @@ private final class CollapseFakeItem: ManagedItemLifecycle {
     }
 
     func waitForRuntimeSnapshotStart() async {
+        if runtimeSnapshotStarted { return }
         await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
             runtimeSnapshotStartWaiter = continuation
         }
@@ -111,13 +114,10 @@ private final class CollapseFakeStatusItemHost: StatusItemHost {
     private(set) var created = 0
     private(set) var removed = 0
     private(set) var presented = 0
-    private(set) var statusItems: [NSStatusItem] = []
 
     func makeStatusItem() -> NSStatusItem? {
         created += 1
-        let statusItem = NSStatusItem()
-        statusItems.append(statusItem)
-        return statusItem
+        return NSStatusItem()
     }
 
     func removeStatusItem(_ item: NSStatusItem) {
@@ -278,22 +278,43 @@ final class CollapseMenuTests: XCTestCase {
 
         let item = factory.created[0]
         item.blocksRuntimeSnapshot = true
-        let collapsedStatusItem = try XCTUnwrap(host.statusItems.first)
         let snapshotStarted = Task { @MainActor in
             await item.waitForRuntimeSnapshotStart()
         }
-        XCTAssertTrue(NSApplication.shared.sendAction(
-            NSSelectorFromString("handleCollapsedClick"),
-            to: controller,
-            from: collapsedStatusItem
-        ))
+        let menuTask = try XCTUnwrap(controller.requestCollapsedMenu())
         await snapshotStarted.value
 
         await controller.shutdown()
         item.releaseRuntimeSnapshot()
-        try await Task.sleep(for: .milliseconds(10))
+        await menuTask.value
 
         XCTAssertEqual(host.removed, 1)
+        XCTAssertEqual(host.presented, 0)
+    }
+
+    func testCollapsedMenuDoesNotPresentAfterConfigChangesWhileBuilding() async throws {
+        let factory = CollapseFakeFactory()
+        let host = CollapseFakeStatusItemHost()
+        let controller = makeController(factory: factory, host: host)
+        addTeardownBlock { @MainActor in await controller.shutdown() }
+
+        await controller.apply(config: PinchosConfig(items: [command("alpha")]))
+        let menu = await controller.makeLifecycleMenu(forManagedItem: factory.created[0])
+        let collapse = try XCTUnwrap(menu.items.first(where: { $0.title == "Collapse Pinchos" }))
+        XCTAssertTrue(NSApplication.shared.sendAction(collapse.action!, to: collapse.target, from: collapse))
+
+        let item = factory.created[0]
+        item.blocksRuntimeSnapshot = true
+        let snapshotStarted = Task { @MainActor in
+            await item.waitForRuntimeSnapshotStart()
+        }
+        let menuTask = try XCTUnwrap(controller.requestCollapsedMenu())
+        await snapshotStarted.value
+
+        await controller.apply(config: PinchosConfig(items: [command("beta")]))
+        item.releaseRuntimeSnapshot()
+        await menuTask.value
+
         XCTAssertEqual(host.presented, 0)
     }
 }
