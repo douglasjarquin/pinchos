@@ -698,6 +698,7 @@ final class StatusItemController: StatusItemMenuDelegate {
         for entry in memberEntries {
             let submenu = NSMenu()
             await addMenuContent(for: entry.item, to: submenu)
+            submenu.addItem(makePresentationMenuItem())
             let memberItem = NSMenuItem(
                 title: "\(entry.name): \(truncateTitle(entry.valuePreview, maxLength: 40))",
                 action: nil,

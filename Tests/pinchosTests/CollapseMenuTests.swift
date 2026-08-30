@@ -170,6 +170,27 @@ final class CollapseMenuTests: XCTestCase {
         XCTAssertNotNil(standaloneMenu.items.first(where: { $0.title == "Expand Pinchos" }))
     }
 
+    func testGroupMemberMenuCanCollapseTheWholeBar() async throws {
+        let factory = CollapseFakeFactory()
+        let host = CollapseFakeStatusItemHost()
+        let controller = makeController(factory: factory, host: host)
+        addTeardownBlock { @MainActor in await controller.shutdown() }
+
+        await controller.apply(config: PinchosConfig(items: [
+            command("alpha"),
+            group("team", title: "Team", members: ["alpha"])
+        ]))
+
+        let groupItem = try XCTUnwrap(factory.created.first(where: { $0.config.name == "team" }))
+        let groupMenu = await controller.makeLifecycleMenu(forManagedItem: groupItem)
+        let memberMenu = try XCTUnwrap(groupMenu.items.first(where: { $0.title == "alpha: –" })?.submenu)
+        let collapse = try XCTUnwrap(memberMenu.items.first(where: { $0.title == "Collapse Pinchos" }))
+
+        XCTAssertTrue(NSApplication.shared.sendAction(collapse.action!, to: collapse.target, from: collapse))
+        XCTAssertEqual(host.created, 1)
+        XCTAssertTrue(factory.created.allSatisfy { !$0.statusItemVisible })
+    }
+
     func testExpandRestoresTopLevelVisibilityAndRemovesCollapsedIcon() async throws {
         let factory = CollapseFakeFactory()
         let host = CollapseFakeStatusItemHost()
