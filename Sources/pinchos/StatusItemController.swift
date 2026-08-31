@@ -268,13 +268,18 @@ final class StatusItemController: StatusItemMenuDelegate {
             : "pinchos \u{26A0}\u{FE0E}"
     }
 
+    /// A plain left/right click shows the compact menu (actions, one summary
+    /// line, Hide, and the global items). Holding Option while clicking reveals
+    /// the full diagnostics menu instead -- the same way Option-clicking the
+    /// system WiFi item shows signal details.
     func showLifecycleMenu(for statusItem: NSStatusItem) {
+        let revealsDiagnostics = NSApp.currentEvent?.modifierFlags.contains(.option) == true
         Task { @MainActor [weak self] in
             guard let self else { return }
             let menu = if self.collapsedStatusItem === statusItem {
-                await self.makeCollapsedMenu()
+                await self.makeCollapsedMenu(revealsDiagnostics: revealsDiagnostics)
             } else {
-                await self.makeLifecycleMenu(for: statusItem)
+                await self.makeLifecycleMenu(for: statusItem, revealsDiagnostics: revealsDiagnostics)
             }
             self.present(menu: menu, on: statusItem)
         }
@@ -466,10 +471,11 @@ final class StatusItemController: StatusItemMenuDelegate {
     @discardableResult
     func requestCollapsedMenu() -> Task<Void, Never>? {
         guard barPresentation == .collapsed, let collapsedStatusItem else { return nil }
+        let revealsDiagnostics = NSApp.currentEvent?.modifierFlags.contains(.option) == true
         let menuGeneration = collapsedMenuGeneration
-        return Task { @MainActor [weak self, collapsedStatusItem, menuGeneration] in
+        return Task { @MainActor [weak self, collapsedStatusItem, menuGeneration, revealsDiagnostics] in
             guard let self else { return }
-            let menu = await self.makeCollapsedMenu()
+            let menu = await self.makeCollapsedMenu(revealsDiagnostics: revealsDiagnostics)
             guard self.barPresentation == .collapsed,
                   self.collapsedStatusItem === collapsedStatusItem,
                   self.collapsedMenuGeneration == menuGeneration else { return }
@@ -515,28 +521,28 @@ final class StatusItemController: StatusItemMenuDelegate {
         return menu
     }
 
-    func makeLifecycleMenu(for statusItem: NSStatusItem?) async -> NSMenu {
+    func makeLifecycleMenu(for statusItem: NSStatusItem?, revealsDiagnostics: Bool = true) async -> NSMenu {
         let item = statusItem.flatMap { statusItem in
             items.values.first(where: { $0.owns(statusItem: statusItem) })
         }
-        return await makeLifecycleMenu(forManagedItem: item)
+        return await makeLifecycleMenu(forManagedItem: item, revealsDiagnostics: revealsDiagnostics)
     }
 
-    func makeLifecycleMenu(forManagedItem item: (any ManagedItemLifecycle)?) async -> NSMenu {
+    func makeLifecycleMenu(forManagedItem item: (any ManagedItemLifecycle)?, revealsDiagnostics: Bool = true) async -> NSMenu {
         let menu = NSMenu()
         if let item {
-            await addMenuContent(for: item, to: menu)
+            await addMenuContent(for: item, to: menu, revealsDiagnostics: revealsDiagnostics)
         }
         menu.addItem(makePresentationMenuItem())
-        await addGlobalMenuContent(to: menu)
+        await addGlobalMenuContent(to: menu, includesSchedulerDiagnostics: revealsDiagnostics)
         return menu
     }
 
-    func makeCollapsedMenu() async -> NSMenu {
+    func makeCollapsedMenu(revealsDiagnostics: Bool = true) async -> NSMenu {
         let menu = NSMenu()
         let topLevelItems = topLevelManagedItems()
         for item in topLevelItems {
-            let submenu = await makeLifecycleMenu(forManagedItem: item)
+            let submenu = await makeLifecycleMenu(forManagedItem: item, revealsDiagnostics: revealsDiagnostics)
             let row = NSMenuItem(title: await collapsedTitle(for: item), action: nil, keyEquivalent: "")
             row.submenu = submenu
             menu.addItem(row)
@@ -546,7 +552,7 @@ final class StatusItemController: StatusItemMenuDelegate {
         }
         menu.addItem(NSMenuItem.separator())
         menu.addItem(makePresentationMenuItem())
-        await addGlobalMenuContent(to: menu)
+        await addGlobalMenuContent(to: menu, includesSchedulerDiagnostics: revealsDiagnostics)
         return menu
     }
 
@@ -589,8 +595,12 @@ final class StatusItemController: StatusItemMenuDelegate {
         return item
     }
 
-    private func addGlobalMenuContent(to menu: NSMenu) async {
-        await addSchedulerDiagnostics(to: menu)
+    private func addGlobalMenuContent(to menu: NSMenu, includesSchedulerDiagnostics: Bool = true) async {
+        if includesSchedulerDiagnostics {
+            await addSchedulerDiagnostics(to: menu)
+        } else {
+            menu.addItem(NSMenuItem.separator())
+        }
         let openConfig = NSMenuItem(title: "Open Config", action: #selector(openConfigAction), keyEquivalent: "")
         openConfig.target = self
         menu.addItem(openConfig)
@@ -607,12 +617,16 @@ final class StatusItemController: StatusItemMenuDelegate {
     /// exactly one implementation of "what a command item's menu contains" --
     /// nesting falls out for free, since a group member that is itself a
     /// group recurses back into `addGroupContent`.
-    private func addMenuContent(for item: any ManagedItemLifecycle, to menu: NSMenu) async {
+    private func addMenuContent(
+        for item: any ManagedItemLifecycle,
+        to menu: NSMenu,
+        revealsDiagnostics: Bool
+    ) async {
         switch item.config {
         case .command(let commandConfig):
-            await addCommandContent(item: item, commandConfig: commandConfig, to: menu)
+            await addCommandContent(item: item, commandConfig: commandConfig, to: menu, revealsDiagnostics: revealsDiagnostics)
         case .group(let group):
-            await addGroupContent(group, to: menu)
+            await addGroupContent(group, to: menu, revealsDiagnostics: revealsDiagnostics)
         }
 
         if !item.config.hidden {
@@ -628,7 +642,8 @@ final class StatusItemController: StatusItemMenuDelegate {
     private func addCommandContent(
         item: any ManagedItemLifecycle,
         commandConfig: CommandItemConfig,
-        to menu: NSMenu
+        to menu: NSMenu,
+        revealsDiagnostics: Bool
     ) async {
         let run = NSMenuItem(
             title: "Run \(commandConfig.name)",
@@ -660,23 +675,58 @@ final class StatusItemController: StatusItemMenuDelegate {
         }
         menu.addItem(NSMenuItem.separator())
         let runtime = await item.runtimeSnapshot()
-        addRuntimeState(from: runtime, to: menu)
-        if let note = item.iconDiagnosticNote {
-            menu.addItem(disabledItem(title: "Icon: \(note)"))
-        }
-        menu.addItem(NSMenuItem.separator())
-        addDiagnostics(from: runtime.runnerSnapshot, to: menu)
-        var actionSnapshots: [(index: Int, snapshot: CommandRunnerSnapshot?)] = []
-        for index in item.actions.indices {
-            actionSnapshots.append((index: index, snapshot: await item.actionSnapshot(at: index)))
-        }
-        if actionSnapshots.contains(where: { $0.snapshot != nil }) {
+        if revealsDiagnostics {
+            addRuntimeState(from: runtime, to: menu)
+            if let note = item.iconDiagnosticNote {
+                menu.addItem(disabledItem(title: "Icon: \(note)"))
+            }
             menu.addItem(NSMenuItem.separator())
-            addActionDiagnostics(actions: item.actions, snapshots: actionSnapshots, to: menu)
+            addDiagnostics(from: runtime.runnerSnapshot, to: menu)
+            var actionSnapshots: [(index: Int, snapshot: CommandRunnerSnapshot?)] = []
+            for index in item.actions.indices {
+                actionSnapshots.append((index: index, snapshot: await item.actionSnapshot(at: index)))
+            }
+            if actionSnapshots.contains(where: { $0.snapshot != nil }) {
+                menu.addItem(NSMenuItem.separator())
+                addActionDiagnostics(actions: item.actions, snapshots: actionSnapshots, to: menu)
+            }
+            if commandConfig.disabled {
+                menu.addItem(NSMenuItem.separator())
+                menu.addItem(disabledItem(title: "Disabled: yes"))
+            }
+        } else {
+            menu.addItem(disabledItem(title: compactSummaryTitle(from: runtime, commandConfig: commandConfig)))
         }
-        if commandConfig.disabled {
-            menu.addItem(NSMenuItem.separator())
-            menu.addItem(disabledItem(title: "Disabled: yes"))
+    }
+
+    /// The single line the compact (non-Option) menu shows in place of the
+    /// full runtime-state and diagnostics sections: the item's current value
+    /// plus a terse status qualifier, mirroring the summary line of the
+    /// interactive design mockup. No timestamps, byte counts, or other
+    /// diagnostics appear here -- Option-click reveals those.
+    private func compactSummaryTitle(from snapshot: ItemRuntimeSnapshot, commandConfig: CommandItemConfig) -> String {
+        let value: String
+        if let structuredText = snapshot.structuredOutput?.text {
+            value = DiagnosticPreviewFormatter.preview(structuredText, limits: .menuValue).text
+        } else if let fullOutput = snapshot.fullOutput {
+            value = DiagnosticPreviewFormatter.preview(fullOutput, limits: .menuValue).text
+        } else {
+            value = ""
+        }
+        switch snapshot.status {
+        case .fresh:
+            return value.isEmpty ? "Fresh" : value
+        case .running:
+            return value.isEmpty ? "Running\u{2026}" : "\(value) \u{b7} refreshing"
+        case .warning:
+            return value.isEmpty ? "Warning" : "\(value) \u{b7} warning"
+        case .stale:
+            return value.isEmpty ? "Stale" : "\(value) \u{b7} stale"
+        case .error, .unavailable:
+            if value.isEmpty {
+                return commandConfig.onError == .keepLast ? "Failed" : commandConfig.errorText
+            }
+            return "\(value) \u{b7} failed \u{b7} showing last good value"
         }
     }
 
@@ -691,7 +741,7 @@ final class StatusItemController: StatusItemMenuDelegate {
     /// menu would show (actions, current value/state, diagnostics, manual
     /// refresh) -- nothing about a member's presentation changes because it
     /// is being shown inside a group instead of at the top level.
-    private func addGroupContent(_ group: GroupItemConfig, to menu: NSMenu) async {
+    private func addGroupContent(_ group: GroupItemConfig, to menu: NSMenu, revealsDiagnostics: Bool) async {
         var memberEntries: [(name: String, item: any ManagedItemLifecycle, valuePreview: String)] = []
         for memberName in group.members {
             guard let member = items[memberName], !member.config.hidden else { continue }
@@ -712,13 +762,13 @@ final class StatusItemController: StatusItemMenuDelegate {
         }
 
         menu.addItem(disabledItem(title: groupSummaryTitle(group, entries: memberEntries)))
-        if let note = items[group.name]?.iconDiagnosticNote {
+        if revealsDiagnostics, let note = items[group.name]?.iconDiagnosticNote {
             menu.addItem(disabledItem(title: "Icon: \(note)"))
         }
         menu.addItem(NSMenuItem.separator())
         for entry in memberEntries {
             let submenu = NSMenu()
-            await addMenuContent(for: entry.item, to: submenu)
+            await addMenuContent(for: entry.item, to: submenu, revealsDiagnostics: revealsDiagnostics)
             submenu.addItem(makePresentationMenuItem())
             let memberItem = NSMenuItem(
                 title: "\(entry.name): \(truncateTitle(entry.valuePreview, maxLength: 40))",

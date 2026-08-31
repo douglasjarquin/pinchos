@@ -297,6 +297,80 @@ final class StatusItemControllerTests: XCTestCase {
         XCTAssertTrue(titles.contains("Skipped ticks: 2"))
     }
 
+    func testCompactLifecycleMenuOmitsDiagnosticsAndShowsSummary() async throws {
+        let factory = FakeManagedItemFactory()
+        let controller = makeController(factory: factory)
+        addTeardownBlock { @MainActor in
+            await controller.shutdown()
+        }
+
+        await controller.apply(config: PinchosConfig(items: [item("alpha")]))
+        let attempt = Date(timeIntervalSince1970: 1_700_000_000)
+        factory.created[0].runtimeSnapshotValue = ItemRuntimeSnapshot(
+            isRunning: false,
+            fullOutput: "full\nvalue\n",
+            lastAttemptedAt: attempt,
+            lastUpdatedAt: attempt.addingTimeInterval(-60),
+            lastExecution: CommandExecution(
+                terminalReason: .exited(code: 7),
+                stdout: "full\nvalue\n",
+                stderr: "diagnostic\n",
+                stdoutBytesRead: 11,
+                stderrBytesRead: 11,
+                stdoutTruncated: false,
+                stderrTruncated: false,
+                duration: 0.25
+            ),
+            staleAfter: 60,
+            skippedRefreshes: 2,
+            now: attempt
+        )
+
+        let menu = await controller.makeLifecycleMenu(forManagedItem: factory.created[0], revealsDiagnostics: false)
+        let titles = menu.items.map(\.title)
+
+        XCTAssertTrue(titles.contains("Run alpha"))
+        XCTAssertTrue(titles.contains("Refresh Now"))
+        XCTAssertTrue(titles.contains("Hide"))
+        XCTAssertTrue(titles.contains("Collapse Pinchos"))
+        XCTAssertEqual(Array(titles.suffix(3)), ["Open Config", "Reload Config", "Quit Pinchos"])
+        // One summary line replaces every runtime/diagnostic section.
+        XCTAssertTrue(titles.contains("full \u{240A} value \u{b7} failed \u{b7} showing last good value"))
+        XCTAssertFalse(titles.contains(where: { $0.hasPrefix("State:") }))
+        XCTAssertFalse(titles.contains(where: { $0.hasPrefix("Value:") }))
+        XCTAssertFalse(titles.contains(where: { $0.hasPrefix("Last attempt:") }))
+        XCTAssertFalse(titles.contains(where: { $0.hasPrefix("Skipped ticks:") }))
+        XCTAssertFalse(titles.contains(where: { $0.hasPrefix("Scheduler:") }))
+        XCTAssertFalse(titles.contains(where: { $0.hasPrefix("Copy Full") }))
+    }
+
+    func testCompactLifecycleMenuUsesFreshValueAsSummary() async throws {
+        let factory = FakeManagedItemFactory()
+        let controller = makeController(factory: factory)
+        addTeardownBlock { @MainActor in
+            await controller.shutdown()
+        }
+
+        await controller.apply(config: PinchosConfig(items: [item("alpha")]))
+        factory.created[0].runtimeSnapshotValue = ItemRuntimeSnapshot(
+            isRunning: false,
+            fullOutput: "42",
+            lastAttemptedAt: nil,
+            lastUpdatedAt: nil,
+            lastExecution: nil,
+            staleAfter: nil,
+            skippedRefreshes: 0,
+            now: Date()
+        )
+
+        let menu = await controller.makeLifecycleMenu(forManagedItem: factory.created[0], revealsDiagnostics: false)
+        let titles = menu.items.map(\.title)
+
+        XCTAssertTrue(titles.contains("42"))
+        XCTAssertFalse(titles.contains(where: { $0.hasPrefix("State:") }))
+        XCTAssertFalse(titles.contains(where: { $0.hasPrefix("Scheduler:") }))
+    }
+
     func testLifecycleMenuPlacesDeclarativeActionsBeforeGlobalActions() async throws {
         let toml = """
         [item.codex]
