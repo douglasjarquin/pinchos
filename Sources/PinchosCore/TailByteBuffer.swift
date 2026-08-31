@@ -7,7 +7,7 @@ import Foundation
 /// A `TailByteBuffer` only reserves storage as it actually needs to grow
 /// (never eagerly for its full configured `capacity`) and releases its
 /// reservation back once deallocated. `OutputMemoryBudget` exists so many
-/// independently-bounded per-stream limits (primary/click/action runners,
+/// independently-bounded per-stream limits (primary and action runners,
 /// each with an independent stdout and stderr collector) cannot together
 /// retain an unbounded multiple of any single configured limit: once the
 /// shared budget is exhausted, a buffer silently retains less than its

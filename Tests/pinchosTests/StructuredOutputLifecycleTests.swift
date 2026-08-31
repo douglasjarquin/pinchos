@@ -10,11 +10,11 @@ private final class StructuredOutputMenuDelegate: StatusItemMenuDelegate {
 
 @MainActor
 final class StructuredOutputLifecycleTests: XCTestCase {
-    func testJSONV1ProjectsTextTooltipStateVisibilityIconAndActions() async throws {
+    func testJSONV1ProjectsTextStateVisibilityIconAndActions() async throws {
         let item = ManagedItem(
             config: ItemConfig(
                 name: "quota",
-                run: "printf '%s' '{\"version\":1,\"text\":\"81%\",\"tooltip\":\"Weekly quota\",\"state\":\"warning\",\"hidden\":true,\"actions\":[{\"title\":\"Refresh\",\"refresh\":true}]}'",
+                run: "printf '%s' '{\"version\":1,\"text\":\"81%\",\"state\":\"warning\",\"hidden\":true,\"actions\":[{\"title\":\"Refresh\",\"refresh\":true}]}'",
                 interval: .manual,
                 output: .jsonV1
             ),
@@ -29,7 +29,6 @@ final class StructuredOutputLifecycleTests: XCTestCase {
         let snapshot = try await waitForSnapshot(item) { $0.status == .warning }
 
         XCTAssertEqual(item.renderedTitle, "81% ⚠︎")
-        XCTAssertEqual(item.renderedToolTip, "Weekly quota")
         XCTAssertFalse(item.isVisible)
         XCTAssertEqual(snapshot.structuredOutput?.actions, [ItemAction(title: "Refresh", kind: .refresh)])
     }

@@ -7,11 +7,9 @@ max_output = "64KiB"
 format = "{output}%"
 hidden = false
 icon = "/path/to/pinchos/example/icons/claude.svg"
-click = "open https://claude.ai/settings/usage"
 error_text = "–"
 on_error = "keep_last"
 stale_after = "15m"
-tooltip = "Updated {updated_at} ({status})"
 
 [item.codex]
 type = "command"
@@ -20,8 +18,15 @@ interval = "5m"
 format = "{output}%"
 hidden = false
 icon = "/path/to/pinchos/example/icons/codex.svg"
-click = "open https://chatgpt.com/codex/settings/usage"
 error_text = "–"
+
+[[item.codex.info]]
+title = "Reset"
+run = "quota-axi --provider codex --json | jq -r '.providers[0].windows[0].resetsAt'"
+
+[[item.codex.info]]
+title = "Pace"
+run = "quota-axi --provider codex --json | jq -r '.providers[0].windows[0].pace.status'"
 
 [item.clock]
 type = "command"

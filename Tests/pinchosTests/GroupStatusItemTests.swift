@@ -91,7 +91,6 @@ private final class GroupTestFakeItem: ManagedItemLifecycle {
         return actionSnapshotValues[index]
     }
 
-    func clickSnapshot() async -> ClickDiagnosticsSnapshot? { nil }
     func invokeAction(at index: Int) { eventLog.append("action:\(config.name):\(index)") }
     func refreshNow() { eventLog.append("refresh-now:\(config.name)") }
 }

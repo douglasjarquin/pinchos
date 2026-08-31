@@ -29,6 +29,22 @@ final class ConfigDiffTests: XCTestCase {
         XCTAssertFalse(diff.requiresNativeRebuild)
     }
 
+    func testChangingInfoRowsMarksItemChanged() {
+        let old = PinchosConfig(items: [item("a")])
+        let withInfo = ItemConfig(
+            name: "a",
+            run: "echo x",
+            interval: .scheduled(60),
+            info: [ItemInfoRow(title: "Reset", run: "echo 1")]
+        )
+        let diff = ConfigDiffEngine.diff(old: old, new: PinchosConfig(items: [withInfo]))
+        XCTAssertFalse(diff.isEmpty)
+        XCTAssertEqual(diff.changed.map(\.name), ["a"])
+        XCTAssertEqual(diff.added, [])
+        XCTAssertEqual(diff.removed, [])
+        XCTAssertFalse(diff.requiresNativeRebuild)
+    }
+
     func testDetectsAddedItem() {
         let old = PinchosConfig(items: [item("a")])
         let new = PinchosConfig(items: [item("a"), item("b")])
@@ -95,8 +111,7 @@ final class ConfigDiffTests: XCTestCase {
                 run: "echo x",
                 interval: .scheduled(60),
                 onError: .keepLast,
-                staleAfter: 900,
-                tooltip: "{status}"
+                staleAfter: 900
             )
         ])
 

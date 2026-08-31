@@ -15,13 +15,11 @@ public enum ConfigParser {
         "timeout",
         "max_output",
         "format",
-        "click",
-        "refresh_on_click",
         "error_text",
         "on_error",
         "stale_after",
-        "tooltip",
         "action",
+        "info",
         "icon",
         "symbol",
         "max_length",
@@ -35,6 +33,7 @@ public enum ConfigParser {
     ]
 
     static let supportedActionKeys: Set<String> = ["title", "run", "refresh"]
+    static let supportedInfoKeys: Set<String> = ["title", "run"]
     static let supportedRootKeys: Set<String> = ["item", "scheduler", "group"]
     static let supportedSchedulerKeys: Set<String> = ["max_active_sessions"]
     static let supportedGroupKeys: Set<String> = ["title", "members", "icon", "symbol", "hidden"]
@@ -787,21 +786,6 @@ public enum ConfigParser {
             output = .plain
         }
 
-        let refreshOnClick: Bool
-        if let refreshOnClickValue = table["refresh_on_click"] {
-            guard let value = refreshOnClickValue.bool else {
-                throw typeError(
-                    path: "item.\(name).refresh_on_click",
-                    expected: "boolean",
-                    value: refreshOnClickValue,
-                    line: sourceLine(item: name, key: "refresh_on_click", sourceLines: sourceLines)
-                )
-            }
-            refreshOnClick = value
-        } else {
-            refreshOnClick = false
-        }
-
         let onError: ItemErrorPolicy
         if let onErrorValue = table["on_error"] {
             let rawValue = try stringValue(
@@ -841,30 +825,15 @@ public enum ConfigParser {
             staleAfter = nil
         }
 
-        let tooltip: String?
-        if let tooltipValue = table["tooltip"] {
-            let value = try stringValue(
-                name: name,
-                key: "tooltip",
-                value: tooltipValue,
-                sourceLines: sourceLines
-            )
-            do {
-                try validateTooltipTemplate(value)
-            } catch let error as TooltipTemplateError {
-                throw ConfigParseError(
-                    message: "item.\(name): invalid tooltip (\(error))",
-                    line: sourceLine(item: name, key: "tooltip", sourceLines: sourceLines)
-                )
-            }
-            tooltip = value
-        } else {
-            tooltip = nil
-        }
-
         let actions = try parseActions(
             name: name,
             value: table["action"],
+            sourceLines: sourceLines
+        )
+
+        let infoRows = try parseInfoRows(
+            name: name,
+            value: table["info"],
             sourceLines: sourceLines
         )
 
@@ -1017,14 +986,6 @@ public enum ConfigParser {
             ),
             triggers: triggers,
             watch: watch,
-            click: try optionalString(
-                name: name,
-                key: "click",
-                table: table,
-                sourceLines: sourceLines,
-                requireNonEmpty: true
-            ),
-            refreshOnClick: refreshOnClick,
             errorText: try optionalString(
                 name: name,
                 key: "error_text",
@@ -1033,8 +994,8 @@ public enum ConfigParser {
             ) ?? "\u{2013}",
             onError: onError,
             staleAfter: staleAfter,
-            tooltip: tooltip,
             actions: actions,
+            infoRows: infoRows,
             icon: iconSource?.filePath,
             symbol: iconSource?.symbolName,
             maxLength: maxLength,
@@ -1445,6 +1406,66 @@ public enum ConfigParser {
                 )
             }
             return ItemAction(title: title, kind: .refresh)
+        }
+    }
+
+    private static func parseInfoRows(
+        name: String,
+        value: TOMLValueConvertible?,
+        sourceLines: SourceLineMap
+    ) throws -> [ItemInfoRow] {
+        guard let value else { return [] }
+        guard let array = value.array else {
+            throw typeError(
+                path: "item.\(name).info",
+                expected: "array",
+                value: value,
+                line: sourceLine(item: name, key: "info", sourceLines: sourceLines)
+            )
+        }
+
+        return try array.enumerated().map { index, element in
+            guard let table = element.table else {
+                throw typeError(
+                    path: "item.\(name).info[\(index)]",
+                    expected: "table",
+                    value: element,
+                    line: sourceLine(item: name, key: "info", index: index, sourceLines: sourceLines)
+                )
+            }
+
+            try validateUnknownKeys(
+                in: table,
+                allowedKeys: supportedInfoKeys,
+                context: "item.\(name).info[\(index)]",
+                lineForKey: { sourceLine(item: name, key: $0, index: index, sourceLines: sourceLines) }
+            )
+
+            guard let titleValue = table["title"] else {
+                throw ConfigParseError(
+                    message: "item.\(name).info[\(index)].title: missing required field",
+                    line: sourceLine(item: name, key: "info", index: index, sourceLines: sourceLines)
+                )
+            }
+            let title = try stringValue(
+                path: "item.\(name).info[\(index)].title",
+                value: titleValue,
+                requireNonEmpty: true,
+                line: sourceLine(item: name, key: "title", index: index, sourceLines: sourceLines)
+            )
+            guard let runValue = table["run"] else {
+                throw ConfigParseError(
+                    message: "item.\(name).info[\(index)].run: missing required field",
+                    line: sourceLine(item: name, key: "info", index: index, sourceLines: sourceLines)
+                )
+            }
+            let run = try stringValue(
+                path: "item.\(name).info[\(index)].run",
+                value: runValue,
+                requireNonEmpty: true,
+                line: sourceLine(item: name, key: "run", index: index, sourceLines: sourceLines)
+            )
+            return ItemInfoRow(title: title, run: run)
         }
     }
 

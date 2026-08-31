@@ -18,7 +18,6 @@ private final class FakeManagedItem: ManagedItemLifecycle {
     let ownedStatusItem: NSStatusItem?
     var runtimeSnapshotValue: ItemRuntimeSnapshot?
     var actionSnapshotValues: [CommandRunnerSnapshot?] = []
-    var clickSnapshotValue: ClickDiagnosticsSnapshot?
     /// When set, `prepareUpdate`/`prepareRemoval` sleep for this duration
     /// after logging, letting tests prove operations across many fake items
     /// are fired and awaited concurrently (bounded by the slowest one) under
@@ -104,10 +103,6 @@ private final class FakeManagedItem: ManagedItemLifecycle {
         return actionSnapshotValues[index]
     }
 
-    func clickSnapshot() async -> ClickDiagnosticsSnapshot? {
-        clickSnapshotValue
-    }
-
     func invokeAction(at index: Int) {
         eventLog.append("action:\(index)")
     }
@@ -173,6 +168,34 @@ final class StatusItemControllerTests: XCTestCase {
         )
     }
 
+    func testLifecycleMenuRendersConfiguredInfoRows() async throws {
+        let factory = FakeManagedItemFactory()
+        let controller = makeController(factory: factory)
+        addTeardownBlock { @MainActor in await controller.shutdown() }
+
+        let config = ItemConfig(
+            name: "alpha",
+            run: "echo alpha",
+            interval: .manual,
+            info: [
+                ItemInfoRow(title: "Reset", run: "echo 2026-09-07"),
+                // A failing info command must fall back to the `–` value.
+                ItemInfoRow(title: "Pace", run: "exit 3")
+            ]
+        )
+        await controller.apply(config: PinchosConfig(items: [config]))
+
+        let menu = await controller.makeLifecycleMenu(forManagedItem: factory.created[0], revealsDiagnostics: false)
+        let titles = menu.items.map(\.title)
+
+        XCTAssertTrue(titles.contains("Reset: Loading…") || titles.contains("Reset: 2026-09-07"))
+        XCTAssertTrue(titles.contains("Pace: Loading…") || titles.contains("Pace: –"))
+        // Info rows are read-only: the row rendering must not be a clickable action.
+        let infoTitle = try XCTUnwrap(menu.items.first(where: { $0.title.hasPrefix("Reset:") }))
+        XCTAssertFalse(infoTitle.isEnabled)
+        XCTAssertNil(infoTitle.action)
+    }
+
     func testLifecycleMenuOffersRefreshNowAndDelegatesToItem() async throws {
         let factory = FakeManagedItemFactory()
         let controller = makeController(factory: factory)
@@ -189,12 +212,8 @@ final class StatusItemControllerTests: XCTestCase {
         XCTAssertNotNil(refresh.representedObject)
         XCTAssertTrue(NSApplication.shared.sendAction(refresh.action!, to: refresh.target, from: refresh))
         XCTAssertEqual(factory.eventLog.events, ["refresh-now:alpha"])
+        XCTAssertEqual(menu.items.first?.title, "Refresh Now")
         XCTAssertEqual(Array(menu.items.suffix(3).map(\.title)), ["Open Config", "Reload Config", "Quit Pinchos"])
-
-        let run = try XCTUnwrap(menu.items.first(where: { $0.title == "Run alpha" }))
-        XCTAssertTrue(run.isEnabled)
-        XCTAssertTrue(NSApplication.shared.sendAction(run.action!, to: run.target, from: run))
-        XCTAssertEqual(factory.eventLog.events, ["refresh-now:alpha", "refresh-now:alpha"])
     }
 
     func testLifecycleMenuOffersHideThatPersistsAndRequestsReload() async throws {
@@ -302,6 +321,52 @@ final class StatusItemControllerTests: XCTestCase {
         XCTAssertTrue(titles.contains("Skipped ticks: 2"))
     }
 
+    func testCompactLifecycleMenuShowsOnlyActionsAndHide() async throws {
+        let factory = FakeManagedItemFactory()
+        let controller = makeController(factory: factory)
+        addTeardownBlock { @MainActor in
+            await controller.shutdown()
+        }
+
+        await controller.apply(config: PinchosConfig(items: [item("alpha")]))
+        let attempt = Date(timeIntervalSince1970: 1_700_000_000)
+        factory.created[0].runtimeSnapshotValue = ItemRuntimeSnapshot(
+            isRunning: false,
+            fullOutput: "full\nvalue\n",
+            lastAttemptedAt: attempt,
+            lastUpdatedAt: attempt.addingTimeInterval(-60),
+            lastExecution: CommandExecution(
+                terminalReason: .exited(code: 7),
+                stdout: "full\nvalue\n",
+                stderr: "diagnostic\n",
+                stdoutBytesRead: 11,
+                stderrBytesRead: 11,
+                stdoutTruncated: false,
+                stderrTruncated: false,
+                duration: 0.25
+            ),
+            staleAfter: 60,
+            skippedRefreshes: 2,
+            now: attempt
+        )
+
+        let menu = await controller.makeLifecycleMenu(forManagedItem: factory.created[0], revealsDiagnostics: false)
+        let titles = menu.items.map(\.title)
+
+        // Refresh Now leads the top group; Hide sits directly under it.
+        XCTAssertEqual(Array(titles.prefix(2)), ["Refresh Now", "Hide"])
+        // Collapse Pinchos lives in the shared bottom group, below Reload Config.
+        XCTAssertEqual(Array(titles.suffix(3)), ["Open Config", "Reload Config", "Quit Pinchos"])
+        // No runtime state, diagnostics, or value summary appears.
+        XCTAssertFalse(titles.contains(where: { $0.hasPrefix("State:") }))
+        XCTAssertFalse(titles.contains(where: { $0.hasPrefix("Value:") }))
+        XCTAssertFalse(titles.contains(where: { $0.hasPrefix("Last attempt:") }))
+        XCTAssertFalse(titles.contains(where: { $0.hasPrefix("Skipped ticks:") }))
+        XCTAssertFalse(titles.contains(where: { $0.hasPrefix("Scheduler:") }))
+        XCTAssertFalse(titles.contains(where: { $0.hasPrefix("Copy Full") }))
+        XCTAssertFalse(titles.contains("full \u{240A} value \u{b7} failed \u{b7} showing last good value"))
+    }
+
     func testLifecycleMenuPlacesDeclarativeActionsBeforeGlobalActions() async throws {
         let toml = """
         [item.codex]
@@ -327,7 +392,7 @@ final class StatusItemControllerTests: XCTestCase {
         let menu = await controller.makeLifecycleMenu(forManagedItem: factory.created[0])
         let titles = menu.items.map(\.title)
 
-        XCTAssertEqual(Array(titles.prefix(2)), ["Run codex", "Open usage"])
+        XCTAssertEqual(Array(titles.prefix(2)), ["Open usage", "Refresh now"])
         XCTAssertTrue(titles.contains("Refresh now"))
         XCTAssertFalse(titles.contains("Refresh Now"))
         XCTAssertEqual(Array(titles.suffix(3)), ["Open Config", "Reload Config", "Quit Pinchos"])
@@ -395,196 +460,6 @@ final class StatusItemControllerTests: XCTestCase {
         XCTAssertTrue(titles.contains("Action \"Fail action\": last exit code: 7"))
         XCTAssertTrue(titles.contains("Action \"Fail action\": stderr: action-error"))
         XCTAssertTrue(titles.contains("Action \"Fail action\": skipped invocations: 2"))
-    }
-
-    func testLifecycleMenuOmitsClickSectionWhenNoClickConfigured() async throws {
-        let factory = FakeManagedItemFactory()
-        let controller = makeController(factory: factory)
-        addTeardownBlock { @MainActor in
-            await controller.shutdown()
-        }
-
-        await controller.apply(config: PinchosConfig(items: [item("alpha")]))
-        let menu = await controller.makeLifecycleMenu(forManagedItem: factory.created[0])
-        let titles = menu.items.map(\.title)
-
-        XCTAssertFalse(titles.contains(where: { $0.hasPrefix("Click Action:") }))
-    }
-
-    func testLifecycleMenuShowsNeverRunClickState() async throws {
-        let factory = FakeManagedItemFactory()
-        let controller = makeController(factory: factory)
-        addTeardownBlock { @MainActor in
-            await controller.shutdown()
-        }
-
-        await controller.apply(config: PinchosConfig(items: [item("alpha")]))
-        factory.created[0].clickSnapshotValue = ClickDiagnosticsSnapshot(
-            runner: CommandRunnerSnapshot(isRunning: false, lastExecution: nil, skippedRefreshes: 0),
-            lastAttemptedAt: nil,
-            lastCompletedAt: nil
-        )
-
-        let menu = await controller.makeLifecycleMenu(forManagedItem: factory.created[0])
-        let titles = menu.items.map(\.title)
-
-        XCTAssertTrue(titles.contains("Click Action: never run"))
-    }
-
-    func testLifecycleMenuShowsRunningClickStateWithoutTouchingPrimaryStatus() async throws {
-        let factory = FakeManagedItemFactory()
-        let controller = makeController(factory: factory)
-        addTeardownBlock { @MainActor in
-            await controller.shutdown()
-        }
-
-        await controller.apply(config: PinchosConfig(items: [item("alpha")]))
-        factory.created[0].runtimeSnapshotValue = ItemRuntimeSnapshot(
-            isRunning: false,
-            fullOutput: "fresh",
-            lastAttemptedAt: nil,
-            lastUpdatedAt: nil,
-            lastExecution: nil,
-            staleAfter: nil,
-            skippedRefreshes: 0,
-            now: Date()
-        )
-        factory.created[0].clickSnapshotValue = ClickDiagnosticsSnapshot(
-            runner: CommandRunnerSnapshot(isRunning: true, lastExecution: nil, skippedRefreshes: 0),
-            lastAttemptedAt: Date(timeIntervalSince1970: 1_700_000_000),
-            lastCompletedAt: nil
-        )
-
-        let menu = await controller.makeLifecycleMenu(forManagedItem: factory.created[0])
-        let titles = menu.items.map(\.title)
-
-        XCTAssertTrue(titles.contains("Click Action: running"))
-        XCTAssertTrue(titles.contains("Click Action: last attempt: 2023-11-14T22:13:20Z"))
-        XCTAssertTrue(titles.contains("State: fresh"))
-        XCTAssertTrue(titles.contains("Value: fresh"))
-    }
-
-    func testLifecycleMenuShowsSuccessfulClickDiagnosticsAndCopyActions() async throws {
-        let factory = FakeManagedItemFactory()
-        let controller = makeController(factory: factory)
-        addTeardownBlock { @MainActor in
-            await controller.shutdown()
-        }
-
-        await controller.apply(config: PinchosConfig(items: [item("alpha")]))
-        let execution = CommandExecution(
-            terminalReason: .exited(code: 0),
-            stdout: "click output\n",
-            stderr: "",
-            stdoutBytesRead: 13,
-            stderrBytesRead: 0,
-            stdoutTruncated: false,
-            stderrTruncated: false,
-            duration: 0.05
-        )
-        factory.created[0].clickSnapshotValue = ClickDiagnosticsSnapshot(
-            runner: CommandRunnerSnapshot(isRunning: false, lastExecution: execution, skippedRefreshes: 0),
-            lastAttemptedAt: Date(timeIntervalSince1970: 1_700_000_000),
-            lastCompletedAt: Date(timeIntervalSince1970: 1_700_000_000.05)
-        )
-
-        let menu = await controller.makeLifecycleMenu(forManagedItem: factory.created[0])
-        let titles = menu.items.map(\.title)
-
-        XCTAssertTrue(titles.contains("Click Action: completed"))
-        XCTAssertTrue(titles.contains("Click Action: last exit code: 0"))
-        XCTAssertTrue(titles.contains("Click Action: duration: 0.050s"))
-        XCTAssertTrue(titles.contains("Click Action: stdout: 13 bytes"))
-        XCTAssertTrue(titles.contains("Click Action: stderr: 0 bytes"))
-        XCTAssertTrue(titles.contains("Click Action: last attempt: 2023-11-14T22:13:20Z"))
-
-        let copyItem = try XCTUnwrap(menu.items.first(where: { $0.title == "Copy Click Output" }))
-        XCTAssertTrue(NSApplication.shared.sendAction(copyItem.action!, to: copyItem.target, from: copyItem))
-        XCTAssertEqual(NSPasteboard.general.string(forType: .string), "click output\n")
-        XCTAssertNil(menu.items.first(where: { $0.title == "Copy Click Error" }))
-    }
-
-    func testLifecycleMenuShowsFailedClickDiagnosticsWithStderrPreviewAndCopyAction() async throws {
-        let factory = FakeManagedItemFactory()
-        let controller = makeController(factory: factory)
-        addTeardownBlock { @MainActor in
-            await controller.shutdown()
-        }
-
-        await controller.apply(config: PinchosConfig(items: [item("alpha")]))
-        let execution = CommandExecution(
-            terminalReason: .exited(code: 7),
-            stdout: "",
-            stderr: "click failed\n",
-            stdoutBytesRead: 0,
-            stderrBytesRead: 13,
-            stdoutTruncated: false,
-            stderrTruncated: false,
-            duration: 0.02
-        )
-        factory.created[0].clickSnapshotValue = ClickDiagnosticsSnapshot(
-            runner: CommandRunnerSnapshot(isRunning: false, lastExecution: execution, skippedRefreshes: 3),
-            lastAttemptedAt: Date(timeIntervalSince1970: 1_700_000_000),
-            lastCompletedAt: Date(timeIntervalSince1970: 1_700_000_000.02)
-        )
-
-        let menu = await controller.makeLifecycleMenu(forManagedItem: factory.created[0])
-        let titles = menu.items.map(\.title)
-
-        XCTAssertTrue(titles.contains("Click Action: error"))
-        XCTAssertTrue(titles.contains("Click Action: last exit code: 7"))
-        XCTAssertTrue(titles.contains("Click Action: stderr: click failed"))
-        XCTAssertTrue(titles.contains("Click Action: skipped invocations: 3"))
-
-        let copyItem = try XCTUnwrap(menu.items.first(where: { $0.title == "Copy Click Error" }))
-        XCTAssertTrue(NSApplication.shared.sendAction(copyItem.action!, to: copyItem.target, from: copyItem))
-        XCTAssertEqual(NSPasteboard.general.string(forType: .string), "click failed\n")
-        XCTAssertNil(menu.items.first(where: { $0.title == "Copy Click Output" }))
-    }
-
-    func testLifecycleMenuDistinguishesSignalTimeoutCancelledAndLaunchFailure() async throws {
-        let factory = FakeManagedItemFactory()
-        let controller = makeController(factory: factory)
-        addTeardownBlock { @MainActor in
-            await controller.shutdown()
-        }
-        await controller.apply(config: PinchosConfig(items: [item("alpha")]))
-
-        func execution(_ reason: CommandTerminalReason) -> CommandExecution {
-            CommandExecution(
-                terminalReason: reason,
-                stdout: "",
-                stderr: "",
-                stdoutBytesRead: 0,
-                stderrBytesRead: 0,
-                stdoutTruncated: false,
-                stderrTruncated: false,
-                duration: 0.01
-            )
-        }
-
-        let cases: [(reason: CommandTerminalReason, state: String, detail: String)] = [
-            (.signaled(signal: 9), "Click Action: error", "Click Action: last signal: 9"),
-            (.timedOut, "Click Action: timed out", "Click Action: last result: timed out"),
-            (.cancelled, "Click Action: cancelled", "Click Action: last result: cancelled"),
-            (.launchFailed("shell missing"), "Click Action: error", "Click Action: last result: launch failed")
-        ]
-
-        for testCase in cases {
-            factory.created[0].clickSnapshotValue = ClickDiagnosticsSnapshot(
-                runner: CommandRunnerSnapshot(
-                    isRunning: false,
-                    lastExecution: execution(testCase.reason),
-                    skippedRefreshes: 0
-                ),
-                lastAttemptedAt: nil,
-                lastCompletedAt: nil
-            )
-            let menu = await controller.makeLifecycleMenu(forManagedItem: factory.created[0])
-            let titles = menu.items.map(\.title)
-            XCTAssertTrue(titles.contains(testCase.state), "expected \(testCase.state) for \(testCase.reason)")
-            XCTAssertTrue(titles.contains(testCase.detail), "expected \(testCase.detail) for \(testCase.reason)")
-        }
     }
 
     func testDisabledItemMenuDisablesExecutableActionsAndReportsDisabledState() async throws {

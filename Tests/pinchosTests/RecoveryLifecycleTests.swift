@@ -149,8 +149,7 @@ final class RecoveryLifecycleTests: XCTestCase {
                 name: "recovery",
                 run: "count=$(cat '\(marker.path)' 2>/dev/null || echo 0); count=$((count + 1)); printf '%s' \"$count\" > '\(marker.path)'; if [ \"$count\" -eq 1 ]; then printf 'good\\n'; elif [ \"$count\" -eq 2 ]; then printf 'transient diagnostic\\n' >&2; exit 7; else printf 'recovered\\n'; fi",
                 interval: .manual,
-                onError: .keepLast,
-                tooltip: "{status}|{output}|{error}"
+                onError: .keepLast
             ),
             initiallyVisible: false
         )
@@ -178,7 +177,6 @@ final class RecoveryLifecycleTests: XCTestCase {
         XCTAssertEqual(failure.fullOutput, "good\n")
         XCTAssertEqual(failure.lastExecution?.exitCode, 7)
         XCTAssertEqual(failure.errorSummary, "transient diagnostic")
-        XCTAssertEqual(item.renderedToolTip, "error|good\n|transient diagnostic")
 
         item.refreshNow()
         let recovery = try await waitForRuntimeSnapshot(item) { snapshot in
@@ -188,7 +186,6 @@ final class RecoveryLifecycleTests: XCTestCase {
         XCTAssertGreaterThan(try XCTUnwrap(recovery.lastUpdatedAt), firstUpdate)
         XCTAssertEqual(recovery.fullOutput, "recovered\n")
         XCTAssertEqual(recovery.lastExecution?.exitCode, 0)
-        XCTAssertEqual(item.renderedToolTip, "fresh|recovered\n|")
     }
 
     @MainActor
@@ -198,8 +195,7 @@ final class RecoveryLifecycleTests: XCTestCase {
                 name: "first-failure",
                 run: "printf 'first failure\\n' >&2; exit 9",
                 interval: .manual,
-                onError: .keepLast,
-                tooltip: "{status}|{output}|{updated_at}|{attempted_at}|{error}"
+                onError: .keepLast
             ),
             initiallyVisible: false
         )
@@ -217,7 +213,6 @@ final class RecoveryLifecycleTests: XCTestCase {
         XCTAssertNotNil(state.lastAttemptedAt)
         XCTAssertEqual(state.lastExecution?.exitCode, 9)
         XCTAssertEqual(state.errorSummary, "first failure")
-        XCTAssertEqual(item.renderedToolTip?.components(separatedBy: "|").prefix(3).joined(separator: "|"), "error||")
     }
 
     @MainActor
@@ -275,13 +270,12 @@ final class RecoveryLifecycleTests: XCTestCase {
     }
 
     @MainActor
-    func testRunningRefreshPreservesConfiguredTooltipAndRecordsAttemptStart() async throws {
+    func testRunningRefreshRecordsAttemptStartAndKeepsLastValue() async throws {
         let item = makeHeadlessItem(
             config: ItemConfig(
                 name: "running",
                 run: "sleep 0.4; printf running",
-                interval: .manual,
-                tooltip: "Value={output}; Status={status}; Attempted={attempted_at}"
+                interval: .manual
             ),
             initiallyVisible: false
         )
@@ -291,13 +285,10 @@ final class RecoveryLifecycleTests: XCTestCase {
 
         item.refreshNow()
         try await waitForRunning(item)
-        let tooltipBeforeRuntimeObservation = item.renderedToolTip
         let running = await item.runtimeSnapshot()
 
         XCTAssertEqual(running.status, .running)
         XCTAssertNotNil(running.lastAttemptedAt)
-        XCTAssertTrue(tooltipBeforeRuntimeObservation?.contains("Status=running") == true)
-        XCTAssertNotEqual(tooltipBeforeRuntimeObservation, "Refreshing...")
 
         _ = try await waitForRuntimeSnapshot(item) { snapshot in
             snapshot.status == .fresh && snapshot.fullOutput == "running"
@@ -404,12 +395,11 @@ final class RecoveryLifecycleTests: XCTestCase {
     }
 
     @MainActor
-    func testItemShutdownCancelsMainClickAndDeclarativeActionRunners() async throws {
+    func testItemShutdownCancelsPrimaryAndDeclarativeActionRunners() async throws {
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent("pinchos-shutdown-runners-\(UUID().uuidString)", isDirectory: true)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         let mainPIDURL = root.appendingPathComponent("main.pid")
-        let clickPIDURL = root.appendingPathComponent("click.pid")
         let actionPIDURL = root.appendingPathComponent("action.pid")
         let command: (URL) -> String = { marker in
             "(trap '' TERM INT; while :; do sleep 1; done) & child=$!; printf '%s' \"$child\" > '\(marker.path)'; wait \"$child\""
@@ -419,7 +409,6 @@ final class RecoveryLifecycleTests: XCTestCase {
                 name: "shutdown-runners",
                 run: command(mainPIDURL),
                 interval: .manual,
-                click: command(clickPIDURL),
                 actions: [ItemAction(title: "Run action", kind: .command(command(actionPIDURL)))]
             ),
             initiallyVisible: false
@@ -430,11 +419,9 @@ final class RecoveryLifecycleTests: XCTestCase {
         }
 
         item.refreshNow()
-        item.processClick(eventType: .leftMouseUp)
         item.invokeAction(at: 0)
 
         let mainPID = try await waitForPID(at: mainPIDURL)
-        let clickPID = try await waitForPID(at: clickPIDURL)
         let actionPID = try await waitForPID(at: actionPIDURL)
         try await waitForRunning(item)
         try await waitForActionRunning(item, at: 0)
@@ -442,38 +429,35 @@ final class RecoveryLifecycleTests: XCTestCase {
         await item.tearDown()
 
         let mainGone = await waitUntilGone(mainPID)
-        let clickGone = await waitUntilGone(clickPID)
         let actionGone = await waitUntilGone(actionPID)
         let runnerSnapshot = await item.runnerSnapshot()
         let actionSnapshot = await item.actionSnapshot(at: 0)
         XCTAssertTrue(mainGone, "item shutdown left main descendant \(mainPID) alive")
-        XCTAssertTrue(clickGone, "item shutdown left click descendant \(clickPID) alive")
         XCTAssertTrue(actionGone, "item shutdown left action descendant \(actionPID) alive")
         XCTAssertFalse(runnerSnapshot.isRunning)
         XCTAssertFalse(actionSnapshot?.isRunning ?? true)
     }
 
-    /// Issue #54: a single item's primary, click, and action runner
-    /// cancellation must be initiated concurrently rather than one after
-    /// another. Real runner cancellation is normally too fast (SIGKILL
-    /// settles almost immediately) to distinguish concurrent from serial
-    /// execution, so this test uses the item's test-only settlement-delay
-    /// seam to require all three roles to start before any one role settles.
+    /// Issue #54: a single item's primary and action runner cancellation
+    /// must be initiated concurrently rather than one after another. Real
+    /// runner cancellation is normally too fast (SIGKILL settles almost
+    /// immediately) to distinguish concurrent from serial execution, so
+    /// this test uses the item's test-only settlement-delay seam to require
+    /// all roles to start before any one role settles.
     @MainActor
-    func testItemShutdownCancelsPrimaryClickAndActionRunnersConcurrentlyNotSequentially() async throws {
+    func testItemShutdownCancelsPrimaryAndActionRunnersConcurrentlyNotSequentially() async throws {
         let item = makeHeadlessItem(
             config: ItemConfig(
                 name: "concurrent-cancel",
                 run: "printf primary",
                 interval: .manual,
-                click: "printf clicked",
                 actions: [ItemAction(title: "Run action", kind: .command("printf action"))]
             ),
             initiallyVisible: false
         )
         let perRoleSettle: Duration = .milliseconds(150)
         let allRolesStarted = expectation(description: "all runner cancellations start before any settles")
-        let tracker = CancellationRoleTracker(expectedRoleCount: 3)
+        let tracker = CancellationRoleTracker(expectedRoleCount: 2)
         item.cancellationSettlementDelayForTesting = { role in
             if await tracker.recordStart(role) {
                 allRolesStarted.fulfill()
@@ -489,10 +473,10 @@ final class RecoveryLifecycleTests: XCTestCase {
         let prematureSettles = await tracker.prematureSettles
         XCTAssertTrue(
             prematureSettles.isEmpty,
-            "roles settled before all 3 cancellation roles had started: \(prematureSettles)"
+            "roles settled before all cancellation roles had started: \(prematureSettles)"
         )
         let startedRoles = await tracker.startedRoles
-        XCTAssertEqual(startedRoles.count, 3)
+        XCTAssertEqual(startedRoles.count, 2)
     }
 
     /// A per-item lifecycle operation must still respect the shared
@@ -506,12 +490,12 @@ final class RecoveryLifecycleTests: XCTestCase {
                 name: "deadline-bound",
                 run: "printf primary",
                 interval: .manual,
-                click: "printf clicked"
+                actions: [ItemAction(title: "Run action", kind: .command("printf action"))]
             ),
             initiallyVisible: false
         )
         item.cancellationSettlementDelayForTesting = { role in
-            if role == "click" {
+            if role == "action:0" {
                 try? await Task.sleep(for: .seconds(2))
             }
         }
@@ -526,92 +510,10 @@ final class RecoveryLifecycleTests: XCTestCase {
         let elapsed = started.duration(to: clock.now)
 
         XCTAssertLessThan(elapsed, .seconds(2), "prepareRemoval must not block past its shared deadline")
-        XCTAssertEqual(reportedTimeouts.map(\.identity), ["deadline-bound:click"])
+        XCTAssertEqual(reportedTimeouts.map(\.identity), ["deadline-bound:action[0]"])
 
         item.cancellationSettlementDelayForTesting = nil
         item.commitRemoval()
-    }
-
-    @MainActor
-    func testQueuedClickDoesNotStartAfterRemovalBegins() async throws {
-        let marker = FileManager.default.temporaryDirectory
-            .appendingPathComponent("pinchos-queued-click-\(UUID().uuidString)")
-        defer { try? FileManager.default.removeItem(at: marker) }
-        let item = makeHeadlessItem(
-            config: ItemConfig(
-                name: "queued-click",
-                run: "printf unused",
-                interval: .manual,
-                click: "printf '%s' \"$$\" > '\(marker.path)'"
-            ),
-            initiallyVisible: false
-        )
-
-        item.processClick(eventType: .leftMouseUp)
-        await item.tearDown()
-        try await Task.sleep(for: .milliseconds(50))
-
-        XCTAssertFalse(FileManager.default.fileExists(atPath: marker.path))
-    }
-
-    @MainActor
-    func testQueuedClickDoesNotRunObsoleteCommandAfterClickReload() async throws {
-        let obsoleteMarker = FileManager.default.temporaryDirectory
-            .appendingPathComponent("pinchos-obsolete-click-\(UUID().uuidString)")
-        let replacementMarker = FileManager.default.temporaryDirectory
-            .appendingPathComponent("pinchos-replacement-click-\(UUID().uuidString)")
-        defer {
-            try? FileManager.default.removeItem(at: obsoleteMarker)
-            try? FileManager.default.removeItem(at: replacementMarker)
-        }
-
-        let item = makeHeadlessItem(
-            config: ItemConfig(
-                name: "stale-click",
-                run: "printf unused",
-                interval: .manual,
-                click: "printf obsolete > '\(obsoleteMarker.path)'"
-            ),
-            initiallyVisible: false
-        )
-        addTeardownBlock { @MainActor in
-            await item.tearDown()
-        }
-
-        let gateEntered = expectation(description: "queued click reached test gate")
-        var releaseContinuation: CheckedContinuation<Void, Never>?
-        item.clickInvocationTestGate = {
-            gateEntered.fulfill()
-            await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
-                releaseContinuation = continuation
-            }
-        }
-
-        item.processClick(eventType: .leftMouseUp)
-        await fulfillment(of: [gateEntered], timeout: 2)
-
-        await item.prepareUpdate(
-            config: ItemConfig(
-                name: "stale-click",
-                run: "printf unused",
-                interval: .manual,
-                click: "printf replacement > '\(replacementMarker.path)'"
-            )
-        )
-        item.commitPreparedUpdate()
-
-        releaseContinuation?.resume()
-        releaseContinuation = nil
-        try await Task.sleep(for: .milliseconds(100))
-
-        XCTAssertFalse(
-            FileManager.default.fileExists(atPath: obsoleteMarker.path),
-            "queued click must not execute the pre-reload click command"
-        )
-        XCTAssertFalse(
-            FileManager.default.fileExists(atPath: replacementMarker.path),
-            "queued obsolete click must not start the replacement command either"
-        )
     }
 
     @MainActor
@@ -747,304 +649,6 @@ final class RecoveryLifecycleTests: XCTestCase {
     }
 
     @MainActor
-    func testRefreshOnClickTriggersRefreshWhenNoClickActionIsConfigured() async throws {
-        let marker = FileManager.default.temporaryDirectory
-            .appendingPathComponent("pinchos-refresh-click-\(UUID().uuidString)")
-        let item = makeHeadlessItem(
-            config: ItemConfig(
-                name: "click",
-                run: "if [ ! -e '\(marker.path)' ]; then printf old; touch '\(marker.path)'; else sleep 0.2; printf clicked; fi",
-                interval: .manual,
-                refreshOnClick: true
-            ),
-            menuDelegate: NoopStatusItemMenuDelegate(),
-            initiallyVisible: false
-        )
-        addTeardownBlock { @MainActor in
-            await item.tearDown()
-            try? FileManager.default.removeItem(at: marker)
-        }
-
-        item.refreshNow()
-        _ = try await waitForExecution(item)
-        _ = try await waitForRuntimeSnapshot(item) { snapshot in
-            snapshot.fullOutput == "old" && item.renderedTitle == "old"
-        }
-
-        item.processClick(eventType: .leftMouseUp)
-        try await waitForRunning(item)
-        try await waitForIdle(item)
-        _ = try await waitForRuntimeSnapshot(item) { snapshot in
-            snapshot.fullOutput == "clicked" && item.renderedTitle == "clicked"
-        }
-        XCTAssertEqual(item.renderedTitle, "clicked")
-    }
-
-    @MainActor
-    func testConfiguredClickActionTakesPrecedenceOverRefreshOnClick() async throws {
-        let runMarker = FileManager.default.temporaryDirectory
-            .appendingPathComponent("pinchos-run-click-\(UUID().uuidString)")
-        let clickMarker = FileManager.default.temporaryDirectory
-            .appendingPathComponent("pinchos-action-click-\(UUID().uuidString)")
-        let item = makeHeadlessItem(
-            config: ItemConfig(
-                name: "click",
-                run: "if [ ! -e '\(runMarker.path)' ]; then printf old; touch '\(runMarker.path)'; else printf refreshed; fi",
-                interval: .manual,
-                click: "touch '\(clickMarker.path)'",
-                refreshOnClick: true
-            ),
-            menuDelegate: NoopStatusItemMenuDelegate(),
-            initiallyVisible: false
-        )
-        addTeardownBlock { @MainActor in
-            await item.tearDown()
-            try? FileManager.default.removeItem(at: runMarker)
-            try? FileManager.default.removeItem(at: clickMarker)
-        }
-
-        item.refreshNow()
-        _ = try await waitForExecution(item)
-        _ = try await waitForRuntimeSnapshot(item) { snapshot in
-            snapshot.fullOutput == "old" && item.renderedTitle == "old"
-        }
-
-        item.processClick(eventType: .leftMouseUp)
-        try await waitForFile(clickMarker)
-        _ = try await waitForRuntimeSnapshot(item) { snapshot in
-            snapshot.fullOutput == "old" && item.renderedTitle == "old"
-        }
-    }
-
-    @MainActor
-    func testItemWithNoClickCommandExposesNoClickDiagnostics() async throws {
-        let item = makeHeadlessItem(
-            config: ItemConfig(name: "no-click", run: "printf value", interval: .manual),
-            initiallyVisible: false
-        )
-        addTeardownBlock { @MainActor in
-            await item.tearDown()
-        }
-
-        let snapshot = await item.clickSnapshot()
-        XCTAssertNil(snapshot)
-    }
-
-    @MainActor
-    func testClickDiagnosticsRecordSuccessWithoutAlteringPrimaryState() async throws {
-        let item = makeHeadlessItem(
-            config: ItemConfig(
-                name: "click-success",
-                run: "printf primary",
-                interval: .manual,
-                click: "printf 'clicked\\n'"
-            ),
-            menuDelegate: NoopStatusItemMenuDelegate(),
-            initiallyVisible: false
-        )
-        addTeardownBlock { @MainActor in
-            await item.tearDown()
-        }
-
-        item.refreshNow()
-        _ = try await waitForRuntimeSnapshot(item) { snapshot in
-            snapshot.fullOutput == "primary" && item.renderedTitle == "primary"
-        }
-
-        item.processClick(eventType: .leftMouseUp)
-        let clickSnapshot = try await waitForClickExecution(item)
-
-        XCTAssertFalse(clickSnapshot.runner.isRunning)
-        XCTAssertEqual(clickSnapshot.runner.lastExecution?.terminalReason, .exited(code: 0))
-        XCTAssertEqual(clickSnapshot.runner.lastExecution?.stdout, "clicked\n")
-        XCTAssertNotNil(clickSnapshot.lastAttemptedAt)
-        XCTAssertNotNil(clickSnapshot.lastCompletedAt)
-
-        let primary = await item.runtimeSnapshot()
-        XCTAssertEqual(primary.fullOutput, "primary")
-        XCTAssertEqual(item.renderedTitle, "primary")
-    }
-
-    @MainActor
-    func testClickDiagnosticsRecordFailureWithoutAlteringPrimaryState() async throws {
-        let item = makeHeadlessItem(
-            config: ItemConfig(
-                name: "click-failure",
-                run: "printf primary",
-                interval: .manual,
-                click: "printf 'boom' 1>&2; exit 3"
-            ),
-            menuDelegate: NoopStatusItemMenuDelegate(),
-            initiallyVisible: false
-        )
-        addTeardownBlock { @MainActor in
-            await item.tearDown()
-        }
-
-        item.refreshNow()
-        _ = try await waitForRuntimeSnapshot(item) { snapshot in
-            snapshot.fullOutput == "primary" && item.renderedTitle == "primary"
-        }
-
-        item.processClick(eventType: .leftMouseUp)
-        let clickSnapshot = try await waitForClickExecution(item)
-
-        XCTAssertEqual(clickSnapshot.runner.lastExecution?.terminalReason, .exited(code: 3))
-        XCTAssertEqual(clickSnapshot.runner.lastExecution?.stderr, "boom")
-
-        let primary = await item.runtimeSnapshot()
-        XCTAssertEqual(primary.status, .fresh)
-        XCTAssertEqual(primary.fullOutput, "primary")
-        XCTAssertEqual(item.renderedTitle, "primary")
-        XCTAssertNil(primary.errorSummary)
-    }
-
-    /// Two clicks issued back-to-back (no intervening await) while a first
-    /// click already holds the scheduler permit and is running both land
-    /// while this item's one-outstanding-permit-request-per-work-kind
-    /// bound is in effect: the second coalesces into the third's still-
-    /// pending permit request (recorded on the scheduler, not the runner),
-    /// so exactly one of the two extra clicks actually reaches the runner
-    /// and increments its `skippedRefreshes`, not both.
-    @MainActor
-    func testRepeatedClicksWhileActiveIncrementSkippedInvocationCount() async throws {
-        let marker = FileManager.default.temporaryDirectory
-            .appendingPathComponent("pinchos-click-skip-\(UUID().uuidString)")
-        let scheduler = CommandScheduler()
-        let item = makeHeadlessItem(
-            config: ItemConfig(
-                name: "click-skip",
-                run: "printf primary",
-                interval: .manual,
-                click: "touch '\(marker.path)'; sleep 0.3"
-            ),
-            menuDelegate: NoopStatusItemMenuDelegate(),
-            initiallyVisible: false,
-            scheduler: scheduler
-        )
-        addTeardownBlock { @MainActor in
-            await item.tearDown()
-            try? FileManager.default.removeItem(at: marker)
-        }
-
-        item.processClick(eventType: .leftMouseUp)
-        try await waitForFile(marker)
-        item.processClick(eventType: .leftMouseUp)
-        item.processClick(eventType: .leftMouseUp)
-
-        let deadline = Date().addingTimeInterval(2)
-        while Date() < deadline {
-            if let snapshot = await item.clickSnapshot(), snapshot.runner.skippedRefreshes > 0 {
-                XCTAssertEqual(snapshot.runner.skippedRefreshes, 1)
-                let diagnostics = await scheduler.diagnostics()
-                XCTAssertGreaterThanOrEqual(diagnostics.coalescedCount, 1)
-                return
-            }
-            try await Task.sleep(for: .milliseconds(10))
-        }
-        XCTFail("repeated clicks did not increment the skipped invocation count")
-    }
-
-    @MainActor
-    func testClickDiagnosticsAreRetainedAcrossPresentationOnlyReload() async throws {
-        let item = makeHeadlessItem(
-            config: ItemConfig(
-                name: "click-retain",
-                run: "printf primary",
-                interval: .manual,
-                click: "printf clicked"
-            ),
-            menuDelegate: NoopStatusItemMenuDelegate(),
-            initiallyVisible: false
-        )
-        addTeardownBlock { @MainActor in
-            await item.tearDown()
-        }
-
-        item.processClick(eventType: .leftMouseUp)
-        let before = try await waitForClickExecution(item)
-
-        await item.prepareUpdate(config: ItemConfig(
-            name: "click-retain",
-            run: "printf primary",
-            interval: .manual,
-            format: "value: {output}",
-            click: "printf clicked"
-        ))
-        item.commitPreparedUpdate()
-
-        let after = await item.clickSnapshot()
-        XCTAssertEqual(after?.runner.lastExecution, before.runner.lastExecution)
-        XCTAssertEqual(after?.lastAttemptedAt, before.lastAttemptedAt)
-        XCTAssertEqual(after?.lastCompletedAt, before.lastCompletedAt)
-    }
-
-    @MainActor
-    func testClickDiagnosticsResetWhenClickCommandChanges() async throws {
-        let item = makeHeadlessItem(
-            config: ItemConfig(
-                name: "click-reset",
-                run: "printf primary",
-                interval: .manual,
-                click: "printf clicked"
-            ),
-            menuDelegate: NoopStatusItemMenuDelegate(),
-            initiallyVisible: false
-        )
-        addTeardownBlock { @MainActor in
-            await item.tearDown()
-        }
-
-        item.processClick(eventType: .leftMouseUp)
-        _ = try await waitForClickExecution(item)
-
-        await item.prepareUpdate(config: ItemConfig(
-            name: "click-reset",
-            run: "printf primary",
-            interval: .manual,
-            click: "printf reconfigured"
-        ))
-        item.commitPreparedUpdate()
-
-        let afterReset = await item.clickSnapshot()
-        XCTAssertNotNil(afterReset)
-        XCTAssertNil(afterReset?.runner.lastExecution)
-        XCTAssertNil(afterReset?.lastAttemptedAt)
-        XCTAssertNil(afterReset?.lastCompletedAt)
-        XCTAssertEqual(afterReset?.runner.skippedRefreshes, 0)
-    }
-
-    @MainActor
-    func testClickDiagnosticsAreRemovedWhenClickCommandIsRemoved() async throws {
-        let item = makeHeadlessItem(
-            config: ItemConfig(
-                name: "click-remove",
-                run: "printf primary",
-                interval: .manual,
-                click: "printf clicked"
-            ),
-            menuDelegate: NoopStatusItemMenuDelegate(),
-            initiallyVisible: false
-        )
-        addTeardownBlock { @MainActor in
-            await item.tearDown()
-        }
-
-        item.processClick(eventType: .leftMouseUp)
-        _ = try await waitForClickExecution(item)
-
-        await item.prepareUpdate(config: ItemConfig(
-            name: "click-remove",
-            run: "printf primary",
-            interval: .manual
-        ))
-        item.commitPreparedUpdate()
-
-        let afterRemoval = await item.clickSnapshot()
-        XCTAssertNil(afterRemoval)
-    }
-
-    @MainActor
     func testBuiltInRefreshActionUsesItemRunnerAndSharesItsBusyGate() async throws {
         let item = makeHeadlessItem(
             config: ItemConfig(
@@ -1156,11 +760,10 @@ final class RecoveryLifecycleTests: XCTestCase {
 
         XCTAssertEqual(state.errorSummary, "1")
         XCTAssertEqual(item.renderedTitle, "ERR ⚠︎")
-        XCTAssertTrue(item.renderedToolTip?.contains("Status: error") == true)
     }
 
     @MainActor
-    func testMaxLengthTruncatesRenderedTitleButKeepsFullOutputForTooltipAndDiagnostics() async throws {
+    func testMaxLengthTruncatesRenderedTitleButKeepsFullOutputForDiagnostics() async throws {
         let item = makeHeadlessItem(
             config: ItemConfig(
                 name: "max-length",
@@ -1181,7 +784,6 @@ final class RecoveryLifecycleTests: XCTestCase {
 
         XCTAssertEqual(item.renderedTitle, "hell\u{2026}")
         XCTAssertEqual(snapshot.fullOutput, "hello world")
-        XCTAssertTrue(item.renderedToolTip?.contains("hello world") == true)
     }
 
     @MainActor
@@ -1329,7 +931,7 @@ final class RecoveryLifecycleTests: XCTestCase {
     }
 
     @MainActor
-    func testDisabledItemStaysVisibleButPreventsScheduledInitialManualClickAndActionExecution() async throws {
+    func testDisabledItemStaysVisibleButPreventsScheduledAndActionExecution() async throws {
         let marker = FileManager.default.temporaryDirectory
             .appendingPathComponent("pinchos-disabled-\(UUID().uuidString)")
         let item = makeHeadlessItem(
@@ -1337,7 +939,6 @@ final class RecoveryLifecycleTests: XCTestCase {
                 name: "disabled",
                 run: "touch '\(marker.path)'; printf ran",
                 interval: .manual,
-                click: "touch '\(marker.path)'",
                 actions: [ItemAction(title: "Run", kind: .command("touch '\(marker.path)'"))],
                 disabled: true
             ),
@@ -1351,7 +952,6 @@ final class RecoveryLifecycleTests: XCTestCase {
         XCTAssertTrue(item.isVisible)
 
         item.refreshNow()
-        item.processClick(eventType: .leftMouseUp)
         item.invokeAction(at: 0)
         try await Task.sleep(for: .milliseconds(200))
 
@@ -1434,7 +1034,7 @@ final class RecoveryLifecycleTests: XCTestCase {
     }
 
     @MainActor
-    func testIconOnlyClearsDisplayedTitleWhenIconLoadsButKeepsFullTitleAndTooltip() async throws {
+    func testIconOnlyClearsDisplayedTitleWhenIconLoadsButKeepsFullTitle() async throws {
         let iconURL = FileManager.default.temporaryDirectory
             .appendingPathComponent("pinchos-icon-only-\(UUID().uuidString).png")
         try writeTestIcon(to: iconURL)
@@ -1460,7 +1060,6 @@ final class RecoveryLifecycleTests: XCTestCase {
 
         XCTAssertEqual(item.renderedTitle, "value")
         XCTAssertEqual(item.renderedButtonTitle, "")
-        XCTAssertTrue(item.renderedToolTip?.contains("value") == true)
     }
 
     @MainActor
@@ -1786,26 +1385,6 @@ final class RecoveryLifecycleTests: XCTestCase {
     }
 
     @MainActor
-    private func waitForClickExecution(_ item: ManagedItem) async throws -> ClickDiagnosticsSnapshot {
-        let deadline = Date().addingTimeInterval(2)
-        while Date() < deadline {
-            if let snapshot = await item.clickSnapshot(),
-                snapshot.runner.lastExecution != nil,
-                snapshot.lastCompletedAt != nil,
-                !snapshot.runner.isRunning
-            {
-                return snapshot
-            }
-            try await Task.sleep(for: .milliseconds(10))
-        }
-        throw NSError(
-            domain: "RecoveryLifecycleTests",
-            code: 14,
-            userInfo: [NSLocalizedDescriptionKey: "click command did not finish"]
-        )
-    }
-
-    @MainActor
     private func waitForIdle(_ item: ManagedItem) async throws {
         let deadline = Date().addingTimeInterval(2)
         while Date() < deadline {
@@ -1818,22 +1397,6 @@ final class RecoveryLifecycleTests: XCTestCase {
             domain: "RecoveryLifecycleTests",
             code: 6,
             userInfo: [NSLocalizedDescriptionKey: "manual refresh did not settle"]
-        )
-    }
-
-    @MainActor
-    private func waitForFile(_ file: URL) async throws {
-        let deadline = Date().addingTimeInterval(2)
-        while Date() < deadline {
-            if FileManager.default.fileExists(atPath: file.path) {
-                return
-            }
-            try await Task.sleep(for: .milliseconds(10))
-        }
-        throw NSError(
-            domain: "RecoveryLifecycleTests",
-            code: 8,
-            userInfo: [NSLocalizedDescriptionKey: "configured click action did not run"]
         )
     }
 

@@ -1,24 +1,11 @@
 import AppKit
 import PinchosCore
 
-/// Diagnostics for the click-command runner, kept independent from the primary
-/// item's runtime snapshot so a click failure or in-flight click can never be
-/// mistaken for (or overwrite) the primary displayed value. `lastAttemptedAt`
-/// and `lastCompletedAt` bracket the most recent invocation that actually
-/// reached the runner (races lost to a config reload never touch them) and are
-/// reset alongside the runner itself when click execution settings change.
-struct ClickDiagnosticsSnapshot {
-    let runner: CommandRunnerSnapshot
-    let lastAttemptedAt: Date?
-    let lastCompletedAt: Date?
-}
-
 @MainActor
 final class ManagedItem: ManagedItemLifecycle {
     let statusItem: NSStatusItem?
     private(set) var renderedTitle: String
     private(set) var renderedButtonTitle: String = ""
-    private(set) var renderedToolTip: String?
     private(set) var isVisible = true
     private(set) var commandConfig: CommandItemConfig
     var config: ItemConfig { .command(commandConfig) }
@@ -27,15 +14,14 @@ final class ManagedItem: ManagedItemLifecycle {
     private(set) var iconDiagnosticNote: String?
     private let iconRenderer: StatusItemIconRenderer
     private var runner: CommandRunner
-    private var clickRunner: CommandRunner?
     private var actionRunners: [Int: CommandRunner]
     /// The one application-scoped `CommandScheduler` bounding this item's
-    /// scheduled refreshes, manual refreshes, clicks, and command actions
-    /// alongside every other item's, replacing the per-item
-    /// `DispatchQueue`/`DispatchSourceTimer` this class used to own.
+    /// scheduled refreshes, manual refreshes, and command actions alongside
+    /// every other item's, replacing the per-item `DispatchQueue`/
+    /// `DispatchSourceTimer` this class used to own.
     private let scheduler: CommandScheduler
     private var refreshTimerToken: CommandScheduler.ItemToken?
-    /// Tracks a refresh/click/action request while it is only queued for a
+    /// Tracks a refresh/action request while it is only queued for a
     /// global permit (not yet running). A second request arriving in that
     /// window coalesces into this one (see `recordCoalesced`) instead of
     /// enqueuing a second waiter, bounding the interactive/scheduled queue
@@ -45,7 +31,6 @@ final class ManagedItem: ManagedItemLifecycle {
     /// command itself is running still reaches the runner's own no-overlap
     /// check and increments `skippedRefreshes` exactly as before.
     private var pendingRefreshPermitTask: Task<Void, Never>?
-    private var pendingClickPermitTask: Task<Void, Never>?
     private var pendingActionPermitTasks: [Int: Task<Void, Never>] = [:]
     private let triggerObserverFactory: (any ItemTriggerObserverFactory)?
     private lazy var triggerCoordinator = ItemTriggerCoordinator(
@@ -64,8 +49,6 @@ final class ManagedItem: ManagedItemLifecycle {
     private var isPreparingRemoval = false
     private var pendingRefreshInvocations = 0
     private var refreshInvocationsDrained: CheckedContinuation<Void, Never>?
-    private var pendingClickInvocations = 0
-    private var clickInvocationsDrained: CheckedContinuation<Void, Never>?
     private var pendingActionInvocations = 0
     private var actionInvocationsDrained: CheckedContinuation<Void, Never>?
     private var lastSuccessfulOutput: String?
@@ -75,20 +58,18 @@ final class ManagedItem: ManagedItemLifecycle {
     private var lastUpdatedAt: Date?
     private var lastSuccessfulTitle: String?
     private var stalePresentationTask: Task<Void, Never>?
-    private var lastClickAttemptedAt: Date?
-    private var lastClickCompletedAt: Date?
     private var statusItemSuppressed = false
 
-    /// Test-only seams that pause a queued click/action invocation after it has been
-    /// accepted (bookkeeping incremented) but before it re-checks lifecycle state and
-    /// touches its captured runner. This lets tests deterministically land a config
-    /// reload or removal in the acceptance-to-start window without racing on timing.
-    /// Production code always passes `nil`, so these are no-ops outside tests.
-    var clickInvocationTestGate: (() async -> Void)?
+    /// Test-only seam that pauses a queued action invocation after it has been
+    /// accepted (bookkeeping incremented) but before it re-checks lifecycle state
+    /// and touches its captured runner. This lets tests deterministically land a
+    /// config reload or removal in the acceptance-to-start window without racing
+    /// on timing. Production code always passes `nil`, so this is a no-op outside
+    /// tests.
     var actionInvocationTestGate: (() async -> Void)?
 
     /// Test-only seam awaited alongside each runner's real cancellation during
-    /// `prepareUpdate`/`prepareRemoval`, keyed by role ("primary", "click", or
+    /// `prepareUpdate`/`prepareRemoval`, keyed by role ("primary" or
     /// "action:<index>"). Real runner cancellation is normally too fast to
     /// distinguish concurrent from sequential execution in a test; this lets
     /// tests inject a controllable settle time per role and prove that all
@@ -105,8 +86,6 @@ final class ManagedItem: ManagedItemLifecycle {
     private struct PendingUpdate {
         let commandConfig: CommandItemConfig
         let runner: CommandRunner?
-        let clickRunner: CommandRunner?
-        let clickRunnerConfigurationChanged: Bool
         let actionRunners: [Int: CommandRunner]?
         let actionRunnersConfigurationChanged: Bool
         let timerNeedsRestart: Bool
@@ -139,7 +118,6 @@ final class ManagedItem: ManagedItemLifecycle {
         self.triggerObserverFactory = triggerObserverFactory
         self.notificationSink = notificationSink ?? SystemItemNotificationSink()
         self.renderedTitle = commandConfig.errorText
-        self.renderedToolTip = nil
         self.runner = CommandRunner(
             command: commandConfig.run,
             timeout: commandConfig.timeout,
@@ -148,18 +126,6 @@ final class ManagedItem: ManagedItemLifecycle {
             workingDirectory: commandConfig.workingDirectory,
             environment: commandConfig.environment
         )
-        if let click = commandConfig.click {
-            self.clickRunner = CommandRunner(
-                command: click,
-                timeout: commandConfig.timeout,
-                maxOutputBytes: commandConfig.maxOutputBytes,
-                shell: commandConfig.shell,
-                workingDirectory: commandConfig.workingDirectory,
-                environment: commandConfig.environment
-            )
-        } else {
-            self.clickRunner = nil
-        }
         self.actionRunners = Self.makeActionRunners(for: commandConfig.actions, config: commandConfig)
         // A hidden group member gets no real backing `NSStatusItem` at
         // all: there is no visible status-bar slot to ever reveal for it,
@@ -231,7 +197,6 @@ final class ManagedItem: ManagedItemLifecycle {
             || previousConfig.errorText != newCommandConfig.errorText
             || previousConfig.onError != newCommandConfig.onError
             || previousConfig.staleAfter != newCommandConfig.staleAfter
-            || previousConfig.tooltip != newCommandConfig.tooltip
             || previousConfig.maxLength != newCommandConfig.maxLength
             || previousConfig.hideWhenEmpty != newCommandConfig.hideWhenEmpty
             || previousConfig.hideOnError != newCommandConfig.hideOnError
@@ -267,24 +232,6 @@ final class ManagedItem: ManagedItemLifecycle {
             }
         }
 
-        let clickRunnerConfigurationChanged = previousConfig.click != newCommandConfig.click
-            || previousConfig.timeout != newCommandConfig.timeout
-            || previousConfig.maxOutputBytes != newCommandConfig.maxOutputBytes
-            || previousConfig.shell != newCommandConfig.shell
-            || previousConfig.workingDirectory != newCommandConfig.workingDirectory
-            || previousConfig.environment != newCommandConfig.environment
-        let clickNeedsCancel = clickRunnerConfigurationChanged || becameDisabled
-        let replacementClickRunner = clickRunnerConfigurationChanged ? newCommandConfig.click.map {
-            CommandRunner(
-                command: $0,
-                timeout: newCommandConfig.timeout,
-                maxOutputBytes: newCommandConfig.maxOutputBytes,
-                shell: newCommandConfig.shell,
-                workingDirectory: newCommandConfig.workingDirectory,
-                environment: newCommandConfig.environment
-            )
-        } : nil
-
         let actionRunnersConfigurationChanged = previousConfig.actions != newCommandConfig.actions
             || previousConfig.output != newCommandConfig.output
             || previousConfig.timeout != newCommandConfig.timeout
@@ -307,9 +254,6 @@ final class ManagedItem: ManagedItemLifecycle {
         if runnerNeedsCancel {
             pendingRefreshPermitTask?.cancel()
         }
-        if clickNeedsCancel {
-            pendingClickPermitTask?.cancel()
-        }
         if actionsNeedCancel {
             for task in pendingActionPermitTasks.values {
                 task.cancel()
@@ -319,7 +263,6 @@ final class ManagedItem: ManagedItemLifecycle {
         await settleConcurrently(
             cancellationOperations(
                 includingPrimary: runnerNeedsCancel,
-                includingClick: clickNeedsCancel,
                 includingActions: actionsNeedCancel
             ),
             deadline: deadline,
@@ -331,8 +274,6 @@ final class ManagedItem: ManagedItemLifecycle {
         pendingUpdate = PendingUpdate(
             commandConfig: newCommandConfig,
             runner: replacementRunner,
-            clickRunner: replacementClickRunner,
-            clickRunnerConfigurationChanged: clickRunnerConfigurationChanged,
             actionRunners: replacementActionRunners,
             actionRunnersConfigurationChanged: actionRunnersConfigurationChanged,
             timerNeedsRestart: timerNeedsRestart,
@@ -353,11 +294,6 @@ final class ManagedItem: ManagedItemLifecycle {
         actions = lastStructuredOutput?.actions ?? commandConfig.actions
         if let runner = pendingUpdate.runner {
             self.runner = runner
-        }
-        if pendingUpdate.clickRunnerConfigurationChanged {
-            clickRunner = pendingUpdate.clickRunner
-            lastClickAttemptedAt = nil
-            lastClickCompletedAt = nil
         }
         if pendingUpdate.actionRunnersConfigurationChanged {
             actionRunners = Self.makeActionRunners(for: actions, config: commandConfig)
@@ -395,27 +331,20 @@ final class ManagedItem: ManagedItemLifecycle {
         cancelRefreshTimer()
         triggerCoordinator.stop()
         pendingRefreshPermitTask?.cancel()
-        pendingClickPermitTask?.cancel()
         for task in pendingActionPermitTasks.values {
             task.cancel()
         }
 
         // Everything above is synchronous quiescing: no scheduled, manual,
-        // click, or action invocation can start against this item past this
-        // point. All primary/click/action cancellation, plus draining any
-        // click/action invocation already accepted before quiescing, is then
-        // fired and awaited concurrently under one shared deadline.
+        // or action invocation can start against this item past this point.
+        // All primary/action cancellation, plus draining any action
+        // invocation already accepted before quiescing, is then fired and
+        // awaited concurrently under one shared deadline.
         let name = config.name
         var operations = cancellationOperations(
             includingPrimary: true,
-            includingClick: clickRunner != nil,
             includingActions: true
         )
-        if pendingClickInvocations > 0 {
-            operations.append((identity: "\(name):click-drain", run: { [weak self] in
-                await self?.drainClickInvocations()
-            }))
-        }
         if pendingActionInvocations > 0 {
             operations.append((identity: "\(name):action-drain", run: { [weak self] in
                 await self?.drainActionInvocations()
@@ -454,7 +383,6 @@ final class ManagedItem: ManagedItemLifecycle {
     /// `settleConcurrently` fires them.
     private func cancellationOperations(
         includingPrimary: Bool,
-        includingClick: Bool,
         includingActions: Bool
     ) -> [(identity: String, run: () async -> Void)] {
         var operations: [(identity: String, run: () async -> Void)] = []
@@ -465,12 +393,6 @@ final class ManagedItem: ManagedItemLifecycle {
                 await runner.cancelActive()
                 await self?.drainRefreshInvocations()
                 await self?.awaitCancellationSettlementDelayForTesting(role: "primary")
-            }))
-        }
-        if includingClick, let clickRunner {
-            operations.append((identity: "\(name):click", run: { [weak self] in
-                await clickRunner.cancelActive()
-                await self?.awaitCancellationSettlementDelayForTesting(role: "click")
             }))
         }
         if includingActions {
@@ -498,13 +420,6 @@ final class ManagedItem: ManagedItemLifecycle {
             FileHandle.standardError.write(
                 Data("pinchos: \(phase) settlement timeout waiting for \(timeout.identity)\n".utf8)
             )
-        }
-    }
-
-    private func drainClickInvocations() async {
-        guard pendingClickInvocations > 0 else { return }
-        await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
-            clickInvocationsDrained = continuation
         }
     }
 
@@ -776,10 +691,6 @@ final class ManagedItem: ManagedItemLifecycle {
             marker = ""
         }
         setTitle(truncateTitle(baseTitle, maxLength: commandConfig.maxLength) + marker)
-        let structuredTooltip = snapshot.structuredOutput?.tooltip.map {
-            DiagnosticPreviewFormatter.preview($0, limits: .tooltip).text
-        }
-        setToolTip(structuredTooltip ?? renderTooltip(commandConfig.tooltip, state: snapshot))
         applyIcon(source: snapshot.structuredOutput?.iconSource ?? commandConfig.iconSource)
         setVisibility(
             computeVisibility(
@@ -793,7 +704,7 @@ final class ManagedItem: ManagedItemLifecycle {
     /// `hide_when_empty` and `hide_on_error` only take effect after a completed
     /// attempt (`lastExecution` becomes non-nil), so an item never disappears before
     /// its first result lands. `disabled` overrides both policies to keep a disabled
-    /// item visible and inspectable via its right-click diagnostics menu unless the
+    /// item visible and inspectable via its diagnostics menu unless the
     /// persistent `hidden` policy is also enabled.
     private func computeVisibility(lastExecution: CommandExecution?, fullOutput: String?, hidden: Bool? = nil) -> Bool {
         guard !commandConfig.hidden else { return false }
@@ -860,18 +771,8 @@ final class ManagedItem: ManagedItemLifecycle {
         return await actionRunner.snapshot()
     }
 
-    func clickSnapshot() async -> ClickDiagnosticsSnapshot? {
-        guard let clickRunner else { return nil }
-        return ClickDiagnosticsSnapshot(
-            runner: await clickRunner.snapshot(),
-            lastAttemptedAt: lastClickAttemptedAt,
-            lastCompletedAt: lastClickCompletedAt
-        )
-    }
-
     /// Test-only visibility into the accept/start bookkeeping used to gate
     /// updates, removal, and shutdown on outstanding interaction-triggered work.
-    var pendingClickInvocationCountForTesting: Int { pendingClickInvocations }
     var pendingActionInvocationCountForTesting: Int { pendingActionInvocations }
 
     func invokeAction(at index: Int) {
@@ -911,7 +812,7 @@ final class ManagedItem: ManagedItemLifecycle {
     }
 
     /// Shared "accept now, re-validate immediately before starting" contract for
-    /// interaction-triggered runs (clicks, declarative command actions). A runner
+    /// interaction-triggered declarative command actions. A runner
     /// captured at acceptance time may become stale if a config reload or removal
     /// commits while the caller was waiting for a scheduler permit:
     /// `currentRunner` re-reads the item's live runner (by reference identity) right
@@ -936,54 +837,13 @@ final class ManagedItem: ManagedItemLifecycle {
         onCompletion?(self)
     }
 
+    /// Both left- and right-click reveal the lifecycle menu, matching how
+    /// other menu bar items behave (and `ManagedGroupItem`). The menu stays
+    /// reachable even for a `disabled` item, which remains inspectable.
     @objc private func handleClick() {
-        guard let event = NSApp.currentEvent else { return }
-        processClick(eventType: event.type)
-    }
-
-    func processClick(eventType: NSEvent.EventType) {
         guard isActive, !isPreparingUpdate, !isPreparingRemoval else { return }
-        if eventType == .rightMouseUp {
-            guard let statusItem else { return }
-            menuDelegate?.showLifecycleMenu(for: statusItem)
-        } else if commandConfig.disabled {
-            return
-        } else if clickRunner != nil {
-            guard let clickRunner else { return }
-            guard pendingClickPermitTask == nil else {
-                recordCoalesced()
-                return
-            }
-            pendingClickInvocations += 1
-            pendingClickPermitTask = Task { @MainActor [self] in
-                do {
-                    try await scheduler.acquirePermit()
-                } catch {
-                    pendingClickPermitTask = nil
-                    finishClickInvocation()
-                    return
-                }
-                pendingClickPermitTask = nil
-                await invokeGuarded(
-                    runner: clickRunner,
-                    testGate: clickInvocationTestGate,
-                    currentRunner: { $0.clickRunner },
-                    onStart: { $0.lastClickAttemptedAt = $0.now() },
-                    onCompletion: { $0.lastClickCompletedAt = $0.now() }
-                )
-                await scheduler.releasePermit()
-                finishClickInvocation()
-            }
-        } else if commandConfig.refreshOnClick {
-            refreshNow()
-        }
-    }
-
-    private func finishClickInvocation() {
-        pendingClickInvocations -= 1
-        guard pendingClickInvocations == 0, let continuation = clickInvocationsDrained else { return }
-        clickInvocationsDrained = nil
-        continuation.resume()
+        guard let statusItem else { return }
+        menuDelegate?.showLifecycleMenu(for: statusItem)
     }
 
     private func finishRefreshInvocation() {
@@ -1036,17 +896,12 @@ final class ManagedItem: ManagedItemLifecycle {
     /// falls back to showing the text title instead of leaving the item blank.
     /// title instead of leaving the item blank. `renderedTitle` itself (already
     /// `max_length`-truncated and marker-suffixed) is unaffected either way; only
-    /// the button-facing `renderedButtonTitle` is blanked. The tooltip and
-    /// diagnostics menu read the untruncated full output separately, not this title.
+    /// the button-facing `renderedButtonTitle` is blanked. The diagnostics
+    /// menu reads the untruncated full output separately, not this title.
     private func applyDisplayedTitle() {
         let displayed = (commandConfig.iconOnly && iconIsLoaded) ? "" : renderedTitle
         renderedButtonTitle = displayed
         statusItem?.button?.title = displayed
-    }
-
-    private func setToolTip(_ toolTip: String?) {
-        renderedToolTip = toolTip
-        statusItem?.button?.toolTip = toolTip
     }
 
     private func setVisibility(_ visible: Bool) {

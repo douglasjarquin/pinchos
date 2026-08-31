@@ -1,8 +1,8 @@
 import Foundation
 
 /// A bounded, sanitized projection of retained command output (or any other
-/// untrusted diagnostic text) suitable for a native `NSMenuItem.title` or
-/// tooltip. `text` is safe to lay out directly; `isTruncated` tells a caller
+/// untrusted diagnostic text) suitable for a native `NSMenuItem.title`.
+/// `text` is safe to lay out directly; `isTruncated` tells a caller
 /// whether the source was larger than what is shown, so it can decide
 /// whether a copy-full-output action is worth offering or whether
 /// accessibility text should mention truncation.
@@ -17,10 +17,10 @@ public struct DiagnosticPreview: Equatable, Sendable {
 }
 
 /// Bounds and sanitizes retained command output before it is projected into
-/// an AppKit menu title or tooltip. Pinchos can retain up to `max_output`
+/// an AppKit menu title. Pinchos can retain up to `max_output`
 /// bytes of stdout/stderr per stream (independently of this formatter -- see
 /// `OutputMemoryBudget`), but "available to diagnostics" must not mean
-/// "laid out as one `NSMenuItem` title": opening a right-click menu has to
+/// "laid out as one `NSMenuItem` title": opening the lifecycle menu has to
 /// cost a bounded amount of formatting/layout work regardless of how large a
 /// command's retained output is. The complete retained text is always still
 /// reachable through a **Copy Full Output**/**Copy Full Error** action that
@@ -35,8 +35,7 @@ public enum DiagnosticPreviewFormatter {
     /// combining marks or 4-byte scalars), and lines. `collapsesNewlines`
     /// distinguishes a single-line `NSMenuItem.title` context (newlines are
     /// visibly escaped so they can't fake multiple menu rows or hide the
-    /// global action section beneath them) from a native tooltip, which
-    /// renders real multi-line text and may keep genuine line breaks.
+    /// global action section beneath them).
     public struct Limits: Equatable, Sendable {
         public let maxGraphemeClusters: Int
         public let maxUTF8Bytes: Int
@@ -66,8 +65,8 @@ public enum DiagnosticPreviewFormatter {
         /// otherwise fit under the byte/cluster caps.
         public static let menuValue = Limits(maxGraphemeClusters: 240, maxUTF8Bytes: 4096, maxLines: 3, collapsesNewlines: true)
 
-        /// The bounded stderr/error line already used across the primary,
-        /// click, and action diagnostics sections (previously an ad hoc
+        /// The bounded stderr/error line already used across the primary
+        /// and action diagnostics sections (previously an ad hoc
         /// `.prefix(200)` at each call site). Callers pass a single
         /// already-selected line (see `lastTrimmedLine`); the one-line cap
         /// here is a defensive backstop, not the primary line-selection
@@ -78,19 +77,11 @@ public enum DiagnosticPreviewFormatter {
         /// messages) share the stderr budget; they are the same kind of
         /// single bounded diagnostic line.
         public static let actionDiagnostics = menuStderr
-
-        /// Native tooltips are a separate AppKit surface from menu items:
-        /// they render as a multi-line popup, so a `{output}` expansion may
-        /// keep real line breaks. They still need an upper bound so a
-        /// pathological template/output combination can't force AppKit to
-        /// lay out unbounded text on tooltip presentation.
-        public static let tooltip = Limits(maxGraphemeClusters: 4000, maxUTF8Bytes: 16384, maxLines: 80, collapsesNewlines: false)
     }
 
     public static let menuValue = Limits.menuValue
     public static let menuStderr = Limits.menuStderr
     public static let actionDiagnostics = Limits.actionDiagnostics
-    public static let tooltip = Limits.tooltip
 
     /// Produces a bounded, sanitized preview of `text` under `limits`.
     ///
@@ -113,10 +104,7 @@ public enum DiagnosticPreviewFormatter {
         // already reformatting every line break into a visible separator,
         // so charging one of its (small) line budget/appending a trailing
         // separator for the near-universal "stdout ends in one newline"
-        // case would be pure noise. Tooltip previews keep real newlines and
-        // must stay byte-for-byte faithful to retained output that is
-        // already within bounds (see README's `{output}` contract), so a
-        // trailing newline there stays exactly as retained.
+        // case would be pure noise.
         if limits.collapsesNewlines, lines.count > 1, let last = lines.last, last.isEmpty {
             lines.removeLast()
         }
