@@ -542,7 +542,11 @@ final class StatusItemController: StatusItemMenuDelegate {
         let topLevelItems = topLevelManagedItems()
         for item in topLevelItems {
             let submenu = await makeLifecycleMenu(forManagedItem: item, revealsDiagnostics: revealsDiagnostics)
-            let row = NSMenuItem(title: await collapsedTitle(for: item), action: nil, keyEquivalent: "")
+            let rowInfo = await collapsedRow(for: item)
+            let row = NSMenuItem(title: rowInfo.title, action: nil, keyEquivalent: "")
+            if let image = StatusItemIconRenderer.system.render(rowInfo.iconSource).image {
+                row.image = image
+            }
             row.submenu = submenu
             menu.addItem(row)
         }
@@ -562,18 +566,29 @@ final class StatusItemController: StatusItemMenuDelegate {
         }
     }
 
-    private func collapsedTitle(for item: any ManagedItemLifecycle) async -> String {
+    /// The first-level label (and current icon source) of a collapsed-menu row,
+    /// mirrored exactly from what that item's own menu-bar slot renders. A
+    /// command item shows its value run through the item's `format` (so
+    /// `{output}%` keeps its suffix) and, like the bar, falls back to
+    /// `error_text` when there is no value -- never its config name. The icon
+    /// source follows the bar too (structured-output override, else the config's
+    /// icon; a group's static icon source). A group shows its static `title`.
+    private func collapsedRow(for item: any ManagedItemLifecycle) async -> (title: String, iconSource: ItemIconSource?) {
         switch item.config {
-        case .command:
+        case .command(let commandConfig):
             let snapshot = await item.runtimeSnapshot()
-            let value = if let structuredText = snapshot.structuredOutput?.text {
-                DiagnosticPreviewFormatter.preview(structuredText, limits: .menuValue).text
+            let value: String?
+            if let structuredText = snapshot.structuredOutput?.text {
+                value = DiagnosticPreviewFormatter.preview(structuredText, limits: .menuValue).text
             } else {
-                snapshot.fullOutput.map { lastTrimmedLine(of: $0) } ?? ""
+                value = snapshot.fullOutput.map { lastTrimmedLine(of: $0) }
             }
-            return value.isEmpty ? item.config.name : "\(item.config.name): \(truncateTitle(value, maxLength: 40))"
+            let base = value.flatMap { $0.isEmpty ? nil : applyFormat(commandConfig.format, output: $0) }
+                ?? commandConfig.errorText
+            let iconSource = snapshot.structuredOutput?.iconSource ?? commandConfig.iconSource
+            return (truncateTitle(base, maxLength: commandConfig.maxLength), iconSource)
         case .group(let group):
-            return group.title
+            return (group.title, group.iconSource)
         }
     }
 

@@ -13,6 +13,10 @@ private final class CollapseFakeItem: ManagedItemLifecycle {
     private(set) var isVisible: Bool
     private(set) var statusItemVisible = false
     var blocksRuntimeSnapshot = false
+    /// When non-nil, returned as the item's rendered value (the collapsed
+    /// first-level row and the value shown in its menu). `nil` means "not yet
+    /// run", which collapses the row back to the item name.
+    var runtimeValue: String?
     private(set) var runtimeSnapshotStarted = false
 
     init(config: ItemConfig, isTopLevel: Bool) {
@@ -65,7 +69,7 @@ private final class CollapseFakeItem: ManagedItemLifecycle {
         }
         return ItemRuntimeSnapshot(
             isRunning: false,
-            fullOutput: nil,
+            fullOutput: runtimeValue,
             lastAttemptedAt: nil,
             lastUpdatedAt: nil,
             lastExecution: nil,
@@ -188,7 +192,7 @@ final class CollapseMenuTests: XCTestCase {
 
         let collapsed = await controller.makeCollapsedMenu()
         let firstLevelTitles = collapsed.items.filter { !$0.isSeparatorItem }.map(\.title)
-        XCTAssertEqual(firstLevelTitles.prefix(2), ["Team", "standalone"])
+        XCTAssertEqual(firstLevelTitles.prefix(2), ["Team", "–"])
         XCTAssertFalse(firstLevelTitles.contains("alpha"))
         XCTAssertFalse(firstLevelTitles.contains("beta"))
 
@@ -197,10 +201,58 @@ final class CollapseMenuTests: XCTestCase {
         XCTAssertNotNil(nested.items.first(where: { $0.title == "alpha: –" }))
         XCTAssertNotNil(nested.items.first(where: { $0.title == "beta: –" }))
 
-        let standalone = try XCTUnwrap(collapsed.items.first(where: { $0.title == "standalone" }))
+        let standalone = try XCTUnwrap(collapsed.items.first(where: { $0.title == "–" && $0.submenu != nil }))
         let standaloneMenu = try XCTUnwrap(standalone.submenu)
         XCTAssertNotNil(standaloneMenu.items.first(where: { $0.title == "Refresh Now" }))
         XCTAssertNotNil(standaloneMenu.items.first(where: { $0.title == "Expand Pinchos" }))
+    }
+
+    func testCollapsedFirstLevelShowsCommandValueInsteadOfName() async throws {
+        let factory = CollapseFakeFactory()
+        let host = CollapseFakeStatusItemHost()
+        let controller = makeController(factory: factory, host: host)
+        addTeardownBlock { @MainActor in await controller.shutdown() }
+
+        await controller.apply(config: PinchosConfig(items: [command("disk")]))
+        factory.created[0].runtimeValue = "12"
+
+        let collapsed = await controller.makeCollapsedMenu()
+        let firstLevelTitles = collapsed.items.filter { !$0.isSeparatorItem }.map(\.title)
+
+        // What normally shows in the disk item's menu bar is the value, so the
+        // collapsed first level is that value -- not "disk" or "disk: 12".
+        XCTAssertEqual(firstLevelTitles.first, "12")
+        let diskRows = firstLevelTitles.filter { $0 == "disk" || $0.hasPrefix("disk:") }
+        XCTAssertTrue(diskRows.isEmpty)
+
+        // The submenu is still the item's normal menu (handles reachable).
+        let row = try XCTUnwrap(collapsed.items.first(where: { $0.submenu != nil }))
+        XCTAssertNotNil(row.submenu?.items.first(where: { $0.title == "Refresh Now" }))
+    }
+
+    func testCollapsedFirstLevelRowCarriesTheItemsIconAndValue() async throws {
+        let factory = CollapseFakeFactory()
+        let host = CollapseFakeStatusItemHost()
+        let controller = makeController(factory: factory, host: host)
+        addTeardownBlock { @MainActor in await controller.shutdown() }
+
+        // Bar shows [heart icon] + "11%" (format `{output}%`); the collapsed
+        // first level must mirror that: value with the same icon, not a bare
+        // number and never the config name.
+        let withIcon = ItemConfig(
+            name: "disk",
+            run: "echo 11",
+            interval: .manual,
+            format: "{output}%",
+            symbol: "checkmark"
+        )
+        await controller.apply(config: PinchosConfig(items: [withIcon]))
+        factory.created[0].runtimeValue = "11"
+
+        let collapsed = await controller.makeCollapsedMenu()
+        let row = try XCTUnwrap(collapsed.items.first(where: { $0.submenu != nil }))
+        XCTAssertEqual(row.title, "11%")
+        XCTAssertNotNil(row.image, "the collapsed row should show the item's menu-bar icon alongside its value")
     }
 
     func testGroupMemberMenuCanCollapseTheWholeBar() async throws {
