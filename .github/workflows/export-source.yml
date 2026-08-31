@@ -8,19 +8,38 @@ permissions:
   contents: read
 
 jobs:
-  export:
+  export-current:
     runs-on: ubuntu-latest
     steps:
-      - name: Check out source
+      - name: Check out current source
         uses: actions/checkout@v5
 
       - name: Remove Git metadata
         run: rm -rf .git
 
-      - name: Upload source snapshot
+      - name: Upload current source snapshot
         uses: actions/upload-artifact@v4
         with:
           name: pinchos-source-${{ github.sha }}
+          path: .
+          include-hidden-files: true
+          retention-days: 1
+
+  export-pre-feature-baseline:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out scheduler baseline
+        uses: actions/checkout@v5
+        with:
+          ref: d98707db462d801442494dfece802c5e38d854ca
+
+      - name: Remove Git metadata
+        run: rm -rf .git
+
+      - name: Upload baseline source snapshot
+        uses: actions/upload-artifact@v4
+        with:
+          name: pinchos-baseline-d98707d
           path: .
           include-hidden-files: true
           retention-days: 1
