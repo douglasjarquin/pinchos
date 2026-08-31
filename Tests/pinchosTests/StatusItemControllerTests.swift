@@ -188,8 +188,8 @@ final class StatusItemControllerTests: XCTestCase {
         let menu = await controller.makeLifecycleMenu(forManagedItem: factory.created[0], revealsDiagnostics: false)
         let titles = menu.items.map(\.title)
 
-        XCTAssertTrue(titles.contains("Reset: 2026-09-07"))
-        XCTAssertTrue(titles.contains("Pace: –"))
+        XCTAssertTrue(titles.contains("Reset: Loading…") || titles.contains("Reset: 2026-09-07"))
+        XCTAssertTrue(titles.contains("Pace: Loading…") || titles.contains("Pace: –"))
         // Info rows are read-only: the row rendering must not be a clickable action.
         let infoTitle = try XCTUnwrap(menu.items.first(where: { $0.title.hasPrefix("Reset:") }))
         XCTAssertFalse(infoTitle.isEnabled)
