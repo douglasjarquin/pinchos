@@ -11,35 +11,39 @@ jobs:
   export-current:
     runs-on: ubuntu-latest
     steps:
-      - name: Check out current source
-        uses: actions/checkout@v5
-
-      - name: Remove Git metadata
-        run: rm -rf .git
-
-      - name: Upload current source snapshot
-        uses: actions/upload-artifact@v4
+      - uses: actions/checkout@v5
+      - run: rm -rf .git
+      - uses: actions/upload-artifact@v4
         with:
           name: pinchos-source-${{ github.sha }}
           path: .
           include-hidden-files: true
           retention-days: 1
 
-  export-pre-feature-baseline:
+  export-scheduler-baseline:
     runs-on: ubuntu-latest
     steps:
-      - name: Check out scheduler baseline
-        uses: actions/checkout@v5
+      - uses: actions/checkout@v5
         with:
           ref: d98707db462d801442494dfece802c5e38d854ca
-
-      - name: Remove Git metadata
-        run: rm -rf .git
-
-      - name: Upload baseline source snapshot
-        uses: actions/upload-artifact@v4
+      - run: rm -rf .git
+      - uses: actions/upload-artifact@v4
         with:
           name: pinchos-baseline-d98707d
+          path: .
+          include-hidden-files: true
+          retention-days: 1
+
+  export-minimal-ui-baseline:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: e154cf7cb42dcce629c9f3821d6a0f273133a78b
+      - run: rm -rf .git
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pinchos-baseline-e154cf7
           path: .
           include-hidden-files: true
           retention-days: 1
