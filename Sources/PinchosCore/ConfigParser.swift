@@ -19,6 +19,7 @@ public enum ConfigParser {
         "on_error",
         "stale_after",
         "action",
+        "info",
         "icon",
         "symbol",
         "max_length",
@@ -32,6 +33,7 @@ public enum ConfigParser {
     ]
 
     static let supportedActionKeys: Set<String> = ["title", "run", "refresh"]
+    static let supportedInfoKeys: Set<String> = ["title", "run"]
     static let supportedRootKeys: Set<String> = ["item", "scheduler", "group"]
     static let supportedSchedulerKeys: Set<String> = ["max_active_sessions"]
     static let supportedGroupKeys: Set<String> = ["title", "members", "icon", "symbol", "hidden"]
@@ -829,6 +831,12 @@ public enum ConfigParser {
             sourceLines: sourceLines
         )
 
+        let infoRows = try parseInfoRows(
+            name: name,
+            value: table["info"],
+            sourceLines: sourceLines
+        )
+
         let timeoutString: String
         if let timeoutValue = table["timeout"] {
             timeoutString = try stringValue(
@@ -987,6 +995,7 @@ public enum ConfigParser {
             onError: onError,
             staleAfter: staleAfter,
             actions: actions,
+            infoRows: infoRows,
             icon: iconSource?.filePath,
             symbol: iconSource?.symbolName,
             maxLength: maxLength,
@@ -1397,6 +1406,66 @@ public enum ConfigParser {
                 )
             }
             return ItemAction(title: title, kind: .refresh)
+        }
+    }
+
+    private static func parseInfoRows(
+        name: String,
+        value: TOMLValueConvertible?,
+        sourceLines: SourceLineMap
+    ) throws -> [ItemInfoRow] {
+        guard let value else { return [] }
+        guard let array = value.array else {
+            throw typeError(
+                path: "item.\(name).info",
+                expected: "array",
+                value: value,
+                line: sourceLine(item: name, key: "info", sourceLines: sourceLines)
+            )
+        }
+
+        return try array.enumerated().map { index, element in
+            guard let table = element.table else {
+                throw typeError(
+                    path: "item.\(name).info[\(index)]",
+                    expected: "table",
+                    value: element,
+                    line: sourceLine(item: name, key: "info", index: index, sourceLines: sourceLines)
+                )
+            }
+
+            try validateUnknownKeys(
+                in: table,
+                allowedKeys: supportedInfoKeys,
+                context: "item.\(name).info[\(index)]",
+                lineForKey: { sourceLine(item: name, key: $0, index: index, sourceLines: sourceLines) }
+            )
+
+            guard let titleValue = table["title"] else {
+                throw ConfigParseError(
+                    message: "item.\(name).info[\(index)].title: missing required field",
+                    line: sourceLine(item: name, key: "info", index: index, sourceLines: sourceLines)
+                )
+            }
+            let title = try stringValue(
+                path: "item.\(name).info[\(index)].title",
+                value: titleValue,
+                requireNonEmpty: true,
+                line: sourceLine(item: name, key: "title", index: index, sourceLines: sourceLines)
+            )
+            guard let runValue = table["run"] else {
+                throw ConfigParseError(
+                    message: "item.\(name).info[\(index)].run: missing required field",
+                    line: sourceLine(item: name, key: "info", index: index, sourceLines: sourceLines)
+                )
+            }
+            let run = try stringValue(
+                path: "item.\(name).info[\(index)].run",
+                value: runValue,
+                requireNonEmpty: true,
+                line: sourceLine(item: name, key: "run", index: index, sourceLines: sourceLines)
+            )
+            return ItemInfoRow(title: title, run: run)
         }
     }
 

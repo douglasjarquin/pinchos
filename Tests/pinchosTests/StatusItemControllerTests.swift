@@ -168,6 +168,34 @@ final class StatusItemControllerTests: XCTestCase {
         )
     }
 
+    func testLifecycleMenuRendersConfiguredInfoRows() async throws {
+        let factory = FakeManagedItemFactory()
+        let controller = makeController(factory: factory)
+        addTeardownBlock { @MainActor in await controller.shutdown() }
+
+        let config = ItemConfig(
+            name: "alpha",
+            run: "echo alpha",
+            interval: .manual,
+            info: [
+                ItemInfoRow(title: "Reset", run: "echo 2026-09-07"),
+                // A failing info command must fall back to the `–` value.
+                ItemInfoRow(title: "Pace", run: "exit 3")
+            ]
+        )
+        await controller.apply(config: PinchosConfig(items: [config]))
+
+        let menu = await controller.makeLifecycleMenu(forManagedItem: factory.created[0], revealsDiagnostics: false)
+        let titles = menu.items.map(\.title)
+
+        XCTAssertTrue(titles.contains("Reset: 2026-09-07"))
+        XCTAssertTrue(titles.contains("Pace: –"))
+        // Info rows are read-only: the row rendering must not be a clickable action.
+        let infoTitle = try XCTUnwrap(menu.items.first(where: { $0.title.hasPrefix("Reset:") }))
+        XCTAssertFalse(infoTitle.isEnabled)
+        XCTAssertNil(infoTitle.action)
+    }
+
     func testLifecycleMenuOffersRefreshNowAndDelegatesToItem() async throws {
         let factory = FakeManagedItemFactory()
         let controller = makeController(factory: factory)

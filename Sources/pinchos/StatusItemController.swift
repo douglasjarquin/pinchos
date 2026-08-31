@@ -717,6 +717,17 @@ final class StatusItemController: StatusItemMenuDelegate {
             menuItem.isEnabled = !commandConfig.disabled
             menu.addItem(menuItem)
         }
+        // Configured informational rows ([[item.<name>.info]]): read-only lines
+        // whose command runs at menu-open and whose output is shown as a
+        // disabled label. Shown in both the compact and Option-click menus.
+        if !commandConfig.infoRows.isEmpty {
+            menu.addItem(NSMenuItem.separator())
+            for info in commandConfig.infoRows {
+                let value = await runInfoCommand(info, config: commandConfig)
+                let valueLabel = value.isEmpty ? "\u{2013}" : truncateTitle(value, maxLength: 60)
+                menu.addItem(disabledItem(title: "\(info.title): \(valueLabel)"))
+            }
+        }
         // Hide lives in the same top group as the refresh/actions, so a plain
         // click on an item shows one tight action cluster and nothing else.
         if !item.config.hidden {
@@ -1005,6 +1016,27 @@ final class StatusItemController: StatusItemMenuDelegate {
 
     private func present(menu: NSMenu, on statusItem: NSStatusItem) {
         statusItemHost.present(menu: menu, on: statusItem)
+    }
+
+    /// Runs one configured informational row's command with the item's own
+    /// shell/environment and returns its trimmed stdout; empty on failure so the
+    /// row renders a `–` value (matching the item's error fallback).
+    private func runInfoCommand(_ info: ItemInfoRow, config: CommandItemConfig) async -> String {
+        let runner = CommandRunner(
+            command: info.run,
+            timeout: config.timeout,
+            maxOutputBytes: config.maxOutputBytes,
+            shell: config.shell,
+            workingDirectory: config.workingDirectory,
+            environment: config.environment
+        )
+        let outcome = await runner.runIfIdle()
+        if case .skipped = outcome { return "" }
+        guard let execution = await runner.awaitSettledExecution(),
+              case .exited(0) = execution.terminalReason else {
+            return ""
+        }
+        return lastTrimmedLine(of: execution.stdout)
     }
 
     @objc private func refreshAction(_ sender: NSMenuItem) {

@@ -20,6 +20,14 @@ hidden = false
 icon = "/path/to/pinchos/example/icons/codex.svg"
 error_text = "–"
 
+[[item.codex.info]]
+title = "Reset"
+run = "quota-axi --provider codex --json | jq -r '.providers[0].windows[0].resetsAt'"
+
+[[item.codex.info]]
+title = "Pace"
+run = "quota-axi --provider codex --json | jq -r '.providers[0].windows[0].pace.status'"
+
 [item.clock]
 type = "command"
 run = "date '+%H:%M'"

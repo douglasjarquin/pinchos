@@ -636,6 +636,7 @@ final class ConfigParserTests: XCTestCase {
             "on_error",
             "stale_after",
             "action",
+            "info",
             "icon",
             "symbol",
             "max_length",
@@ -648,6 +649,76 @@ final class ConfigParserTests: XCTestCase {
             "notify_cooldown"
         ])
         XCTAssertEqual(ConfigParser.supportedActionKeys, ["title", "run", "refresh"])
+        XCTAssertEqual(ConfigParser.supportedInfoKeys, ["title", "run"])
+    }
+
+    func testParsesConfiguredInfoRows() throws {
+        let toml = """
+        [item.codex]
+        type = "command"
+        run = "echo 99"
+
+        [[item.codex.action]]
+        title = "Open usage"
+        run = "open https://example.com"
+
+        [[item.codex.info]]
+        title = "Reset"
+        run = "echo 2026-09-07"
+
+        [[item.codex.info]]
+        title = "Pace"
+        run = ".providers[0].windows[0].pace.status"
+        """
+
+        let config = try ConfigParser.parse(toml)
+        let item = try XCTUnwrap(config.items.first(where: { $0.name == "codex" }))
+        let command = try XCTUnwrap(item.commandConfig)
+        XCTAssertEqual(command.infoRows.map(\.title), ["Reset", "Pace"])
+        XCTAssertEqual(command.infoRows.map(\.run), ["echo 2026-09-07", ".providers[0].windows[0].pace.status"])
+        XCTAssertEqual(command.actions.count, 1)
+    }
+
+    func testRejectsInfoRowWithoutRunOrTitle() {
+        let missingRun = """
+        [item.a]
+        type = "command"
+        run = "echo a"
+        [[item.a.info]]
+        title = "Reset"
+        """
+        XCTAssertThrowsError(try ConfigParser.parse(missingRun)) { error in
+            let parseError = error as? ConfigParseError
+            XCTAssertTrue(parseError?.message.contains("item.a.info[0].run: missing required field") == true)
+        }
+
+        let missingTitle = """
+        [item.b]
+        type = "command"
+        run = "echo b"
+        [[item.b.info]]
+        run = "echo 1"
+        """
+        XCTAssertThrowsError(try ConfigParser.parse(missingTitle)) { error in
+            let parseError = error as? ConfigParseError
+            XCTAssertTrue(parseError?.message.contains("item.b.info[0].title: missing required field") == true)
+        }
+    }
+
+    func testRejectsUnknownKeyInsideInfoRow() {
+        let toml = """
+        [item.a]
+        type = "command"
+        run = "echo a"
+        [[item.a.info]]
+        title = "Reset"
+        run = "echo 1"
+        refresh = true
+        """
+        XCTAssertThrowsError(try ConfigParser.parse(toml)) { error in
+            let parseError = error as? ConfigParseError
+            XCTAssertTrue(parseError?.message.contains("item.a.info[0].refresh: unknown key") == true)
+        }
     }
 
     func testParsesErrorPolicyAndStaleAfter() throws {

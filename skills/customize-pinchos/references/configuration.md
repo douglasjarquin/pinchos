@@ -128,6 +128,7 @@ The parser supports these item keys.
 | `on_error` | string | `"replace"` | Use `"replace"` or `"keep_last"` when a command fails. |
 | `stale_after` | string | absent | Mark the last successful value stale after this duration. |
 | `action` | array of tables | empty | Add menu actions in declaration order. |
+| `info` | array of tables | empty | Add read-only menu status rows; each has `title` + `run`. |
 | `icon` | string | absent | Local image path. It cannot appear with `symbol`. |
 | `symbol` | string | absent | macOS SF Symbol name. It cannot appear with `icon`. |
 | `max_length` | integer | absent | Limit the rendered title by grapheme clusters. |
@@ -180,6 +181,25 @@ refresh = true
 Do not set both `run` and `refresh` in one action.
 Actions are not a security boundary.
 An action command can change files, open applications, access a network, or expose credentials if you configure it to do so.
+
+### Info rows
+
+Use one or more `[[item.<name>.info]]` tables to show read-only status lines in the item's menu (shown in both the regular and Option-click menus).
+Each row requires a non-empty `title` and a non-empty `run` command.
+When the menu opens, `run` executes with the item's shell, working directory, environment, timeout, and output bound, and its stdout renders as a grayed-out `<title>: <output>` line; a failing or empty command renders `<title>: –`.
+Unlike an action, an info row is never clickable and cannot refresh the item.
+
+```toml
+[[item.codex.info]]
+title = "Reset"
+run = "quota-axi --provider codex --json | jq -r '.providers[0].windows[0].resetsAt'"
+
+[[item.codex.info]]
+title = "Pace"
+run = "quota-axi --provider codex --json | jq -r '.providers[0].windows[0].pace.status'"
+```
+
+Info rows are not a security boundary (their command runs on every menu open) and are suited to cheap reads; each one is an extra command per menu open, so keep rate-limited sources to as few rows as you need.
 
 ### Groups
 

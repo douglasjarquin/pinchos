@@ -41,6 +41,21 @@ public struct ItemAction: Equatable, Sendable {
     }
 }
 
+/// A read-only status line shown in an item's menu (e.g. "Reset: Sep 7" or
+/// "Pace: ahead"). Unlike an `ItemAction`, it is never clickable: its command
+/// is run with the item's shell/environment when the menu opens and its stdout
+/// is rendered as a disabled row beside `title`. A failing or empty command
+/// renders the title with a `–` value rather than hiding the row.
+public struct ItemInfoRow: Equatable, Sendable {
+    public let title: String
+    public let run: String
+
+    public init(title: String, run: String) {
+        self.title = title
+        self.run = run
+    }
+}
+
 /// One effective status-item icon source. `symbol` and `icon` are mutually
 /// exclusive at parse time (a config that sets both is rejected); the runtime
 /// model therefore never has to rank them.
@@ -97,6 +112,7 @@ public struct CommandItemConfig: Equatable, Sendable {
     public let onError: ItemErrorPolicy
     public let staleAfter: TimeInterval?
     public let actions: [ItemAction]
+    public let infoRows: [ItemInfoRow]
     public let iconSource: ItemIconSource?
     public let maxLength: Int?
     public let hideWhenEmpty: Bool
@@ -124,6 +140,7 @@ public struct CommandItemConfig: Equatable, Sendable {
         onError: ItemErrorPolicy = .replace,
         staleAfter: TimeInterval? = nil,
         actions: [ItemAction] = [],
+        infoRows: [ItemInfoRow] = [],
         icon: String? = nil,
         symbol: String? = nil,
         maxLength: Int? = nil,
@@ -151,6 +168,7 @@ public struct CommandItemConfig: Equatable, Sendable {
         self.onError = onError
         self.staleAfter = staleAfter
         self.actions = actions
+        self.infoRows = infoRows
         self.iconSource = ItemIconSource.make(icon: icon, symbol: symbol)
         self.maxLength = maxLength
         self.hideWhenEmpty = hideWhenEmpty
@@ -298,6 +316,7 @@ extension ItemConfig {
         onError: ItemErrorPolicy = .replace,
         staleAfter: TimeInterval? = nil,
         actions: [ItemAction] = [],
+        info: [ItemInfoRow] = [],
         icon: String? = nil,
         symbol: String? = nil,
         maxLength: Int? = nil,
@@ -327,6 +346,7 @@ extension ItemConfig {
                 onError: onError,
                 staleAfter: staleAfter,
                 actions: actions,
+                infoRows: info,
                 icon: icon,
                 symbol: symbol,
                 maxLength: maxLength,

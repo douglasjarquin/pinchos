@@ -266,6 +266,18 @@ run = "open https://example.com/usage"
 [[item.<name>.action]]
 title = "Refresh now"
 refresh = true
+
+# Read-only status rows shown in the item's menu. Each row runs its command
+# when the menu opens and renders `<title>: <output>` as a grayed-out line
+# (falls back to `<title>: –` if the command fails or is empty). Never
+# clickable; unlike an action it cannot run on demand or refresh the item.
+[[item.<name>.info]]
+title = "Reset"
+run = "quota-axi --provider codex --json | jq -r '.providers[0].windows[0].resetsAt'"
+
+[[item.<name>.info]]
+title = "Pace"
+run = "quota-axi --provider codex --json | jq -r '.providers[0].windows[0].pace.status'"
 ```
 
 ### Versioned structured output
