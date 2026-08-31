@@ -124,8 +124,6 @@ The parser supports these item keys.
 | `timeout` | string | `"15s"` | Stop the command process group after this duration. The minimum is one second. |
 | `max_output` | string | `"64KiB"` | Retained stdout and stderr tail per stream. Use `B`, `KiB`, or `MiB`, up to 4MiB per stream. |
 | `format` | string | raw output | Display `{output}` or a formatted version of the trimmed last stdout line. |
-| `click` | string | absent | Shell command for a left click. It runs independently of the primary command. |
-| `refresh_on_click` | boolean | `false` | Refresh `run` on a left click when `click` is absent. |
 | `error_text` | string | `"–"` | Text shown when the command fails under the default error policy. |
 | `on_error` | string | `"replace"` | Use `"replace"` or `"keep_last"` when a command fails. |
 | `stale_after` | string | absent | Mark the last successful value stale after this duration. |
@@ -137,7 +135,7 @@ The parser supports these item keys.
 | `hide_on_error` | boolean | `false` | Hide the item after a completed failed run. |
 | `hidden` | boolean | `false` | Keep the item out of the menu bar until this key becomes `false` or is removed. |
 | `icon_only` | boolean | `false` | Show only a loaded icon while keeping the full title in the diagnostics menu. |
-| `disabled` | boolean | `false` | Keep the item visible but stop scheduled, click, refresh, and action execution. |
+| `disabled` | boolean | `false` | Keep the item visible but stop scheduled, refresh, and action execution. |
 | `notify_on` | array of strings | empty | Notify on `"failure"`, `"recovery"`, or both. |
 | `notify_cooldown` | string | absent | Suppress repeated failure notifications for this duration. |
 
@@ -148,7 +146,7 @@ Configured values override inherited values immediately before the command start
 
 Use `interval = "manual"` for an item that should not poll.
 The item runs once when it activates.
-Use **Refresh Now** or `refresh_on_click = true` for later refreshes.
+Use **Refresh Now** for later refreshes.
 
 The `triggers` and `watch` arrays add event-driven refreshes without changing the polling interval.
 Repeated equivalent events are debounced.
@@ -243,7 +241,7 @@ A failed command does not crash Pinchos.
 
 ## Command safety
 
-Treat every `run`, `click`, action `run`, `shell`, `working_directory`, and `env` value as executable configuration.
+Treat every `run`, action `run`, `shell`, `working_directory`, and `env` value as executable configuration.
 Pinchos launches the configured shell vector and appends the command as its final argument.
 The command inherits the user's environment, with configured environment values overriding matching names.
 The command runs with the user's permissions and is not sandboxed.

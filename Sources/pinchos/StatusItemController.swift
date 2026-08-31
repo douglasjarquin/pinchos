@@ -47,7 +47,6 @@ protocol ManagedItemLifecycle: AnyObject {
     func runnerSnapshot() async -> CommandRunnerSnapshot
     func runtimeSnapshot() async -> ItemRuntimeSnapshot
     func actionSnapshot(at index: Int) async -> CommandRunnerSnapshot?
-    func clickSnapshot() async -> ClickDiagnosticsSnapshot?
     func invokeAction(at index: Int)
     func refreshNow()
 }
@@ -667,10 +666,6 @@ final class StatusItemController: StatusItemMenuDelegate {
         }
         menu.addItem(NSMenuItem.separator())
         addDiagnostics(from: runtime.runnerSnapshot, to: menu)
-        if let clickSnapshot = await item.clickSnapshot() {
-            menu.addItem(NSMenuItem.separator())
-            addClickDiagnostics(clickSnapshot, to: menu)
-        }
         var actionSnapshots: [(index: Int, snapshot: CommandRunnerSnapshot?)] = []
         for index in item.actions.indices {
             actionSnapshots.append((index: index, snapshot: await item.actionSnapshot(at: index)))
@@ -805,88 +800,6 @@ final class StatusItemController: StatusItemMenuDelegate {
             if snapshot.skippedRefreshes > 0 {
                 menu.addItem(disabledItem(title: actionPrefix + "skipped invocations: \(snapshot.skippedRefreshes)"))
             }
-        }
-    }
-
-    /// Renders the independent click-command runner's diagnostics. This section
-    /// only ever reflects the click runner's own state (never run, running, or
-    /// its last terminal reason) and never derives from or feeds back into the
-    /// primary item's displayed value or status, matching the fire-and-forget
-    /// click contract: a click failure must stay discoverable but invisible to
-    /// the menu-bar title.
-    private func addClickDiagnostics(_ snapshot: ClickDiagnosticsSnapshot, to menu: NSMenu) {
-        let prefix = "Click Action: "
-        let runner = snapshot.runner
-        menu.addItem(disabledItem(title: prefix + clickStateDescription(runner)))
-        if let lastAttemptedAt = snapshot.lastAttemptedAt {
-            menu.addItem(disabledItem(title: prefix + "last attempt: \(formatTimestamp(lastAttemptedAt))"))
-        }
-        if let lastCompletedAt = snapshot.lastCompletedAt {
-            menu.addItem(disabledItem(title: prefix + "last completed: \(formatTimestamp(lastCompletedAt))"))
-        }
-        if let execution = runner.lastExecution {
-            switch execution.terminalReason {
-            case .exited(let code):
-                menu.addItem(disabledItem(title: prefix + "last exit code: \(code)"))
-            case .signaled(let signal):
-                menu.addItem(disabledItem(title: prefix + "last signal: \(signal)"))
-            case .timedOut:
-                menu.addItem(disabledItem(title: prefix + "last result: timed out"))
-            case .cancelled:
-                menu.addItem(disabledItem(title: prefix + "last result: cancelled"))
-            case .launchFailed(let message):
-                menu.addItem(disabledItem(title: prefix + "last result: launch failed"))
-                if !message.isEmpty {
-                    menu.addItem(launchFailurePreviewItem(prefix: prefix + "launch: ", fullText: message))
-                }
-            }
-            menu.addItem(disabledItem(title: prefix + String(format: "duration: %.3fs", execution.duration)))
-            menu.addItem(
-                disabledItem(
-                    title: prefix
-                        + (execution.stdoutTruncated
-                            ? "stdout: truncated (\(execution.stdoutBytesRead) bytes)"
-                            : "stdout: \(execution.stdoutBytesRead) bytes")))
-            menu.addItem(
-                disabledItem(
-                    title: prefix
-                        + (execution.stderrTruncated
-                            ? "stderr: truncated (\(execution.stderrBytesRead) bytes)"
-                            : "stderr: \(execution.stderrBytesRead) bytes")))
-            let stderrLine = lastTrimmedLine(of: execution.stderr)
-            if !stderrLine.isEmpty {
-                menu.addItem(stderrPreviewItem(prefix: prefix + "stderr: ", fullText: stderrLine))
-            }
-            if !execution.stdout.isEmpty {
-                menu.addItem(copyItem(title: "Copy Click Output", text: execution.stdout))
-            }
-            if !execution.stderr.isEmpty {
-                menu.addItem(copyItem(title: "Copy Click Error", text: execution.stderr))
-            }
-        }
-        if runner.skippedRefreshes > 0 {
-            menu.addItem(disabledItem(title: prefix + "skipped invocations: \(runner.skippedRefreshes)"))
-        }
-    }
-
-    private func clickStateDescription(_ snapshot: CommandRunnerSnapshot) -> String {
-        if snapshot.isRunning {
-            return "running"
-        }
-        guard let execution = snapshot.lastExecution else {
-            return "never run"
-        }
-        switch execution.terminalReason {
-        case .exited(let code):
-            return code == 0 ? "completed" : "error"
-        case .signaled:
-            return "error"
-        case .timedOut:
-            return "timed out"
-        case .cancelled:
-            return "cancelled"
-        case .launchFailed:
-            return "error"
         }
     }
 

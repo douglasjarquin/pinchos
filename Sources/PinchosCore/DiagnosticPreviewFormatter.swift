@@ -20,7 +20,7 @@ public struct DiagnosticPreview: Equatable, Sendable {
 /// an AppKit menu title. Pinchos can retain up to `max_output`
 /// bytes of stdout/stderr per stream (independently of this formatter -- see
 /// `OutputMemoryBudget`), but "available to diagnostics" must not mean
-/// "laid out as one `NSMenuItem` title": opening a right-click menu has to
+/// "laid out as one `NSMenuItem` title": opening the lifecycle menu has to
 /// cost a bounded amount of formatting/layout work regardless of how large a
 /// command's retained output is. The complete retained text is always still
 /// reachable through a **Copy Full Output**/**Copy Full Error** action that
@@ -65,8 +65,8 @@ public enum DiagnosticPreviewFormatter {
         /// otherwise fit under the byte/cluster caps.
         public static let menuValue = Limits(maxGraphemeClusters: 240, maxUTF8Bytes: 4096, maxLines: 3, collapsesNewlines: true)
 
-        /// The bounded stderr/error line already used across the primary,
-        /// click, and action diagnostics sections (previously an ad hoc
+        /// The bounded stderr/error line already used across the primary
+        /// and action diagnostics sections (previously an ad hoc
         /// `.prefix(200)` at each call site). Callers pass a single
         /// already-selected line (see `lastTrimmedLine`); the one-line cap
         /// here is a defensive backstop, not the primary line-selection

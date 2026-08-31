@@ -74,9 +74,9 @@ final class ManagedGroupItem: ManagedItemLifecycle {
         statusItem?.isVisible = visible && isVisible
     }
 
-    /// A group has no click-through command or refresh-on-click of its own,
-    /// so both left- and right-click always reveal the member dropdown --
-    /// there is no other useful action for either mouse button to take.
+    /// A group has no click command or refresh-on-click of its own, so both
+    /// left- and right-click reveal the member dropdown -- there is no other
+    /// useful action for either mouse button to take.
     @objc private func handleClick() {
         guard let statusItem else { return }
         menuDelegate?.showLifecycleMenu(for: statusItem)
@@ -135,7 +135,6 @@ final class ManagedGroupItem: ManagedItemLifecycle {
     }
 
     func actionSnapshot(at index: Int) async -> CommandRunnerSnapshot? { nil }
-    func clickSnapshot() async -> ClickDiagnosticsSnapshot? { nil }
     func invokeAction(at index: Int) {}
     func refreshNow() {}
 

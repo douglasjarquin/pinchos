@@ -7,7 +7,6 @@ max_output = "64KiB"
 format = "{output}%"
 hidden = false
 icon = "/path/to/pinchos/example/icons/claude.svg"
-click = "open https://claude.ai/settings/usage"
 error_text = "–"
 on_error = "keep_last"
 stale_after = "15m"
@@ -19,7 +18,6 @@ interval = "5m"
 format = "{output}%"
 hidden = false
 icon = "/path/to/pinchos/example/icons/codex.svg"
-click = "open https://chatgpt.com/codex/settings/usage"
 error_text = "–"
 
 [item.clock]

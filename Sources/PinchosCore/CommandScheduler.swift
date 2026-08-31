@@ -160,8 +160,8 @@ public final class ManualSchedulerClock: SchedulerClock, @unchecked Sendable {
 /// by every `ManagedItem`. It replaces per-item `DispatchQueue` +
 /// `DispatchSourceTimer` pairs with a single shared deadline driver, and
 /// bounds how many Pinchos-managed command sessions (scheduled refreshes,
-/// manual refreshes, clicks, and declarative command actions) may be
-/// actively running at once, regardless of how many items are configured.
+/// manual refreshes, and declarative command actions) may be actively
+/// running at once, regardless of how many items are configured.
 ///
 /// Policy, in one place:
 /// - **Bounded concurrency**: at most `maxActiveSessions` sessions run at

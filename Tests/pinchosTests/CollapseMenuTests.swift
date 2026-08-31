@@ -88,7 +88,6 @@ private final class CollapseFakeItem: ManagedItemLifecycle {
     }
 
     func actionSnapshot(at index: Int) async -> CommandRunnerSnapshot? { nil }
-    func clickSnapshot() async -> ClickDiagnosticsSnapshot? { nil }
     func invokeAction(at index: Int) {}
     func refreshNow() {}
 }

@@ -93,8 +93,6 @@ public struct CommandItemConfig: Equatable, Sendable {
     public let timeout: TimeInterval
     public let maxOutputBytes: Int
     public let format: String?
-    public let click: String?
-    public let refreshOnClick: Bool
     public let errorText: String
     public let onError: ItemErrorPolicy
     public let staleAfter: TimeInterval?
@@ -122,8 +120,6 @@ public struct CommandItemConfig: Equatable, Sendable {
         format: String? = nil,
         triggers: Set<ItemTrigger> = [],
         watch: [String] = [],
-        click: String? = nil,
-        refreshOnClick: Bool = false,
         errorText: String = "\u{2013}",
         onError: ItemErrorPolicy = .replace,
         staleAfter: TimeInterval? = nil,
@@ -151,8 +147,6 @@ public struct CommandItemConfig: Equatable, Sendable {
         self.timeout = timeout
         self.maxOutputBytes = maxOutputBytes
         self.format = format
-        self.click = click
-        self.refreshOnClick = refreshOnClick
         self.errorText = errorText
         self.onError = onError
         self.staleAfter = staleAfter
@@ -300,8 +294,6 @@ extension ItemConfig {
         format: String? = nil,
         triggers: Set<ItemTrigger> = [],
         watch: [String] = [],
-        click: String? = nil,
-        refreshOnClick: Bool = false,
         errorText: String = "\u{2013}",
         onError: ItemErrorPolicy = .replace,
         staleAfter: TimeInterval? = nil,
@@ -331,8 +323,6 @@ extension ItemConfig {
                 format: format,
                 triggers: triggers,
                 watch: watch,
-                click: click,
-                refreshOnClick: refreshOnClick,
                 errorText: errorText,
                 onError: onError,
                 staleAfter: staleAfter,

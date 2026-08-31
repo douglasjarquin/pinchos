@@ -46,6 +46,5 @@ run = "quota-axi --provider claude --json | jq -r '.providers[0].windows[] | sel
 interval = "5m"
 timeout = "15s"
 format = "{output}%"
-click = "open https://claude.ai/settings/usage"
 error_text = "–"
 on_error = "keep_last"

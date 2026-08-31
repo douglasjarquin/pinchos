@@ -15,8 +15,6 @@ public enum ConfigParser {
         "timeout",
         "max_output",
         "format",
-        "click",
-        "refresh_on_click",
         "error_text",
         "on_error",
         "stale_after",
@@ -786,21 +784,6 @@ public enum ConfigParser {
             output = .plain
         }
 
-        let refreshOnClick: Bool
-        if let refreshOnClickValue = table["refresh_on_click"] {
-            guard let value = refreshOnClickValue.bool else {
-                throw typeError(
-                    path: "item.\(name).refresh_on_click",
-                    expected: "boolean",
-                    value: refreshOnClickValue,
-                    line: sourceLine(item: name, key: "refresh_on_click", sourceLines: sourceLines)
-                )
-            }
-            refreshOnClick = value
-        } else {
-            refreshOnClick = false
-        }
-
         let onError: ItemErrorPolicy
         if let onErrorValue = table["on_error"] {
             let rawValue = try stringValue(
@@ -995,14 +978,6 @@ public enum ConfigParser {
             ),
             triggers: triggers,
             watch: watch,
-            click: try optionalString(
-                name: name,
-                key: "click",
-                table: table,
-                sourceLines: sourceLines,
-                requireNonEmpty: true
-            ),
-            refreshOnClick: refreshOnClick,
             errorText: try optionalString(
                 name: name,
                 key: "error_text",

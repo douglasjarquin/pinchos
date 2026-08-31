@@ -16,7 +16,6 @@ final class ConfigParserTests: XCTestCase {
         XCTAssertEqual(item.interval, .scheduled(60))
         XCTAssertEqual(item.output, .plain)
         XCTAssertNil(item.format)
-        XCTAssertNil(item.click)
         XCTAssertTrue(item.actions.isEmpty)
         XCTAssertEqual(item.errorText, "\u{2013}")
         XCTAssertEqual(item.onError, .replace)
@@ -102,7 +101,6 @@ final class ConfigParserTests: XCTestCase {
         timeout = "2s"
         max_output = "64KiB"
         format = "\u{1F440} {output}%"
-        click = "open https://example.com"
         error_text = "n/a"
         icon = "/path/to/icon.svg"
         max_length = 24
@@ -118,7 +116,6 @@ final class ConfigParserTests: XCTestCase {
         XCTAssertEqual(item.timeout, 2)
         XCTAssertEqual(item.maxOutputBytes, 64 * 1024)
         XCTAssertEqual(item.format, "\u{1F440} {output}%")
-        XCTAssertEqual(item.click, "open https://example.com")
         XCTAssertEqual(item.errorText, "n/a")
         XCTAssertEqual(item.icon, "/path/to/icon.svg")
         XCTAssertNil(item.symbol)
@@ -143,8 +140,6 @@ final class ConfigParserTests: XCTestCase {
             (key: "timeout", value: "15", expectedMessage: "must be a string"),
             (key: "max_output", value: "65536", expectedMessage: "must be a string"),
             (key: "format", value: "42", expectedMessage: "must be a string"),
-            (key: "click", value: "true", expectedMessage: "must be a string"),
-            (key: "refresh_on_click", value: "\"yes\"", expectedMessage: "must be a boolean"),
             (key: "error_text", value: "[]", expectedMessage: "must be a string"),
             (key: "on_error", value: "false", expectedMessage: "must be a string"),
             (key: "stale_after", value: "5", expectedMessage: "must be a string"),
@@ -529,7 +524,7 @@ final class ConfigParserTests: XCTestCase {
         }
     }
 
-    func testRejectsEmptyAndWhitespaceOnlyRunClickAndActionCommands() {
+    func testRejectsEmptyAndWhitespaceOnlyRunAndActionCommands() {
         let configurations = [
             """
             [item.clock]
@@ -540,12 +535,6 @@ final class ConfigParserTests: XCTestCase {
             [item.clock]
             type = "command"
             run = "   \t"
-            """,
-            """
-            [item.clock]
-            type = "command"
-            run = "date"
-            click = "  "
             """,
             """
             [item.clock]
@@ -643,8 +632,6 @@ final class ConfigParserTests: XCTestCase {
             "timeout",
             "max_output",
             "format",
-            "click",
-            "refresh_on_click",
             "error_text",
             "on_error",
             "stale_after",
@@ -1123,22 +1110,6 @@ final class ConfigParserTests: XCTestCase {
         }
     }
 
-    func testFlagshipExampleConfigParsesWithMatchingProviderClickLines() throws {
-        let thisFile = URL(fileURLWithPath: #filePath)
-        let repoRoot = thisFile.deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
-        let exampleURL = repoRoot.appendingPathComponent("example/pinchos.toml")
-        let text = try String(contentsOf: exampleURL, encoding: .utf8)
-        let config = try ConfigParser.parse(text)
-
-        let claude = try XCTUnwrap(config.items.first(where: { $0.name == "claude" }))
-        let codex = try XCTUnwrap(config.items.first(where: { $0.name == "codex" }))
-
-        for item in [claude, codex] {
-            let click = try XCTUnwrap(item.command.click, "\(item.name) is missing a click line")
-            XCTAssertTrue(click.hasPrefix("open https://"), "\(item.name) click line should open a usage page URL, got: \(click)")
-        }
-    }
-
     func testExpandsTildeInIconPath() throws {
         let toml = """
         [item.limits]
@@ -1355,29 +1326,12 @@ final class ConfigParserTests: XCTestCase {
         type = "command"
         run = "sleep 1; echo value"
         interval = "manual"
-        refresh_on_click = true
         """
 
         let config = try ConfigParser.parse(toml)
 
         XCTAssertEqual(config.items.count, 1)
         XCTAssertEqual(config.items[0].command.interval, .manual)
-        XCTAssertTrue(config.items[0].command.refreshOnClick)
-    }
-
-    func testInvalidRefreshOnClickThrowsWithItemContext() {
-        let toml = """
-        [item.expensive]
-        type = "command"
-        run = "echo value"
-        refresh_on_click = "yes"
-        """
-
-        XCTAssertThrowsError(try ConfigParser.parse(toml)) { error in
-            let parseError = error as? ConfigParseError
-            XCTAssertTrue(parseError?.message.contains("refresh_on_click") == true)
-            XCTAssertTrue(parseError?.message.contains("expensive") == true)
-        }
     }
 
     func testDeclarativeActionTablesAreProjectedIntoTheItemModel() throws {
