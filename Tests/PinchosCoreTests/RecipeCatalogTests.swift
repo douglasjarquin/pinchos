@@ -4,119 +4,58 @@ import XCTest
 
 final class RecipeCatalogTests: XCTestCase {
     private var repoRoot: URL {
-        let thisFile = URL(fileURLWithPath: #filePath)
-        return thisFile.deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+        URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
     }
 
     private func recipeFiles() throws -> [URL] {
-        let recipesDirectory = repoRoot.appendingPathComponent("recipes")
+        let directory = repoRoot.appendingPathComponent("recipes")
         let entries = try FileManager.default.contentsOfDirectory(
-            at: recipesDirectory,
+            at: directory,
             includingPropertiesForKeys: nil
         )
-        let recipes = entries.filter { $0.pathExtension == "toml" }.sorted { $0.path < $1.path }
-        XCTAssertFalse(recipes.isEmpty, "expected at least one recipe under \(recipesDirectory.path)")
-        XCTAssertGreaterThanOrEqual(recipes.count, 50, "expected at least 50 recipes under \(recipesDirectory.path)")
-        return recipes
+        return entries
+            .filter { $0.pathExtension == "toml" }
+            .sorted { $0.lastPathComponent < $1.lastPathComponent }
     }
 
-    func testEveryRecipeParsesWithConfigParser() throws {
-        for recipeURL in try recipeFiles() {
-            let text = try String(contentsOf: recipeURL, encoding: .utf8)
-            let config: PinchosConfig
-            do {
-                config = try ConfigParser.parse(text, relativeTo: recipeURL)
-            } catch {
-                XCTFail("\(recipeURL.lastPathComponent) failed to parse: \(error)")
-                continue
-            }
-            XCTAssertFalse(
-                config.items.isEmpty,
-                "\(recipeURL.lastPathComponent) declares no [item.<name>] tables"
-            )
-        }
-    }
+    func testCatalogIsIntentionallySmallAndEveryRecipeUsesThePublicSchema() throws {
+        let files = try recipeFiles()
+        XCTAssertEqual(files.count, 8, "0.1.0 should carry a small canonical recipe set")
 
-    func testEveryRecipeItemHasANonEmptyRunCommand() throws {
-        for recipeURL in try recipeFiles() {
-            let text = try String(contentsOf: recipeURL, encoding: .utf8)
-            let config = try ConfigParser.parse(text, relativeTo: recipeURL)
-            for entry in config.items {
-                guard case .command(let item) = entry else { continue }
-                XCTAssertFalse(
-                    item.run.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
-                    "\(recipeURL.lastPathComponent): item.\(item.name) has an empty run command"
-                )
-                XCTAssertNil(
-                    item.icon,
-                    "\(recipeURL.lastPathComponent): item.\(item.name) sets an icon, which recipes must avoid"
-                )
-                XCTAssertNil(
-                    item.symbol,
-                    "\(recipeURL.lastPathComponent): item.\(item.name) sets a symbol, which recipes must avoid"
-                )
-                XCTAssertNil(
-                    item.workingDirectory,
-                    "\(recipeURL.lastPathComponent): item.\(item.name) sets working_directory, which recipes must avoid"
-                )
+        for url in files {
+            let source = try String(contentsOf: url, encoding: .utf8)
+            let config = try ConfigParser.parse(source, relativeTo: url)
+            XCTAssertFalse(config.items.isEmpty, "\(url.lastPathComponent) declares no items")
+
+            for item in config.items {
+                XCTAssertFalse(item.run.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                XCTAssertFalse(source.contains("type ="))
+                XCTAssertFalse(source.contains("on_error"))
+                XCTAssertFalse(source.contains("stale_after"))
+                XCTAssertFalse(source.contains("working_directory"))
             }
         }
     }
 
-    func testEveryRecipeFileIsLinkedFromTheCatalogIndex() throws {
-        let readmeURL = repoRoot.appendingPathComponent("recipes/README.md")
-        let readmeText = try String(contentsOf: readmeURL, encoding: .utf8)
-
-        for recipeURL in try recipeFiles() {
-            let filename = recipeURL.lastPathComponent
-            XCTAssertTrue(
-                readmeText.contains(filename),
-                "recipes/README.md does not mention \(filename)"
-            )
-        }
-    }
-
-    func testDisplayCountRecipeCountsIndividualDisplays() throws {
-        let recipeURL = repoRoot.appendingPathComponent("recipes/display-count.toml")
-        let config = try ConfigParser.parse(
-            String(contentsOf: recipeURL, encoding: .utf8),
-            relativeTo: recipeURL
-        )
-        let run = try XCTUnwrap(config.items.first(where: { $0.name == "displays" })?.command.run)
-        let fixtureURL = FileManager.default.temporaryDirectory
-            .appendingPathComponent("pinchos-system-profiler-\(UUID().uuidString).txt")
-        let fixture = """
-        Graphics/Displays:
-
-            Apple M3 Max:
-
-              Displays:
-                Color LCD:
-                  Resolution: 3456 x 2234 Retina
-                Studio Display:
-                  Resolution: 5120 x 2880
-        """
-        try fixture.write(to: fixtureURL, atomically: true, encoding: .utf8)
-        defer { try? FileManager.default.removeItem(at: fixtureURL) }
-
-        let command = run.replacingOccurrences(
-            of: "system_profiler SPDisplaysDataType",
-            with: "cat '\(fixtureURL.path)'"
-        )
-        let process = Process()
-        let outputPipe = Pipe()
-        process.executableURL = URL(fileURLWithPath: "/bin/zsh")
-        process.arguments = ["-lc", command]
-        process.standardOutput = outputPipe
-        process.standardError = outputPipe
-        try process.run()
-        process.waitUntilExit()
-
-        let output = String(
-            data: outputPipe.fileHandleForReading.readDataToEndOfFile(),
+    func testEveryRecipeIsLinkedFromTheCatalogIndex() throws {
+        let readme = try String(
+            contentsOf: repoRoot.appendingPathComponent("recipes/README.md"),
             encoding: .utf8
-        )?.trimmingCharacters(in: .whitespacesAndNewlines)
-        XCTAssertEqual(process.terminationStatus, 0)
-        XCTAssertEqual(output, "2")
+        )
+        for url in try recipeFiles() {
+            XCTAssertTrue(readme.contains(url.lastPathComponent))
+        }
+    }
+
+    func testCanonicalExampleFileExactlyMatchesRuntimeExample() throws {
+        let source = try String(
+            contentsOf: repoRoot.appendingPathComponent("example/pinchos.toml"),
+            encoding: .utf8
+        )
+        XCTAssertEqual(source, ExampleConfig.text)
+        XCTAssertNoThrow(try ConfigParser.parse(source))
     }
 }

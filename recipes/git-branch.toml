@@ -1,19 +1,10 @@
-# Recipe: git-branch (optional path configuration)
+# Recipe: Git Branch
 # Category: Development
-#
-# Purpose: show the current branch for a repository you actively work in.
-# Dependencies: Git, which ships with Xcode Command Line Tools.
-# Configuration: replace `/path/to/repository` in `REPO_PATH` below.
-# Expected output: "main" or the branch currently checked out.
-# Limitations: detached HEAD and a missing path produce an error; the recipe
-#   does not guess which repository is intended from Pinchos' config folder.
+# Expected output: "main"
+# Replace /path/to/repository with an absolute path.
 
 [item.branch]
-type = "command"
-run = "git -C \"$REPO_PATH\" branch --show-current"
+run = "git -C /path/to/repository branch --show-current"
 interval = "1m"
 format = "{output}"
-on_error = "keep_last"
-
-[item.branch.env]
-REPO_PATH = "/path/to/repository"
+symbol = "arrow.triangle.branch"

@@ -1,24 +1,8 @@
-# Recipe: clock
+# Recipe: Clock
 # Category: Time
-#
-# Purpose: show the current local time in the menu bar.
-# Dependencies: none beyond the macOS base system (/bin/date).
-# Expected output: "14:07" (24-hour HH:MM, updates every 30 seconds).
-#   The value is locale- and timezone-dependent: it reflects the format
-#   string below and the machine's current timezone, not a fixed locale.
-# Limitations: `date` has no failure mode worth handling here, so this
-#   recipe skips `error_text`/`on_error`/`stale_after`. Change the format
-#   string (see `man strftime`) to show seconds, a date, or a timezone
-#   abbreviation, e.g. "+%H:%M:%S %Z".
-#
-# Copy this file's [item.*] table(s) into your pinchos.toml, then:
-#   .build/release/pinchos validate
-#   .build/release/pinchos doctor
-#   .build/release/pinchos run clock
+# Expected output: "14:07"
 
 [item.clock]
-type = "command"
 run = "date '+%H:%M'"
 interval = "30s"
-# {output} is the trimmed last stdout line of `run` (here, the whole line).
-format = "{output}"
+symbol = "clock"

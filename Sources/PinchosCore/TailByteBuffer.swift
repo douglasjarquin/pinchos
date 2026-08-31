@@ -15,7 +15,7 @@ import Foundation
 public final class OutputMemoryBudget: @unchecked Sendable {
     /// The default aggregate budget shared by every command runner in the
     /// process. Sized well above the default three-item workload (2
-    /// streams x `CommandItemConfig.defaultMaxOutputBytes` = 128KiB per item, or
+    /// streams x `ItemConfig.defaultMaxOutputBytes` = 128KiB per item, or
     /// ~384KiB total) while still bounding a pathological many-item or
     /// many-action configuration far below what summing every configured
     /// `max_output` would otherwise allow. See README "Output memory

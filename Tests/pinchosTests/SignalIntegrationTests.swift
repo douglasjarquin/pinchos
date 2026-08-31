@@ -19,61 +19,38 @@ final class SignalIntegrationTests: XCTestCase {
         try runSignalScenario(signal: SIGTERM, expectedExitCode: 143)
     }
 
-    func testDoctorDoesNotExecuteConfiguredItemShell() throws {
-        // Doctor resolves command availability via PATH/filesystem lookup and
-        // must not execute the configured shell or `run` command (#45).
+    func testDoctorDoesNotExecuteConfiguredRunCommand() throws {
         let root = FileManager.default.temporaryDirectory
-            .appendingPathComponent("pinchos-issue45-doctor-shell-free-\(UUID().uuidString)", isDirectory: true)
+            .appendingPathComponent("pinchos-doctor-no-run-\(UUID().uuidString)", isDirectory: true)
         let configDirectory = root.appendingPathComponent("pinchos", isDirectory: true)
         let configURL = configDirectory.appendingPathComponent("pinchos.toml")
-        let shellURL = root.appendingPathComponent("must-not-run-shell")
-        let markerURL = root.appendingPathComponent("doctor-shell.pid")
+        let markerURL = root.appendingPathComponent("doctor-run.marker")
         try FileManager.default.createDirectory(at: configDirectory, withIntermediateDirectories: true)
-        var process: Process?
-        defer {
-            if let process, process.isRunning {
-                process.terminate()
-                process.waitUntilExit()
-            }
-            try? FileManager.default.removeItem(at: root)
-        }
+        defer { try? FileManager.default.removeItem(at: root) }
 
-        try #"""
-        #!/bin/sh
-        printf '%s' "$$" > "$PINCHOS_MARKER"
-        sleep 30
-        exec /bin/sh "$@"
-        """#.write(to: shellURL, atomically: true, encoding: .utf8)
-        try FileManager.default.setAttributes([.posixPermissions: NSNumber(value: 0o755)], ofItemAtPath: shellURL.path)
         try #"""
         [item.probe]
-        type = "command"
-        timeout = "1m"
-        shell = ["\#(shellURL.path)", "-c"]
-        run = "true"
-
-        [item.probe.env]
-        PINCHOS_MARKER = "\#(markerURL.path)"
+        run = "touch '\#(markerURL.path)'"
+        interval = "manual"
         """#.write(to: configURL, atomically: true, encoding: .utf8)
 
-        let launchedProcess = Process()
-        process = launchedProcess
-        launchedProcess.executableURL = try pinchosExecutable()
-        launchedProcess.arguments = ["doctor"]
+        let process = Process()
+        process.executableURL = try pinchosExecutable()
+        process.arguments = ["doctor"]
         var environment = ProcessInfo.processInfo.environment
         environment["XDG_CONFIG_HOME"] = root.path
-        launchedProcess.environment = environment
-        launchedProcess.standardOutput = FileHandle.nullDevice
-        launchedProcess.standardError = FileHandle.nullDevice
-        try launchedProcess.run()
-        launchedProcess.waitUntilExit()
+        process.environment = environment
+        process.standardOutput = FileHandle.nullDevice
+        process.standardError = FileHandle.nullDevice
+        try process.run()
+        process.waitUntilExit()
 
         XCTAssertFalse(
             FileManager.default.fileExists(atPath: markerURL.path),
-            "shell-free doctor must not execute the configured item shell"
+            "doctor must inspect configuration without executing item commands"
         )
-        XCTAssertEqual(launchedProcess.terminationReason, .exit)
-        XCTAssertEqual(launchedProcess.terminationStatus, 0)
+        XCTAssertEqual(process.terminationReason, .exit)
+        XCTAssertEqual(process.terminationStatus, 0)
     }
 
     func testGUISIGTERMCancelsMainRunnerAndRemovesOwnedDescendants() throws {
@@ -103,7 +80,6 @@ final class SignalIntegrationTests: XCTestCase {
 
         try #"""
         [item.gui]
-        type = "command"
         interval = "manual"
         timeout = "1h"
         run = "(trap '' TERM INT; while :; do sleep 1; done) & child_pid=$!; printf '%s' \"$child_pid\" > \"$PINCHOS_MARKER\"; wait \"$child_pid\""
@@ -168,7 +144,6 @@ final class SignalIntegrationTests: XCTestCase {
 
         try #"""
         [item.normal]
-        type = "command"
         run = "exit 7"
         """#.write(to: configURL, atomically: true, encoding: .utf8)
 
@@ -218,7 +193,6 @@ final class SignalIntegrationTests: XCTestCase {
 
         try #"""
         [item.long]
-        type = "command"
         run = "(trap '' TERM INT; while :; do sleep 1; done) & child_pid=$!; printf '%s' \"$child_pid\" > \"$PINCHOS_MARKER\"; wait \"$child_pid\""
         """#.write(to: configURL, atomically: true, encoding: .utf8)
 

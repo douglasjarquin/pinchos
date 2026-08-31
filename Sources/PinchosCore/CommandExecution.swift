@@ -65,8 +65,6 @@ public struct CommandRunnerSnapshot: Equatable, Sendable {
 public enum ItemRuntimeStatus: String, Equatable, Sendable {
     case running
     case fresh
-    case warning
-    case stale
     case error
     case unavailable
 }
@@ -77,9 +75,7 @@ public struct ItemRuntimeSnapshot: Equatable, Sendable {
     public let lastAttemptedAt: Date?
     public let lastUpdatedAt: Date?
     public let lastExecution: CommandExecution?
-    public let staleAfter: TimeInterval?
     public let skippedRefreshes: Int
-    public let isStale: Bool
     public let status: ItemRuntimeStatus
 
     public init(
@@ -88,46 +84,25 @@ public struct ItemRuntimeSnapshot: Equatable, Sendable {
         lastAttemptedAt: Date?,
         lastUpdatedAt: Date?,
         lastExecution: CommandExecution?,
-        staleAfter: TimeInterval?,
-        skippedRefreshes: Int,
-        now: Date,
-        structuredOutput: StructuredCommandOutput? = nil,
-        outputDiagnostic: String? = nil
+        skippedRefreshes: Int
     ) {
         self.isRunning = isRunning
         self.fullOutput = fullOutput
         self.lastAttemptedAt = lastAttemptedAt
         self.lastUpdatedAt = lastUpdatedAt
         self.lastExecution = lastExecution
-        self.staleAfter = staleAfter
         self.skippedRefreshes = skippedRefreshes
-        self.structuredOutput = structuredOutput
-        self.outputDiagnostic = outputDiagnostic
-        if let staleAfter, let lastUpdatedAt {
-            self.isStale = now.timeIntervalSince(lastUpdatedAt) >= staleAfter
-        } else {
-            self.isStale = false
-        }
 
         if isRunning {
             status = .running
-        } else if outputDiagnostic != nil {
-            status = .error
         } else if let lastExecution, lastExecution.terminalReason != .exited(code: 0) {
             status = .error
-        } else if let structuredState = structuredOutput?.state {
-            status = structuredState.runtimeStatus
         } else if fullOutput == nil {
             status = .unavailable
-        } else if self.isStale {
-            status = .stale
         } else {
             status = .fresh
         }
     }
-
-    public let structuredOutput: StructuredCommandOutput?
-    public let outputDiagnostic: String?
 
     public var lastRunDuration: TimeInterval? {
         lastExecution?.duration
@@ -150,15 +125,11 @@ public struct ItemRuntimeSnapshot: Equatable, Sendable {
     }
 
     public var errorSummary: String? {
-        if let outputDiagnostic { return outputDiagnostic }
         guard let lastExecution, lastExecution.terminalReason != .exited(code: 0) else {
             return nil
         }
         let stderr = lastTrimmedLine(of: lastExecution.stderr)
-        if !stderr.isEmpty {
-            return stderr
-        }
-        return exitStatus
+        return stderr.isEmpty ? exitStatus : stderr
     }
 
     public var runnerSnapshot: CommandRunnerSnapshot {
@@ -1075,7 +1046,7 @@ public actor CommandRunner {
         command: String,
         timeout: TimeInterval,
         maxOutputBytes: Int,
-        shell: [String] = CommandItemConfig.defaultShell,
+        shell: [String] = ItemConfig.defaultShell,
         workingDirectory: String? = nil,
         environment: [String: String] = [:]
     ) {
@@ -1099,7 +1070,7 @@ public actor CommandRunner {
         command: String,
         timeout: TimeInterval,
         maxOutputBytes: Int,
-        shell: [String] = CommandItemConfig.defaultShell,
+        shell: [String] = ItemConfig.defaultShell,
         workingDirectory: String? = nil,
         environment: [String: String] = [:],
         outputBudget: OutputMemoryBudget

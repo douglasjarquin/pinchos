@@ -27,7 +27,7 @@ final class RecoveryTests: XCTestCase {
     func testExampleConfigIsValidAndProvidesNormalItems() throws {
         let config = try ConfigParser.parse(ExampleConfig.text)
 
-        XCTAssertEqual(config.items.map(\.name), ["clock"])
+        XCTAssertEqual(config.items.map(\.name), ["clock", "battery"])
     }
 
     func testRecoveryStateMovesFromMissingAndEmptyToNormal() {
