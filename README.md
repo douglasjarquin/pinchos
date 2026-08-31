@@ -2,24 +2,30 @@
 
 <img width="2172" height="724" alt="Pinchos header: menu-bar snacks pinned with a skewer" src="https://github.com/user-attachments/assets/072cb6ab-6570-4dd4-9a41-b83602d1da21" />
 
-Pinchos are the little snacks pinned to a Basque bar top with a skewer.
-This app pins your own snacks to the macOS menu bar: one declarative TOML file, native `NSStatusItem`s, no runtime bloat.
+Pinchos pins the latest output of ordinary shell commands to native macOS menu-bar items.
+It uses one declarative TOML file, native `NSStatusItem`s, and no web runtime.
 
-`pinchos.toml` is to your menu bar what `starship.toml` is to your terminal prompt.
+`pinchos.toml` is to the menu bar what `starship.toml` is to the terminal prompt.
 
-## Why
+> **Pre-release:** `0.1.0` deliberately replaces the earlier development schema with a much smaller contract. Old unreleased configs are expected to break rather than become permanent compatibility baggage.
 
-SwiftBar and xbar host a folder of one-script-per-plugin.
-Pinchos is one config file with a module system: declare items, pick an interval, point at a shell command.
+## What `0.1.0` does
 
-The other reason pinchos exists: a popular provider-quota menu bar app was measured burning **1GB of RSS** to show a single percentage that updates once a minute.
-Pinchos exists to make that class of widget cost two orders of magnitude less.
-No Electron, no webview, no Dock icon.
-Idle RSS with 3 items at 60s intervals stays under 15MB, and idle CPU is effectively zero between ticks.
+- Runs bounded shell commands on an interval or only when manually refreshed.
+- Displays each command's latest useful stdout in its own native menu-bar item.
+- Reloads the config live while preserving unchanged items and their current output.
+- Keeps the last good config running when a new edit is invalid.
+- Provides compact menus, Option-click diagnostics, and exact output copying.
+- Cleans up owned process groups on timeout, reload, removal, Quit, SIGTERM, and SIGINT.
 
-## Install / build
+It does **not** yet provide groups, collapse mode, dynamic actions, structured JSON output, event triggers, notifications, per-item shell/environment controls, or a settings window. Those features belong on the roadmap only after the core contract proves itself.
 
-Requires macOS 14+ and Xcode 15+ (or a standalone Swift 5.10+ toolchain).
+## Requirements
+
+- macOS 14 or newer
+- Xcode 15 or a standalone Swift 5.10 toolchain
+
+## Build from source
 
 ```sh
 git clone https://github.com/douglasjarquin/pinchos.git
@@ -27,453 +33,178 @@ cd pinchos
 swift build -c release
 ```
 
-The binary lands at `.build/release/pinchos`. Run it directly:
+The binary is written to `.build/release/pinchos`.
+Running it without a CLI command starts the menu-bar app:
 
 ```sh
 .build/release/pinchos
 ```
 
-### Public site development
+Signed, notarized app and Homebrew installation are tracked in [#15](https://github.com/douglasjarquin/pinchos/issues/15) for the `0.1.0` release.
 
-The marketing site is an Astro static site in `site/`.
-Mise pins its Node and Aube toolchain in `mise.toml`.
+## Quick start
 
-From the repository root:
+Create the canonical example:
+
+```sh
+.build/release/pinchos init
+.build/release/pinchos validate
+.build/release/pinchos
+```
+
+Pinchos reads:
+
+- `$XDG_CONFIG_HOME/pinchos/pinchos.toml` when `XDG_CONFIG_HOME` is set;
+- otherwise `~/.config/pinchos/pinchos.toml`.
+
+The canonical example is also checked in at [`example/pinchos.toml`](example/pinchos.toml):
+
+```toml
+[item.clock]
+run = "date '+%H:%M'"
+interval = "30s"
+symbol = "clock"
+
+[item.battery]
+run = "pmset -g batt | awk -F';' 'NR==2 { gsub(/^[ \\t]+/, \"\", $1); print $1 }'"
+format = "{output}"
+```
+
+Declaration order is menu-bar order.
+
+## Configuration
+
+Every item uses one canonical table form:
+
+```toml
+[item.<id>]
+run = "<shell command>" # required
+interval = "60s"        # optional: 30s, 5m, 1h, or manual
+timeout = "15s"         # optional; minimum 1s
+format = "{output}"      # optional; {output} is the trimmed final stdout line
+symbol = "clock"         # optional SF Symbol
+# icon = "./clock.pdf"   # optional local image path; mutually exclusive with symbol
+```
+
+The supported public keys are exactly:
+
+| Key | Required | Default | Meaning |
+| --- | --- | --- | --- |
+| `run` | yes | — | Non-empty command executed by `/bin/sh -c`. |
+| `interval` | no | `60s` | Refresh interval or `manual`. |
+| `timeout` | no | `15s` | Command timeout; minimum `1s`. |
+| `format` | no | raw output | Text containing the optional `{output}` placeholder. |
+| `symbol` | no | none | SF Symbol rendered as a native template image. |
+| `icon` | no | none | Local SVG, PNG, or PDF path, relative to the config file when not absolute. |
+
+Item IDs may contain ASCII letters, digits, `_`, and `-`.
+Unknown root tables, alternate item declaration syntax, nested item tables, and unknown keys are rejected with source-line context.
+`symbol` and `icon` cannot be used together.
+
+### Fixed runtime policy
+
+The first release intentionally keeps operational policy out of the config:
+
+- shell: `/bin/sh -c`;
+- working directory: the user's home directory;
+- timeout: 15 seconds unless the item overrides it;
+- output bound: 64 KiB for stdout and 64 KiB for stderr;
+- scheduler: one application-scoped bounded scheduler;
+- failures: preserve the last successful title, mark the item as failed, and show `–` before the first success;
+- environment: preserve the current process environment, set `HOME`, and replace `PATH` with predictable mise, local, Homebrew, and system locations.
+
+This gives normal command-line credentials and macOS session values to commands without making Pinchos a second shell-profile language.
+
+## Menus and diagnostics
+
+Click an item to open its compact menu:
+
+- **Refresh Now**
+- **Open Config**
+- **Reload Config**
+- **Quit Pinchos**
+
+Option-click reveals cached diagnostics such as runtime state, timestamps, exit information, byte counts, and full-output copy commands.
+Opening a menu never starts another command or network request.
+
+## Live reload and recovery
+
+Pinchos watches the config with a file-system event source and coalesces in-place writes.
+A valid edit is diffed against the running configuration:
+
+- unchanged items retain their status item, scheduler state, runner, and displayed value;
+- changed items update in place;
+- removed items are cancelled and torn down;
+- added items are created;
+- status items are rebuilt only when native placement cannot preserve a changed declaration order.
+
+Malformed edits leave the last good configuration running and expose recovery actions instead of destroying a working menu bar.
+Pinchos never rewrites the user's TOML file.
+
+## CLI
+
+```text
+pinchos init
+pinchos validate
+pinchos doctor
+pinchos config-path
+pinchos open-config
+pinchos run <item>
+```
+
+`init` writes the canonical example without overwriting an existing config.
+`validate` performs strict syntax and semantic validation.
+`doctor` checks config access, the fixed command environment, executable availability, and icons without running configured commands.
+`run <item>` uses the same execution, timeout, output, cancellation, and environment policy as the menu-bar app.
+
+CLI exit codes are scriptable: `2` is usage failure, `3` is config/open failure, `4` is a failed diagnostic, `124` is timeout, `125` is internal execution/cancellation failure, and `127` is launch failure. A completed item otherwise preserves its command's exit code.
+
+## Process safety
+
+Each execution owns a process session and drains stdout and stderr concurrently into bounded tail buffers.
+Timeout, config replacement, item removal, app shutdown, and CLI interruption all use the same SIGTERM-then-SIGKILL cleanup policy.
+Shutdown is single-flight and deadline-bounded; repeated Quit or signal requests do not start overlapping cleanup sequences.
+
+## Recipes
+
+[`recipes/`](recipes/) contains a deliberately small catalog of eight examples that are validated against the same public schema in CI:
+
+- clock
+- battery
+- disk free
+- memory pressure
+- load average
+- local IP
+- HTTP health
+- Git branch
+
+Recipes are ordinary shell commands, not provider-specific Pinchos integrations.
+
+## Customize with an agent
+
+[`skills/customize-pinchos`](skills/customize-pinchos/SKILL.md) is an optional Agent Skill for reviewing and safely editing a Pinchos config. Pinchos does not load it at runtime.
+The full six-key reference is in [`configuration.md`](skills/customize-pinchos/references/configuration.md).
+
+Configured commands run with the user's permissions and are not sandboxed. Review commands before adding them, especially commands copied from the internet or commands that use credentials.
+
+## Development
+
+```sh
+swift test
+swift build -c release
+```
+
+The static Astro site lives in `site/` and uses the versions pinned by `mise.toml`:
 
 ```sh
 mise install
 mise run site:install
 mise run site:dev
+mise run site:build
 ```
 
-Open `http://127.0.0.1:4321/pinchos/` in a browser.
-Use `mise run site:build` to create the static output in `site/dist/`, or `mise run site:preview` to serve an existing build.
-See [`site/README.md`](site/README.md) for site-specific details.
+The `0.1.0` product freeze is tracked in [#99](https://github.com/douglasjarquin/pinchos/issues/99), and the staged path to `1.0` is tracked in [#100](https://github.com/douglasjarquin/pinchos/issues/100).
 
-It has no Dock icon and no main window (`NSApp.setActivationPolicy(.accessory)`) — it lives entirely in the menu bar.
-Clicking any item (left or right) opens its compact menu: **Refresh Now** and any configured actions, **Hide**, and the global **Open Config**/**Reload Config**/**Collapse Pinchos**/**Quit Pinchos** items.
-Hold Option while clicking to reveal the full diagnostics menu instead (state, timestamps, exit/error details, per-stream byte counts, **Copy Full Output**/**Copy Full Error**, and the scheduler line) — the same way Option-clicking the system WiFi item shows signal details.
-Quit it from any item's menu, or `killall pinchos`.
-`killall pinchos` sends SIGTERM to each matching Pinchos process, and each process runs the same bounded cleanup used by the native Quit action.
+## License
 
-### Shutdown and interruption
-
-Pinchos uses one single-flight shutdown coordinator for native Quit, SIGTERM, SIGINT, and CLI completion.
-The first termination request wins, and repeated or mixed requests do not start a second cleanup sequence.
-
-SIGTERM is handled in both GUI and CLI modes.
-SIGINT is handled by `pinchos run <item>` and by a GUI process launched directly from a terminal; pressing Control-C in that terminal requests the same graceful GUI cleanup as SIGTERM.
-A GUI process launched with `open` has no controlling terminal, so Control-C in the launching shell does not target it.
-
-For `pinchos run <item>`, Control-C returns 130 and SIGTERM returns 143 after the active runner and every owned same-group descendant have been cleaned up.
-Without a termination signal, ordinary command exit codes remain unchanged.
-Managed process groups apply the existing SIGTERM-then-SIGKILL cancellation policy, so a command that ignores SIGTERM cannot outlive its Pinchos owner.
-
-Cleanup has a finite five-second bound.
-If cleanup cannot settle within that bound, Pinchos uses its deliberate forced-exit escape hatch with status 125; this escape hatch is owned by the coordinator and cannot overlap another shutdown sequence.
-
-The signal integration uses `DispatchSourceSignal` for safe handoff.
-The raw POSIX signal disposition does no async work, actor calls, locking, or allocation; the DispatchSource event handler only posts the signal number to the main actor, where the bounded cleanup state machine runs.
-
-### Launch at login
-
-```sh
-.build/release/pinchos service install    # install and enable
-.build/release/pinchos service status     # report configuration, enabled, and running state
-.build/release/pinchos service uninstall  # disable and remove
-```
-
-`pinchos service install` writes and loads a per-user `launchd` LaunchAgent at
-`~/Library/LaunchAgents/com.pinchos.agent.plist`, targeting the currently
-running binary's absolute path (pass `--executable <absolute-path>` to target
-a different one, for example after copying a new build to
-`~/.local/bin/pinchos`). This is a plain per-user LaunchAgent, not `SMAppService`:
-Pinchos today ships as a standalone SwiftPM binary rather than a signed `.app`
-bundle, and `SMAppService`'s login-item registration is keyed by bundle
-identifier, so it doesn't apply until the `.app` packaging work in [#15](https://github.com/douglasjarquin/pinchos/issues/15).
-No root privileges are required or used.
-
-- **Idempotent**: running `install` again with the same target executable
-  while already enabled makes no changes. Re-running it after upgrading the
-  binary (or with a different `--executable`) unloads the old configuration
-  and loads the new one in place.
-- **One fixed location**: the agent's label (`com.pinchos.agent`) and plist
-  path never change, so there is exactly one possible configuration file for
-  this mechanism — reinstalling always converges that single file instead of
-  accumulating stale entries under old paths or labels, and `uninstall`
-  removes it outright rather than leaving it disabled on disk.
-- **Deterministic environment**: the generated plist sets `PATH` and `HOME`
-  explicitly and does not depend on any interactive shell profile — `launchd`
-  itself never sources `.zshrc`/`.bash_profile` either way, but the generated
-  configuration pins this down explicitly rather than relying on that
-  incidentally. `pinchos` is launched with `RunAtLoad` only, so quitting it
-  normally does not trigger an automatic relaunch until the next login.
-- `service status` reports the configuration file's presence and target
-  executable, whether the agent is enabled (loaded in `launchd`), and whether
-  it is currently running (with its pid). Exit code is `0` when enabled, `1`
-  when not installed or not enabled.
-- stdout/stderr from the launched process are redirected to
-  `~/Library/Logs/pinchos/pinchos.log` and `pinchos.err.log`.
-
-**Manual recovery / removal**, if `pinchos` is ever unavailable to run
-`service uninstall` (for example after deleting the binary):
-
-```sh
-launchctl bootout gui/$(id -u)/com.pinchos.agent   # stop and unload, ignore errors if not loaded
-rm -f ~/Library/LaunchAgents/com.pinchos.agent.plist
-rm -rf ~/Library/Logs/pinchos                      # optional: also remove logs
-```
-
-## Config
-
-Pinchos reads `$XDG_CONFIG_HOME/pinchos/pinchos.toml` if `XDG_CONFIG_HOME` is set, otherwise `~/.config/pinchos/pinchos.toml`.
-
-The file is edited live: pinchos watches it with a `DispatchSource` file-system-object source and applies configuration diffs without relaunching.
-Unchanged items keep their existing status item, timer, runner, and displayed output.
-Added items are appended when native status-item placement can preserve declaration order, removed items are torn down, and changed items update in place.
-If a declaration-order change cannot be represented by native insertion, pinchos rebuilds the configured status items to restore the requested order.
-Reload notifications are coalesced so in-place writes are applied after the file settles, and a malformed file leaves the last good configuration running.
-
-### CLI
-
-The release binary also provides setup, validation, diagnostics, and one-shot execution commands.
-
-```sh
-.build/release/pinchos --help
-.build/release/pinchos init
-.build/release/pinchos validate
-.build/release/pinchos doctor
-.build/release/pinchos config-path
-.build/release/pinchos open-config
-.build/release/pinchos run codex
-.build/release/pinchos service install
-```
-
-Use `pinchos <command> --help` for command-specific help.
-`init` creates the config directory and writes the documented example only when the config does not already exist.
-`validate` rejects missing, empty, malformed, and semantically invalid configurations with item, key, and source-line context when available.
-`doctor` reports config accessibility, shell and command availability, working directories, icons and SF Symbols, environment prerequisites, and launch-at-login state when the app bundle exposes it.
-`config-path` prints the resolved path without creating files, while `open-config` opens that path in its default application and creates an empty file only when necessary.
-`run <item>` uses the same configured shell vector, working directory, merged environment, timeout, and output bounds as the menu-bar app.
-`service install`/`status`/`uninstall` manage the per-user launch-at-login `launchd` agent; see "Launch at login" above.
-
-CLI exit codes are suitable for scripts.
-`0` means success, `1` means `service status` found the agent not installed or not enabled, `2` means invalid command usage, `3` means config or open failure, and `4` means `doctor` found a problem.
-`run` preserves a configured command's exit code, uses `124` for timeouts, and uses `127` for launch failures.
-
-### Customize with an agent skill
-
-[`customize-pinchos`](skills/customize-pinchos/SKILL.md) is a standalone Agent Skill for creating, reviewing, and troubleshooting Pinchos TOML.
-It explains the current schema, shows a safe customization workflow, and makes the shell-command boundary explicit.
-It does not install or extend Pinchos.
-Pinchos does not load the skill at runtime.
-
-In Codex, invoke `$skill-installer` and ask it to install this GitHub directory:
-
-```text
-https://github.com/douglasjarquin/pinchos/tree/main/skills/customize-pinchos
-```
-
-The managed installer chooses the configured Codex skills root.
-After installation, run `/skills` on your next turn and select `$customize-pinchos` when you want to use it.
-Restart Codex if the skill does not appear.
-
-You can also install the skill from a checked-out Pinchos repository into the standard user skill directory.
-This block refuses to overwrite an existing destination:
-
-```sh
-(
-  skill_source="$PWD/skills/customize-pinchos"
-  skill_destination="$HOME/.agents/skills/customize-pinchos"
-  if [ -e "$skill_destination" ]; then
-    printf 'Refusing to overwrite %s\n' "$skill_destination" >&2
-    exit 1
-  fi
-  mkdir -p "$(dirname "$skill_destination")"
-  cp -R "$skill_source" "$skill_destination"
-)
-```
-
-The skill is discoverable from `$HOME/.agents/skills` for the user's Codex environments.
-That path is separate from a managed installer root when Codex is configured with a different location.
-
-Invoke it explicitly with a prompt such as:
-
-```text
-$customize-pinchos
-Add a read-only item that shows the current battery percentage.
-Use the existing config, preserve its declaration order, and validate the change before you run it.
-```
-
-The skill stages edits under a temporary `XDG_CONFIG_HOME`, shows the exact diff and commands, asks for authorization before state-changing or credential-using commands, and runs `validate`, `doctor`, and `run <item>` against the staged file.
-After the staged checks pass, it promotes only the reviewed diff when the live file is unchanged and repeats the checks against the live path.
-Configured `run` and action commands are shell commands executed with the user's permissions, and they are not sandboxed.
-Read the bundled [`configuration.md`](skills/customize-pinchos/references/configuration.md) for the full schema and command-safety guidance.
-The [public skill guide](https://douglasjarquin.github.io/pinchos/skills/) covers the same installation and invocation flow.
-
-### Strict schema compatibility
-
-Pinchos validates the current TOML schema strictly at every entry point.
-Unknown keys under `item.*` or `group.*`, including action keys, are configuration errors with the item/group path and source line.
-Present values must use the documented TOML type; integers, booleans, arrays, and tables are not silently coerced to strings or treated as absent.
-`run` and action `run` commands must contain non-whitespace text.
-Environment variable names remain an explicitly dynamic set, but each name must be valid for the configured shell and each value must be a string without NUL bytes.
-This strict behavior applies to `pinchos validate`, `doctor`, `run`, and live GUI reloads.
-Configurations that relied on ignored typos or wrong types must be corrected before upgrading to this schema behavior.
-When a new model field is added, its supported-key enumeration and parser validation must be updated together.
-
-### Schema (v1)
-
-Every item is a `[item.<name>]` table. Items render left-to-right in the order their tables appear in the file.
-
-Items may also be declared with top-level dotted keys (`item.<name>.<key> = value`), which is standard TOML and produces the same result; declaration order is still left-to-right, but dotted-key items must come before the first `[item.*]` header in the file (TOML has no syntax to return to root scope once a header has opened a table). Inline-table item declarations (`item = { <name> = { ... } }` or `item.<name> = { ... }`) parse under the TOML spec but are not a supported Pinchos declaration form and are rejected with an explicit configuration error; use `[item.<name>]` or dotted keys instead.
-
-```toml
-[item.<name>]
-type = "command"        # required, the only v1 module type
-run = "<shell command>" # required, executed with `shell` on its interval
-shell = ["/bin/zsh", "-lc"] # optional, default ["/bin/sh", "-c"]
-working_directory = "~/src/project" # optional, tilde-expanded; relative paths are relative to this config file
-interval = "60s"        # optional, default "60s". Formats: "30s", "5m", "1h", or "manual"
-output = "json-v1"      # optional, default plain stdout. Parse the command's stdout as the versioned JSON protocol below.
-triggers = ["startup", "wake", "network-change"] # optional, refresh after selected system events
-watch = ["~/Library/Application Support/example/status.json"] # optional, refresh when a watched path changes
-timeout = "15s"         # optional, default "15s", minimum "1s". Terminates the command process group when it expires
-max_output = "64KiB"    # optional, default "64KiB" per stdout/stderr stream. Formats: "B", "KiB", "MiB". Maximum 4MiB per stream.
-format = "{output}%"    # optional. {output} is the trimmed last stdout line of `run`. Absent = raw output.
-error_text = "–"   # optional, default "–". Shown when `run` fails, instead of the item disappearing.
-on_error = "keep_last" # optional, default "replace". Keep the last successful value when `run` fails.
-stale_after = "15m"    # optional. Mark the last successful value stale at or after this age.
-icon = "/path/to/icon.svg" # optional, a local image file (SVG/PNG/PDF) rendered as a template icon left of the text. Mutually exclusive with `symbol`
-symbol = "chart.bar.fill" # optional, SF Symbol name rendered with native menu-bar tint. Mutually exclusive with `icon`
-max_length = 24        # optional. Truncates the rendered title to this many grapheme clusters, appending "…"
-hide_when_empty = false # optional, default false. Hide the item when the last successful run's trimmed output is empty
-hide_on_error = false   # optional, default false. Hide the item while its last completed run is a failure
-hidden = false          # optional, default false. Keep the item out of the menu bar until config sets this back to false
-icon_only = false       # optional, default false. Suppress the text title once `icon` or `symbol` has loaded; the full title stays available in the diagnostics menu
-disabled = false        # optional, default false. Stop scheduling and block manual/click/action execution while keeping the item visible for diagnostics
-notify_on = ["failure", "recovery"] # optional. Notify only on these terminal state transitions; omitted = no notifications
-notify_cooldown = "15m" # optional. Suppress a new failure notification for this duration after the previous one
-
-[item.<name>.env]
-PATH = "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin"
-AWS_PROFILE = "production"
-
-[[item.<name>.action]]
-title = "Open usage"
-run = "open https://example.com/usage"
-
-[[item.<name>.action]]
-title = "Refresh now"
-refresh = true
-
-# Read-only status rows shown in the item's menu. Each row runs its command
-# when the menu opens and renders `<title>: <output>` as a grayed-out line
-# (falls back to `<title>: –` if the command fails or is empty). Never
-# clickable; unlike an action it cannot run on demand or refresh the item.
-[[item.<name>.info]]
-title = "Reset"
-run = "quota-axi --provider codex --json | jq -r '.providers[0].windows[0].resetsAt'"
-
-[[item.<name>.info]]
-title = "Pace"
-run = "quota-axi --provider codex --json | jq -r '.providers[0].windows[0].pace.status'"
-```
-
-### Versioned structured output
-
-Plain stdout is the default and remains unchanged for existing items.
-Set `output = "json-v1"` to opt into the small structured protocol.
-
-The command must write one JSON object with the required integer `version` field set to `1`.
-All other fields are optional:
-
-```json
-{
-  "version": 1,
-  "text": "81%",
-  "state": "warning",
-  "hidden": false,
-  "symbol": "chart.bar.fill",
-  "actions": [
-    { "title": "Open usage", "run": "open https://example.com/usage" },
-    { "title": "Refresh", "refresh": true }
-  ]
-}
-```
-
-`text` is the displayed title, `hidden` controls visibility, and `icon` or `symbol` overrides the configured icon source for that successful run.
-`state` accepts `normal`, `warning`, or `error` and maps to Pinchos's native fresh, warning, or error presentation.
-`icon` and `symbol` are mutually exclusive.
-`actions` uses the same declarative action shape as TOML: every entry needs a non-empty `title` and exactly one of a shell `run` string or `refresh: true`.
-When `actions` is present, it replaces the configured action list for that successful run and uses the existing scheduler and action execution model.
-Unknown top-level fields are ignored so additive fields do not change the v1 contract.
-
-Malformed JSON, a missing or unsupported version, invalid field types, conflicting icon sources, invalid actions, and truncated stdout are treated as a failed structured run.
-The item stays safe, applies its configured `on_error` policy, and exposes the structured-output diagnostic in the Option-click diagnostics menu.
-Structured output is decoded only from the command runner's retained stdout, so the existing `max_output` per-stream limit and shared output-memory budget apply without change.
-Structured text also uses Pinchos's existing bounded diagnostic previews before reaching native AppKit surfaces.
-The protocol deliberately has no HTML, CSS, Markdown, webview, arbitrary UI, or SwiftBar semantics.
-
-An optional top-level `[scheduler]` table overrides the global active-session limit (see "Scheduler" below); it is not per-item:
-
-```toml
-[scheduler]
-max_active_sessions = 4 # optional, default min(4, CPU cores). Range 1-32.
-```
-
-- Timestamps use UTC ISO-8601 format.
-- The full output is the command runner's retained output subject to `max_output`; a truncation flag and byte counts remain visible in the diagnostics menu, and the exact retained bytes stay available via **Copy Full Output**/**Copy Full Error**.
-- `shell` is an executable path followed by the arguments used to invoke it; `run` is appended as the final argument. The default is `[/bin/sh, -c]`, preserving the original behavior.
-- `shell` and `working_directory` are resolved when the config loads. A leading `~` expands to the launching user's home directory, and relative filesystem paths are resolved relative to the config file, including `icon` paths. `symbol` is an SF Symbol catalog name, not a filesystem path, and is not tilde-expanded.
-- `working_directory` is optional. When omitted, the command inherits Pinchos's process working directory.
-- `[item.<name>.env]` values merge with the inherited Pinchos environment. Configured values override inherited variables with the same name immediately before `run` starts, while variables not listed remain available to the command. This keeps configured values stable even when the selected shell runs login startup files.
-- Environment variable names must use letters, digits, and underscores, and must start with a letter or underscore.
-- `timeout` accepts whole seconds, minutes, or hours and terminates the command's process group after the configured duration.
-- `interval = "manual"` runs the item once when it is first activated, then disables its periodic timer. Use **Refresh Now** from the item's menu for later runs.
-- `triggers` accepts zero or more of `startup`, `wake`, and `network-change`; event refreshes use the same runner and scheduler as polling and manual refreshes, so all three modes can be enabled together.
-- `watch` accepts filesystem paths that are tilde-expanded and normalized when the config loads; duplicate paths are collapsed, and each watched path refreshes only the item that declares it.
-- Repeated equivalent wake, network, or watched-file events are debounced, and changing an item's trigger or watch configuration during a live reload only replaces the affected observers.
-- An item may declare zero or more `action` tables.
-- Actions appear in declaration order at the top of the item's menu.
-- A `run` action uses the item's shell, working directory, environment, timeout, and output bound.
-- A `refresh = true` action invokes the native item refresh without starting a second shell command.
-- Repeated command-action invocations are skipped while that action is running, and the skipped count is retained in the item's diagnostics.
-- Timeout and cancellation terminate the process group with `SIGTERM` followed immediately by `SIGKILL`, so managed descendants cannot outlive an item or the app.
-- A command that exits while leaving same-group background work running remains owned by its item until that work exits or the item is removed.
-- `max_output` is an independent retained-tail limit for stdout and stderr, so `64KiB` can retain up to 64KiB from each stream while both streams continue draining. Values above 4MiB are rejected at config load with the item, key, and source line.
-- Retaining the tail keeps the final output line and the most recent stderr diagnostic available even when a command emits more than the configured limit. Retention is a circular byte buffer, so appending new output costs work proportional to the new bytes read, not to `max_output` or to total bytes read so far.
-- When a retained tail happens to start mid-way through a multi-byte UTF-8 scalar (because the cut landed inside it), the orphaned byte(s) render as the U+FFFD replacement character rather than corrupting or merging with neighboring text — standard `String(decoding:as:)` behavior, not something pinchos special-cases.
-- **Output memory budget:** every stdout/stderr collector in the process (primary and action runners) draws from one shared 8MiB aggregate budget. Configuring several noisy items or actions with large `max_output` values cannot together reserve more than that shared budget — collectors that would exceed it simply retain less than their configured `max_output`, with their `truncated` diagnostic reflecting the shortfall. This decouples "sum of every item's configured `max_output`" from actual retained memory, which is what keeps the default idle-footprint target meaningful even for adversarial configs.
-- Each item may set at most one icon source: `icon` (a local image file) or `symbol` (an SF Symbol name). Setting both is a configuration error reported with the item, key, and source line. Omitting both keeps the item text-only.
-- `icon` is a plain filesystem path, not a built-in icon library — pinchos ships with no bundled icon catalog. Point it at any image file you like; it's drawn as a template image (tinted automatically for light/dark menu bars) at 16×16, to the left of the item's text. A missing or unreadable file just falls back to text-only — it never crashes the app.
-- `symbol` names a system SF Symbol such as `chart.bar.fill`. Pinchos does not bundle or download a catalog; availability is whatever the running macOS release provides. A known symbol is drawn to the left of the title at the same 16×16 visual target as file icons, using AppKit's native template/automatic tint so it follows the menu bar in light and dark appearances (no hard-coded black or white). An empty or non-string `symbol` is a configuration error. A name that is valid TOML but missing from this Mac's catalog keeps the item running as text-only and is reported by `pinchos doctor` (and the item's diagnostics menu) rather than rejecting the reload — newer symbol names can be absent on an older supported macOS release.
-- `max_length` truncates only the rendered menu-bar title, counting grapheme clusters (so multi-scalar emoji and combining marks are never split) and appending a single `…`; the full untruncated title remains available in the diagnostics menu. Omitted or non-positive values apply no cap. It must be a positive integer — zero, negative, or non-integer values are a configuration error.
-- `hide_when_empty` and `hide_on_error` are display-only policies evaluated after each completed run; they never skip execution, and an item is never hidden before its first completed attempt (so a slow-starting item stays visible instead of vanishing). `hide_on_error` takes effect on the very first run if that run fails. When both apply, a failing run defers to `hide_on_error`.
-- `hidden` is a persistent display-only policy. It keeps the item's status item out of the menu bar while its command continues running, and the item's **Hide** menu action writes `hidden = true` into the matching TOML table. Remove the key or set it to `false` and Pinchos restores the item on the next successful reload.
-- `icon_only` clears the rendered title from the status bar button once `icon` or `symbol` has successfully loaded, showing only the icon; if the source is absent, the file is unreadable, or the symbol is unavailable on this macOS version, `icon_only` has no visible effect and the text title is shown as usual. The diagnostics menu always retains the full title regardless of `icon_only`.
-- `disabled` stops the item's scheduled timer and blocks manual refresh and declarative `action` execution (each is a no-op while disabled; already-running work is cancelled the moment `disabled` becomes true through a live reload). The item stays visible with a "Disabled: yes" line in its diagnostics menu, and the menu's action entries and **Refresh Now** fallback are shown but disabled, so a disabled item remains inspectable without being actionable. Clicking still opens the menu normally. Flipping `disabled` back to `false` through a live reload resumes scheduling and re-enables actions.
-- `notify_on` is opt-in per item and accepts `"failure"`, `"recovery"`, or both. A failure is a non-zero exit, signal, timeout, cancellation, launch failure, or structured-output diagnostic; a successful structured result whose declared state is `"error"` is not a command failure.
-- Notifications are transition-oriented: a failure is emitted once when the item enters a failed state, and a recovery is emitted once when a later successful command exits that state. Repeated refreshes while the item remains failed do not notify, and stale presentation alone is not a failure transition.
-- `notify_cooldown` is an optional positive duration that suppresses a new failure notification after a recent failure notification, including after a failure/recovery/failure sequence. Notification titles identify the item, and failure bodies contain only a bounded error preview.
-- macOS notification permission is requested on the first opted-in event. Denial or delivery failure is ignored safely while the item's command lifecycle continues normally.
-- A failing command never crashes pinchos. With the default `on_error = "replace"`, it renders `error_text`; with `on_error = "keep_last"`, it retains the last successful title and full output while marking the item with a compact warning indicator.
-- `stale_after` uses the last successful completion as its clock origin and becomes stale when the age is greater than or equal to the configured threshold. A first-run failure is `error`/`unavailable` rather than a fabricated stale value.
-- Command runs for a given item never overlap: if the previous run for that item hasn't finished when the next tick fires, the tick is skipped.
-- Manual refreshes use the same per-item execution gate as scheduled ticks, so repeated Refresh Now actions are skipped while a run is active.
-- While a refresh is running, the last good value stays visible. The diagnostics menu reports a bounded preview of the retained value (see below), state, last attempt, last success, stale flag, duration, exit/error details, and the hardened runner's per-stream diagnostics.
-- Skipped ticks are counted in the item's diagnostics menu without replacing the last completed result.
-- The diagnostics menu reports the last exit code or signal, duration, skipped ticks, per-stream truncation, and the latest bounded stderr line.
-- A command action's diagnostics offer their own **Copy "&lt;title&gt;" Output**/**Copy "&lt;title&gt;" Error** entries once that action has produced non-empty output/error, mirroring the primary section.
-- An unresolvable shell or working directory is reported in the config warning; a launch failure during execution is retained in the item's diagnostics menu with the resolved path.
-
-### Groups
-
-A `[group.<name>]` table renders one native status item that stands in for a list of member items, referenced by name:
-
-```toml
-[group.ai]
-title = "AI"          # required, static text shown on the group's own status item
-members = ["claude", "codex"] # required, non-empty, references existing item/group names
-icon = "/path/to/icon.svg" # optional, same file-path icon support as `[item.<name>].icon` above. Mutually exclusive with `symbol`
-symbol = "brain.head.profile" # optional, same SF Symbol support as `[item.<name>].symbol` above. Mutually exclusive with `icon`
-hidden = false # optional, default false. Keep the group out of the menu bar until config sets this back to false
-```
-
-- `title` and `members` are required; `icon`, `symbol`, and `hidden` are optional, and `icon` and `symbol` are mutually exclusive under the same conflict, size, and catalog-availability rules as command items.
-- **Membership**: `members` must be non-empty, must not contain duplicates, and every entry must name a declared `item.*` or `group.*`. A name may itself be another group, giving one level (or more) of nesting. Missing members, duplicates, and membership cycles (direct, indirect, or self-referencing) are configuration errors reported with the group and source line.
-- **Visibility policy**: a name used as a member of any group never gets its own top-level `NSStatusItem` — it keeps running on its own schedule and stays fully functional (actions, manual refresh, diagnostics), but appears only inside the menu of the group(s) that reference it, never as a second, independent menu-bar item. A statically `hidden` item also stays out of every parent group menu while its command continues running, so restore still happens only through config. A name not referenced by any group's `members` is unaffected and stays top-level exactly as in v1. This is a hard rule, not a per-group opt-out: there is deliberately no way to make a member also show up on its own.
-- **Group menu**: the group's own status item shows only the static `title` (a group never scripts a dynamic menu-bar title). Clicking (left or right) opens a menu whose first line is a compact summary — `title: value1 · value2 · …` — joining each member's current bounded preview value (or, for a nested group member, its own `title`), truncated safely the same way every other diagnostics preview is (see "Diagnostics previews vs. retained output"). This summary is recomputed fresh every time the menu opens, so it is always current without any change-notification plumbing between a member and its group. Below the summary, each member gets its own row with a submenu that is exactly that member's normal menu (actions, current value/state, diagnostics, **Refresh Now**) — nothing about a member's own presentation changes because it is being shown inside a group instead of at the top level.
-- **Reload**: adding/removing a group, changing its `title`, changing its `members` list, or changing its `hidden` flag all apply live. A membership change that flips a name's top-level/hidden status recreates that one status item (since `NSStatusItem` has no in-place "become a member" transition); everything else updates in place exactly as any other incremental reload does.
-- **Collapsed bar**: choose **Collapse Pinchos** from any item or group menu to replace the individual menu-bar items with one `pin.fill` status item.
-- The collapsed menu lists visible top-level pinchos at its first level, with each item's normal menu nested below its row, and **Expand Pinchos** restores the individual status items.
-- Collapse is a presentation preference held in memory for the current app session, so a relaunch starts expanded and no TOML key is required.
-
-### Scheduler
-
-Every Pinchos-managed command session — a scheduled tick, a manual **Refresh Now**, or a declarative command action — is admitted through one application-scoped `CommandScheduler` (`Sources/PinchosCore/CommandScheduler.swift`), not through per-item timers or an unbounded thread pool. `StatusItemController` owns a single instance for the app's lifetime and every `ManagedItem` shares it.
-
-- **Bounded concurrency**: at most `max_active_sessions` command sessions run at once, process-wide, regardless of how many items are configured. The default is `min(4, CPU cores)` — enough headroom that a handful of items never serialize behind each other, without letting a large configuration spawn dozens of concurrent shells at once. Override it with the optional `[scheduler] max_active_sessions` key (integer, 1–32); an out-of-range or non-integer value is a configuration error reported with the offending line, same as any other schema violation. Live-reloading `[scheduler]` alone (no item changes) still takes effect immediately.
-- **Fairness**: permits are granted strictly in request order (FIFO), and each item may have at most one outstanding permit request per work kind (refresh, click, or a given command action) at a time — a second request for the same kind while one is already queued collapses into it instead of enqueuing a second waiter (see "Coalescing" below). Together this bounds how long any item can wait behind others to a function of total queue depth, not of any single noisy item's request rate.
-- **Coalescing**: the collapsing described above is exactly the mechanism that keeps "obsolete" scheduled work bounded — a slow scheduled tick can never accumulate a backlog of pending refreshes for the same item, and every collapsed request increments a `coalesced` diagnostic count rather than silently vanishing. This is separate from (and layered on top of) each runner's own no-overlap check, which still applies once a session actually starts: a permit granted while that item's previous run for the same work kind is still executing lands on the runner's existing "skipped" counter, exactly as before this scheduler existed.
-- **Shared timing**: scheduled items register with the scheduler's single deadline-driven timer instead of each holding its own `DispatchSourceTimer`; there is one driver task for the whole app, not one per item. After the system sleeps, a recurring registration's next deadline is advanced past "now" in one step on wake, so it fires once, not once per interval that was missed while asleep.
-- **Cancellation and shutdown**: removing or reconfiguring an item cancels both its active session and any request only queued for a permit; the same happens for every item during app shutdown, and shutdown never admits a new session once it has begun. A cancelled permit wait never runs the command it was requesting.
-- **Diagnostics**: each item's menu keeps its own per-work-kind "skipped" counts (unchanged from before this scheduler existed). The lifecycle menu additionally shows one global `Scheduler: <active>/<max_active_sessions> active` line, extended with `, N queued`, `, N coalesced`, and/or `, N delayed` whenever any of those counts are non-zero, so saturation is visible without needing to inspect every item individually.
-
-### Diagnostics previews vs. retained output
-
-Every command-derived `NSMenuItem` title is a **bounded preview**, not the raw retained string, produced by `DiagnosticPreviewFormatter` (`Sources/PinchosCore/DiagnosticPreviewFormatter.swift`). This decouples the cost of opening the lifecycle menu from `max_output` (up to 4MiB per stream): the primary "Value:" line, stderr/error lines, and per-action diagnostics are capped independently in grapheme clusters, UTF-8 bytes, and line count, so a pathologically large or control-character-heavy command output can never inflate a menu's layout or hide the global **Open Config**/**Reload Config**/**Quit Pinchos** actions beneath it.
-
-- Menu titles render as one visual line: embedded line breaks are visibly escaped (joined with `␊`) rather than becoming real newlines, since AppKit renders an `NSMenuItem.title` as a single row.
-- NUL, other C0/C1 control characters, DEL, and bidi format controls are replaced with a visible placeholder (mostly the Unicode Control Pictures block, e.g. tab becomes `␉`, escape becomes `␛`) so they can neither disappear nor visually distort surrounding text; ordinary Unicode, including multi-scalar emoji and combining marks, passes through unchanged. Truncation never splits an extended grapheme cluster.
-- Whenever a preview is actually shortened, it ends with an explicit marker naming the original byte and line counts, e.g. `… (truncated, 65536 bytes / 1 line total)`, and the corresponding menu item's accessibility label/help calls out the truncation for VoiceOver.
-- The preview never replaces the retained data: **Copy Full Output**, **Copy Full Error**, and each action's **Copy "&lt;title&gt;" Output**/**Copy "&lt;title&gt;" Error** place the exact retained stdout/stderr on the clipboard, unabridged, and are omitted whenever the corresponding stream is empty.
-- A malformed config keeps the last good config running untouched, and pinchos additionally shows a single `pinchos ⚠︎` item; click it to see the parse error (with line number when available), reload, or quit. Fix the file and it clears automatically on the next successful reload.
-- Right-click any item for the built-in **Run <name>** action, its configured actions, **Refresh Now** when no built-in refresh action is configured, item runtime details and diagnostics, **Hide**, then the global **Open Config**, **Reload Config**, and **Quit Pinchos** actions.
-- **Hide** updates only the matching `item.*` or `group.*` table, preserves the surrounding TOML, and triggers the same live reload as a manual edit.
-- Right-click the warning item for its recovery actions.
-- The app is fully usable without ever touching the config file.
-
-### Example: the flagship "quota" preset
-
-```toml
-[item.claude]
-type = "command"
-run = "quota-axi --provider claude --json | jq -r '.providers[0].windows[] | select(.label==\"week\") | .percentRemaining'"
-interval = "5m"
-timeout = "15s"
-max_output = "64KiB"
-format = "{output}%"
-icon = "/path/to/pinchos/example/icons/claude.svg"
-click = "open https://claude.ai/settings/usage"
-
-[item.codex]
-type = "command"
-run = "quota-axi --provider codex --json | jq -r '.providers[0].windows[] | select(.label==\"week\") | .percentRemaining'"
-interval = "5m"
-format = "{output}%"
-icon = "/path/to/pinchos/example/icons/codex.svg"
-click = "open https://chatgpt.com/codex/settings/usage"
-```
-
-This composes [`quota-axi`](https://github.com/kunchenguid/quota-axi) (a CLI that reports local provider quota windows) with `jq` to pull the weekly window's remaining percentage out of its JSON (each provider labels its 7-day window `"week"`, though the `id` differs by provider), one item per provider, each with its own brand icon.
-`quota-axi` is one option here, not a dependency — `run` is any shell command, so this same pattern works for a stock price, a CI status, a battery reading (`pmset -g batt`), or a clock (`date '+%H:%M'`).
-
-The two icon files under [`example/icons/`](example/icons/) are MIT-licensed brand marks vendored from [steipete/CodexBar](https://github.com/steipete/CodexBar) - see [`example/icons/NOTICE.md`](example/icons/NOTICE.md) for attribution. Swap in whatever icon you like for your own items; pinchos has no opinion on where it comes from.
-
-See [`example/pinchos.toml`](example/pinchos.toml) for a full working config with four items (claude, codex, clock, battery).
-
-### Recipes
-
-[`recipes/`](recipes/README.md) is a curated catalog of 50 standalone, copy-pasteable configs for common menu-bar signals — clock, battery, disk/memory/load, VPN/network state, network latency, HTTP health, desktop state, development tools, and optional third-party integrations (`quota-axi`, `gh`, `aws`, `brew`, `docker`, `kubectl`, `mise`, `node`, and `tailscale`). The website's searchable [recipes explorer](https://douglasjarquin.github.io/pinchos/recipes/) is generated from the same directory at build time. It's documentation and example configuration, not a runtime plugin system; see [`recipes/README.md`](recipes/README.md) for the full index and how to copy, validate, diagnose, and run each one.
-
-## Architecture
-
-- `Sources/PinchosCore` — UI-free library: TOML parsing (via TOMLKit), duration and byte-size parsing, `{output}` templating, bounded/sanitized diagnostics previews (`DiagnosticPreviewFormatter`), the config-diff engine, the versioned structured-output parser (`StructuredOutputParser`, see "Versioned structured output" below), and bounded process-group command execution with concurrent stdout/stderr draining.
-- Each command session has a supervisor process as its process-group leader.
-  The supervisor remains alive until its descendants have exited or cancellation terminates the group, so every signal is made through the live session owner rather than a reusable numeric process-group ID.
-- `Sources/pinchos` — the AppKit executable: one `NSStatusItem` per configured item, a single application-scoped `CommandScheduler` (see "Scheduler" below) shared by every item's scheduled refresh, manual refresh, click, and command actions, declarative per-item menu actions, menu and lifecycle projection of `PinchosCore` runner snapshots, a shared `ShutdownCoordinator` for GUI and CLI lifecycle convergence, and a `ConfigWatcher` (`DispatchSourceFileSystemObject`) for live reload.
-- Config file reads and TOML parsing run off the AppKit main actor through `ConfigLoadCoordinator`, which tags each reload with a generation number so a superseded parse — success or failure — is never applied over a newer one, and coalesces reload bursts into a single pending load instead of an unbounded backlog.
-
-### Why TOMLKit
-
-[TOMLKit](https://github.com/LebJe/TOMLKit) is a maintained Swift wrapper around `toml++`, a mature C++17 TOML parser — full spec compliance (escaping, nested tables, arrays, dotted keys) without hand-rolling a parser, which is exactly the kind of correctness-critical, already-solved problem worth depending on rather than reimplementing.
-
-One wrinkle: TOMLKit's underlying store is a `std::map`, so iterating a `TOMLTable` returns keys in **alphabetical**, not declaration, order — a known, currently-unresolved limitation upstream ([marzer/tomlplusplus#62](https://github.com/marzer/tomlplusplus/issues/62)). Since v1's left-to-right item ordering is a hard requirement, `ConfigParser` does a small line-scan over the raw text to record the order `[item.*]` headers and top-level `item.<name>.<key>` dotted-key declarations appear in, then uses TOMLKit purely for spec-compliant parsing and per-item value access. This isn't a second TOML parser — it's a thin, separately-tested pass that only recognizes those two item-declaring forms.
-
-TOMLKit's parsed tree is authoritative for whether an item exists at all: `ConfigParser` cross-checks the line-scanned name set against TOMLKit's parsed `item` table and fails explicitly on any mismatch, rather than silently returning a config with fewer items than the file actually declares. This matters because TOMLKit/toml++ accepts strictly more syntax than the line scanner recognizes (for example, single-line inline-table item declarations); those forms are rejected with a clear configuration error rather than parsed and then dropped.
-
-Everything else in the app has no third-party dependency.
-
-## Manual QA
-
-See `docs/manual-qa/` for the evidence captured for v1: the example config running in the bar, a live-reload edit applied without relaunch, and a deliberately broken config recovering via the `pinchos ⚠︎` item.
-
-## CI
-
-`.github/workflows/verify.yml` (`Verify changes`) runs `swift build`, `swift test`, and `swift build -c release` on a macOS runner for every PR and every push to `main`.
-See [`docs/performance.md`](docs/performance.md) for the performance budgets and benchmark profiles behind the claims above, including the deterministic timer/output-budget invariant tests `swift test` enforces and how to run a controlled release-binary measurement locally.
-
-## Out of scope for v1
-
-No nested/JSON-path format placeholders, no preferences UI, no code signing/notarization/distribution pipeline, no Homebrew formula, no general multi-bar layout engine (groups add exactly one fixed layout: a static title plus a flat list of member submenus, not arbitrary nesting/positioning control), no bundled SF Symbols catalog (names resolve against the running macOS catalog only), no per-item icon size key, no symbol palettes/multicolor/animation. `pinchos service` (see "Launch at login" above) covers per-user launch-at-login for today's standalone binary; `SMAppService`/Login Items integration for a packaged `.app` is deferred to [#15](https://github.com/douglasjarquin/pinchos/issues/15). See the project brief for the full list.
+See [`LICENSE`](LICENSE).
