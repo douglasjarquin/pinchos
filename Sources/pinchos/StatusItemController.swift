@@ -422,12 +422,27 @@ final class StatusItemController: StatusItemMenuDelegate {
         }
     }
 
+    /// The Pinchos "tres pinchos" mark (design/Pinchos Icon.dc.html §4,
+    /// monochrome rendition) as a template image, so the menu bar tints it to
+    /// match the light/dark appearance. Replaces the earlier `pin.fill` SF
+    /// Symbol on the collapsed tray icon.
+    private static func collapsedTrayIcon() -> NSImage {
+        let svg = """
+        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 32 32"><line x1="8.5" y1="26" x2="8.5" y2="14" stroke="#000000" stroke-width="2.6" stroke-linecap="round"></line><circle cx="8.5" cy="11.6" r="3" fill="#000000"></circle><line x1="16" y1="26" x2="16" y2="9.5" stroke="#000000" stroke-width="2.6" stroke-linecap="round"></line><circle cx="16" cy="6.9" r="3" fill="#000000"></circle><line x1="23.5" y1="26" x2="23.5" y2="16.5" stroke="#000000" stroke-width="2.6" stroke-linecap="round"></line><circle cx="23.5" cy="14.1" r="3" fill="#000000"></circle></svg>
+        """
+        if let image = NSImage(data: Data(svg.utf8)) {
+            image.size = NSSize(width: 16, height: 16)
+            return image
+        }
+        return NSImage(systemSymbolName: "pin.fill", accessibilityDescription: "Pinchos") ?? NSImage()
+    }
+
     private func installCollapsedStatusItem() -> Bool {
         guard collapsedStatusItem == nil, let statusItem = statusItemHost.makeStatusItem() else {
             return collapsedStatusItem != nil
         }
-        let image = NSImage(systemSymbolName: "pin.fill", accessibilityDescription: "Pinchos")
-        image?.isTemplate = true
+        let image = Self.collapsedTrayIcon()
+        image.isTemplate = true
         statusItem.button?.image = image
         statusItem.button?.imagePosition = .imageOnly
         statusItem.button?.title = ""
@@ -608,21 +623,19 @@ final class StatusItemController: StatusItemMenuDelegate {
         return item
     }
 
-    /// The shared bottom group of every item menu: Open Config, Reload Config,
-    /// the Collapse/Expand Pinchos presentation toggle, and Quit Pinchos. The
-    /// presentation toggle lives here (below Reload Config) rather than between
-    /// the item content and the global items.
+    /// The shared bottom group of every item menu: the Collapse/Expand Pinchos
+    /// presentation toggle, then Open Config, Reload Config, and Quit Pinchos.
     private func addGlobalMenuContent(to menu: NSMenu, includesSchedulerDiagnostics: Bool = true) async {
         if includesSchedulerDiagnostics {
             await addSchedulerDiagnostics(to: menu)
         }
+        menu.addItem(makePresentationMenuItem())
         let openConfig = NSMenuItem(title: "Open Config", action: #selector(openConfigAction), keyEquivalent: "")
         openConfig.target = self
         menu.addItem(openConfig)
         let reload = NSMenuItem(title: "Reload Config", action: #selector(reloadConfigAction), keyEquivalent: "r")
         reload.target = self
         menu.addItem(reload)
-        menu.addItem(makePresentationMenuItem())
         let quit = NSMenuItem(title: "Quit Pinchos", action: #selector(quitAction), keyEquivalent: "q")
         quit.target = self
         menu.addItem(quit)

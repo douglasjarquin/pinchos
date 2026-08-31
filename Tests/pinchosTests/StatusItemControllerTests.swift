@@ -185,7 +185,7 @@ final class StatusItemControllerTests: XCTestCase {
         XCTAssertTrue(NSApplication.shared.sendAction(refresh.action!, to: refresh.target, from: refresh))
         XCTAssertEqual(factory.eventLog.events, ["refresh-now:alpha"])
         XCTAssertEqual(menu.items.first?.title, "Refresh Now")
-        XCTAssertEqual(Array(menu.items.suffix(3).map(\.title)), ["Reload Config", "Collapse Pinchos", "Quit Pinchos"])
+        XCTAssertEqual(Array(menu.items.suffix(3).map(\.title)), ["Open Config", "Reload Config", "Quit Pinchos"])
     }
 
     func testLifecycleMenuOffersHideThatPersistsAndRequestsReload() async throws {
@@ -328,7 +328,7 @@ final class StatusItemControllerTests: XCTestCase {
         // Refresh Now leads the top group; Hide sits directly under it.
         XCTAssertEqual(Array(titles.prefix(2)), ["Refresh Now", "Hide"])
         // Collapse Pinchos lives in the shared bottom group, below Reload Config.
-        XCTAssertEqual(Array(titles.suffix(3)), ["Reload Config", "Collapse Pinchos", "Quit Pinchos"])
+        XCTAssertEqual(Array(titles.suffix(3)), ["Open Config", "Reload Config", "Quit Pinchos"])
         // No runtime state, diagnostics, or value summary appears.
         XCTAssertFalse(titles.contains(where: { $0.hasPrefix("State:") }))
         XCTAssertFalse(titles.contains(where: { $0.hasPrefix("Value:") }))
@@ -367,7 +367,7 @@ final class StatusItemControllerTests: XCTestCase {
         XCTAssertEqual(Array(titles.prefix(2)), ["Open usage", "Refresh now"])
         XCTAssertTrue(titles.contains("Refresh now"))
         XCTAssertFalse(titles.contains("Refresh Now"))
-        XCTAssertEqual(Array(titles.suffix(3)), ["Reload Config", "Collapse Pinchos", "Quit Pinchos"])
+        XCTAssertEqual(Array(titles.suffix(3)), ["Open Config", "Reload Config", "Quit Pinchos"])
     }
 
     func testLifecycleMenuInvokesDeclarativeActionsInOrder() async throws {
@@ -791,7 +791,7 @@ final class StatusItemControllerTests: XCTestCase {
         XCTAssertTrue(NSApplication.shared.sendAction(copyItem.action!, to: copyItem.target, from: copyItem))
         XCTAssertEqual(NSPasteboard.general.string(forType: .string), hugeOutput, "copy must retrieve the exact retained text, not the preview")
 
-        XCTAssertEqual(Array(titles.suffix(3)), ["Reload Config", "Collapse Pinchos", "Quit Pinchos"], "global actions must stay reachable regardless of output size")
+        XCTAssertEqual(Array(titles.suffix(3)), ["Open Config", "Reload Config", "Quit Pinchos"], "global actions must stay reachable regardless of output size")
     }
 
     func testLifecycleMenuValuePreviewIsAccessibleWhenTruncated() async throws {
@@ -908,7 +908,7 @@ final class StatusItemControllerTests: XCTestCase {
         XCTAssertFalse(valueTitle.contains("\u{0000}"))
         XCTAssertFalse(valueTitle.contains("\n"))
         XCTAssertEqual(titles.filter { $0 == "Open Config" }.count, 1, "adversarial output must not fake a second global action")
-        XCTAssertEqual(Array(titles.suffix(3)), ["Reload Config", "Collapse Pinchos", "Quit Pinchos"])
+        XCTAssertEqual(Array(titles.suffix(3)), ["Open Config", "Reload Config", "Quit Pinchos"])
     }
 
     func testLifecycleMenuOffersPerActionCopyOutputAndError() async throws {
@@ -1009,7 +1009,7 @@ final class StatusItemControllerTests: XCTestCase {
             totalTitleBytes, 16 * 1024,
             "the combined size of every menu title must stay a small fixed budget regardless of a multi-megabyte max_output"
         )
-        XCTAssertEqual(Array(menu.items.suffix(3).map(\.title)), ["Reload Config", "Collapse Pinchos", "Quit Pinchos"])
+        XCTAssertEqual(Array(menu.items.suffix(3).map(\.title)), ["Open Config", "Reload Config", "Quit Pinchos"])
 
         let copyOutput = try XCTUnwrap(menu.items.first(where: { $0.title == "Copy Full Output" }))
         NSApplication.shared.sendAction(copyOutput.action!, to: copyOutput.target, from: copyOutput)
