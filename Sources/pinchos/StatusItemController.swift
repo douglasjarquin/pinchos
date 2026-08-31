@@ -645,23 +645,11 @@ final class StatusItemController: StatusItemMenuDelegate {
         to menu: NSMenu,
         revealsDiagnostics: Bool
     ) async {
-        let run = NSMenuItem(
-            title: "Run \(commandConfig.name)",
-            action: #selector(refreshAction(_:)),
-            keyEquivalent: ""
-        )
-        run.target = self
-        run.representedObject = RefreshActionTarget(item: item)
-        run.isEnabled = !commandConfig.disabled
-        menu.addItem(run)
-
+        // Refresh Now is the first row. It is omitted only when the item
+        // declares a `refresh = true` action, which already covers manual
+        // refresh under its own title.
         var hasConfiguredRefresh = false
         for (index, action) in item.actions.enumerated() {
-            let menuItem = NSMenuItem(title: action.title, action: #selector(itemAction(_:)), keyEquivalent: "")
-            menuItem.target = self
-            menuItem.representedObject = ItemActionTarget(item: item, index: index)
-            menuItem.isEnabled = !commandConfig.disabled
-            menu.addItem(menuItem)
             if case .refresh = action.kind {
                 hasConfiguredRefresh = true
             }
@@ -672,6 +660,13 @@ final class StatusItemController: StatusItemMenuDelegate {
             refresh.representedObject = RefreshActionTarget(item: item)
             refresh.isEnabled = !commandConfig.disabled
             menu.addItem(refresh)
+        }
+        for (index, action) in item.actions.enumerated() {
+            let menuItem = NSMenuItem(title: action.title, action: #selector(itemAction(_:)), keyEquivalent: "")
+            menuItem.target = self
+            menuItem.representedObject = ItemActionTarget(item: item, index: index)
+            menuItem.isEnabled = !commandConfig.disabled
+            menu.addItem(menuItem)
         }
         menu.addItem(NSMenuItem.separator())
         let runtime = await item.runtimeSnapshot()

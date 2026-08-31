@@ -199,7 +199,6 @@ final class CollapseMenuTests: XCTestCase {
 
         let standalone = try XCTUnwrap(collapsed.items.first(where: { $0.title == "standalone" }))
         let standaloneMenu = try XCTUnwrap(standalone.submenu)
-        XCTAssertNotNil(standaloneMenu.items.first(where: { $0.title == "Run standalone" }))
         XCTAssertNotNil(standaloneMenu.items.first(where: { $0.title == "Refresh Now" }))
         XCTAssertNotNil(standaloneMenu.items.first(where: { $0.title == "Expand Pinchos" }))
     }

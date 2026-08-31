@@ -184,12 +184,8 @@ final class StatusItemControllerTests: XCTestCase {
         XCTAssertNotNil(refresh.representedObject)
         XCTAssertTrue(NSApplication.shared.sendAction(refresh.action!, to: refresh.target, from: refresh))
         XCTAssertEqual(factory.eventLog.events, ["refresh-now:alpha"])
+        XCTAssertEqual(menu.items.first?.title, "Refresh Now")
         XCTAssertEqual(Array(menu.items.suffix(3).map(\.title)), ["Open Config", "Reload Config", "Quit Pinchos"])
-
-        let run = try XCTUnwrap(menu.items.first(where: { $0.title == "Run alpha" }))
-        XCTAssertTrue(run.isEnabled)
-        XCTAssertTrue(NSApplication.shared.sendAction(run.action!, to: run.target, from: run))
-        XCTAssertEqual(factory.eventLog.events, ["refresh-now:alpha", "refresh-now:alpha"])
     }
 
     func testLifecycleMenuOffersHideThatPersistsAndRequestsReload() async throws {
@@ -329,7 +325,6 @@ final class StatusItemControllerTests: XCTestCase {
         let menu = await controller.makeLifecycleMenu(forManagedItem: factory.created[0], revealsDiagnostics: false)
         let titles = menu.items.map(\.title)
 
-        XCTAssertTrue(titles.contains("Run alpha"))
         XCTAssertTrue(titles.contains("Refresh Now"))
         XCTAssertTrue(titles.contains("Hide"))
         XCTAssertTrue(titles.contains("Collapse Pinchos"))
@@ -396,7 +391,7 @@ final class StatusItemControllerTests: XCTestCase {
         let menu = await controller.makeLifecycleMenu(forManagedItem: factory.created[0])
         let titles = menu.items.map(\.title)
 
-        XCTAssertEqual(Array(titles.prefix(2)), ["Run codex", "Open usage"])
+        XCTAssertEqual(Array(titles.prefix(2)), ["Open usage", "Refresh now"])
         XCTAssertTrue(titles.contains("Refresh now"))
         XCTAssertFalse(titles.contains("Refresh Now"))
         XCTAssertEqual(Array(titles.suffix(3)), ["Open Config", "Reload Config", "Quit Pinchos"])
