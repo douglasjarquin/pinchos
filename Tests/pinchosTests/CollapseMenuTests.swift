@@ -198,13 +198,24 @@ final class CollapseMenuTests: XCTestCase {
 
         let team = try XCTUnwrap(collapsed.items.first(where: { $0.title == "Team" }))
         let nested = try XCTUnwrap(team.submenu)
-        XCTAssertNotNil(nested.items.first(where: { $0.title == "alpha: –" }))
-        XCTAssertNotNil(nested.items.first(where: { $0.title == "beta: –" }))
+        let alphaMember = try XCTUnwrap(nested.items.first(where: { $0.title == "alpha: –" }))
+        let betaMember = try XCTUnwrap(nested.items.first(where: { $0.title == "beta: –" }))
+        XCTAssertNotNil(alphaMember.submenu)
+        XCTAssertNotNil(betaMember.submenu)
 
         let standalone = try XCTUnwrap(collapsed.items.first(where: { $0.title == "–" && $0.submenu != nil }))
         let standaloneMenu = try XCTUnwrap(standalone.submenu)
         XCTAssertNotNil(standaloneMenu.items.first(where: { $0.title == "Refresh Now" }))
-        XCTAssertNotNil(standaloneMenu.items.first(where: { $0.title == "Expand Pinchos" }))
+
+        // Collapsed submenus (top-level or group-nested) carry no global
+        // footer; it appears exactly once, at the collapsed tray's top level.
+        for submenu in [standaloneMenu, try XCTUnwrap(alphaMember.submenu)] {
+            XCTAssertNil(submenu.items.first(where: { $0.title == "Collapse Pinchos" || $0.title == "Expand Pinchos" }))
+            XCTAssertNil(submenu.items.first(where: { $0.title == "Open Config" }))
+            XCTAssertNil(submenu.items.first(where: { $0.title == "Reload Config" }))
+            XCTAssertNil(submenu.items.first(where: { $0.title == "Quit Pinchos" }))
+        }
+        XCTAssertNotNil(collapsed.items.first(where: { $0.title == "Expand Pinchos" }))
     }
 
     func testCollapsedFirstLevelShowsCommandValueInsteadOfName() async throws {

@@ -544,11 +544,31 @@ final class StatusItemController: StatusItemMenuDelegate {
     }
 
     func makeLifecycleMenu(forManagedItem item: (any ManagedItemLifecycle)?, revealsDiagnostics: Bool = true) async -> NSMenu {
+        await makeLifecycleMenu(forManagedItem: item, revealsDiagnostics: revealsDiagnostics, includesGlobalFooter: true)
+    }
+
+    /// Builds one item's menu. When `includesGlobalFooter` is `false` (the
+    /// collapsed tray's per-item submenus) the menu carries only the item's
+    /// own content -- no Collapse/Expand Pinchos, Open Config, Reload Config,
+    /// or Quit -- since the collapsed tray shows that footer once at its
+    /// top level instead of once per submenu.
+    private func makeLifecycleMenu(
+        forManagedItem item: (any ManagedItemLifecycle)?,
+        revealsDiagnostics: Bool,
+        includesGlobalFooter: Bool
+    ) async -> NSMenu {
         let menu = NSMenu()
         if let item {
-            await addMenuContent(for: item, to: menu, revealsDiagnostics: revealsDiagnostics)
+            await addMenuContent(
+                for: item,
+                to: menu,
+                revealsDiagnostics: revealsDiagnostics,
+                includesGlobalFooter: includesGlobalFooter
+            )
         }
-        await addGlobalMenuContent(to: menu, includesSchedulerDiagnostics: revealsDiagnostics)
+        if includesGlobalFooter {
+            await addGlobalMenuContent(to: menu, includesSchedulerDiagnostics: revealsDiagnostics)
+        }
         return menu
     }
 
@@ -556,7 +576,7 @@ final class StatusItemController: StatusItemMenuDelegate {
         let menu = NSMenu()
         let topLevelItems = topLevelManagedItems()
         for item in topLevelItems {
-            let submenu = await makeLifecycleMenu(forManagedItem: item, revealsDiagnostics: revealsDiagnostics)
+            let submenu = await makeLifecycleMenu(forManagedItem: item, revealsDiagnostics: revealsDiagnostics, includesGlobalFooter: false)
             let rowInfo = await collapsedRow(for: item)
             let row = NSMenuItem(title: rowInfo.title, action: nil, keyEquivalent: "")
             if let image = StatusItemIconRenderer.system.render(rowInfo.iconSource).image {
@@ -649,15 +669,23 @@ final class StatusItemController: StatusItemMenuDelegate {
     private func addMenuContent(
         for item: any ManagedItemLifecycle,
         to menu: NSMenu,
-        revealsDiagnostics: Bool
+        revealsDiagnostics: Bool,
+        includesGlobalFooter: Bool
     ) async {
         switch item.config {
         case .command(let commandConfig):
             await addCommandContent(item: item, commandConfig: commandConfig, to: menu, revealsDiagnostics: revealsDiagnostics)
         case .group:
-            await addGroupContent(item, to: menu, revealsDiagnostics: revealsDiagnostics)
+            await addGroupContent(
+                item,
+                to: menu,
+                revealsDiagnostics: revealsDiagnostics,
+                includesGlobalFooter: includesGlobalFooter
+            )
         }
-        menu.addItem(NSMenuItem.separator())
+        if includesGlobalFooter {
+            menu.addItem(NSMenuItem.separator())
+        }
     }
 
     private func addCommandContent(
@@ -733,7 +761,12 @@ final class StatusItemController: StatusItemMenuDelegate {
     /// menu would show (actions, current value/state, diagnostics, manual
     /// refresh) -- nothing about a member's presentation changes because it
     /// is being shown inside a group instead of at the top level.
-    private func addGroupContent(_ item: any ManagedItemLifecycle, to menu: NSMenu, revealsDiagnostics: Bool) async {
+    private func addGroupContent(
+        _ item: any ManagedItemLifecycle,
+        to menu: NSMenu,
+        revealsDiagnostics: Bool,
+        includesGlobalFooter: Bool
+    ) async {
         guard case .group(let group) = item.config else { return }
         var memberEntries: [(name: String, item: any ManagedItemLifecycle, valuePreview: String)] = []
         for memberName in group.members {
@@ -761,8 +794,15 @@ final class StatusItemController: StatusItemMenuDelegate {
         menu.addItem(NSMenuItem.separator())
         for entry in memberEntries {
             let submenu = NSMenu()
-            await addMenuContent(for: entry.item, to: submenu, revealsDiagnostics: revealsDiagnostics)
-            submenu.addItem(makePresentationMenuItem())
+            await addMenuContent(
+                for: entry.item,
+                to: submenu,
+                revealsDiagnostics: revealsDiagnostics,
+                includesGlobalFooter: includesGlobalFooter
+            )
+            if includesGlobalFooter {
+                submenu.addItem(makePresentationMenuItem())
+            }
             let memberItem = NSMenuItem(
                 title: "\(entry.name): \(truncateTitle(entry.valuePreview, maxLength: 40))",
                 action: nil,
