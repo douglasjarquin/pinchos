@@ -52,16 +52,6 @@ final class DiagnosticPreviewFormatterTests: XCTestCase {
         XCTAssertTrue(preview.text.contains("5000 line"), "the truncation marker must report the true original line count")
     }
 
-    func testThousandsOfLinesAreBoundedForTooltipTooButRealNewlinesArePreserved() {
-        let manyLines = (1...5000).map { "line \($0)" }.joined(separator: "\n")
-        let preview = DiagnosticPreviewFormatter.preview(manyLines, limits: .tooltip)
-
-        XCTAssertTrue(preview.isTruncated)
-        let renderedLineCount = preview.text.split(separator: "\n", omittingEmptySubsequences: false).count
-        XCTAssertLessThanOrEqual(renderedLineCount, DiagnosticPreviewFormatter.tooltip.maxLines)
-        XCTAssertTrue(preview.text.hasPrefix("line 1\nline 2"), "tooltip previews keep genuine line breaks, unlike menu titles")
-    }
-
     // MARK: - Control-character sanitization fixtures
 
     func testNulAndOtherC0ControlsBecomeVisiblePlaceholders() {
@@ -203,13 +193,10 @@ final class DiagnosticPreviewFormatterTests: XCTestCase {
 
     // MARK: - Named limit sanity
 
-    func testMenuValueAndMenuStderrAndActionDiagnosticsAndTooltipHaveDistinctBudgets() {
+    func testMenuValueAndMenuStderrAndActionDiagnosticsHaveDistinctBudgets() {
         XCTAssertEqual(DiagnosticPreviewFormatter.actionDiagnostics, DiagnosticPreviewFormatter.menuStderr)
         XCTAssertTrue(DiagnosticPreviewFormatter.menuValue.collapsesNewlines)
         XCTAssertTrue(DiagnosticPreviewFormatter.menuStderr.collapsesNewlines)
-        XCTAssertFalse(DiagnosticPreviewFormatter.tooltip.collapsesNewlines)
         XCTAssertEqual(DiagnosticPreviewFormatter.menuStderr.maxLines, 1)
-        XCTAssertGreaterThan(DiagnosticPreviewFormatter.tooltip.maxLines, 1)
-        XCTAssertGreaterThan(DiagnosticPreviewFormatter.tooltip.maxGraphemeClusters, DiagnosticPreviewFormatter.menuValue.maxGraphemeClusters)
     }
 }

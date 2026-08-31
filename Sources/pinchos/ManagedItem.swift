@@ -18,7 +18,6 @@ final class ManagedItem: ManagedItemLifecycle {
     let statusItem: NSStatusItem?
     private(set) var renderedTitle: String
     private(set) var renderedButtonTitle: String = ""
-    private(set) var renderedToolTip: String?
     private(set) var isVisible = true
     private(set) var commandConfig: CommandItemConfig
     var config: ItemConfig { .command(commandConfig) }
@@ -139,7 +138,6 @@ final class ManagedItem: ManagedItemLifecycle {
         self.triggerObserverFactory = triggerObserverFactory
         self.notificationSink = notificationSink ?? SystemItemNotificationSink()
         self.renderedTitle = commandConfig.errorText
-        self.renderedToolTip = nil
         self.runner = CommandRunner(
             command: commandConfig.run,
             timeout: commandConfig.timeout,
@@ -231,7 +229,6 @@ final class ManagedItem: ManagedItemLifecycle {
             || previousConfig.errorText != newCommandConfig.errorText
             || previousConfig.onError != newCommandConfig.onError
             || previousConfig.staleAfter != newCommandConfig.staleAfter
-            || previousConfig.tooltip != newCommandConfig.tooltip
             || previousConfig.maxLength != newCommandConfig.maxLength
             || previousConfig.hideWhenEmpty != newCommandConfig.hideWhenEmpty
             || previousConfig.hideOnError != newCommandConfig.hideOnError
@@ -776,10 +773,6 @@ final class ManagedItem: ManagedItemLifecycle {
             marker = ""
         }
         setTitle(truncateTitle(baseTitle, maxLength: commandConfig.maxLength) + marker)
-        let structuredTooltip = snapshot.structuredOutput?.tooltip.map {
-            DiagnosticPreviewFormatter.preview($0, limits: .tooltip).text
-        }
-        setToolTip(structuredTooltip ?? renderTooltip(commandConfig.tooltip, state: snapshot))
         applyIcon(source: snapshot.structuredOutput?.iconSource ?? commandConfig.iconSource)
         setVisibility(
             computeVisibility(
@@ -1036,17 +1029,12 @@ final class ManagedItem: ManagedItemLifecycle {
     /// falls back to showing the text title instead of leaving the item blank.
     /// title instead of leaving the item blank. `renderedTitle` itself (already
     /// `max_length`-truncated and marker-suffixed) is unaffected either way; only
-    /// the button-facing `renderedButtonTitle` is blanked. The tooltip and
-    /// diagnostics menu read the untruncated full output separately, not this title.
+    /// the button-facing `renderedButtonTitle` is blanked. The diagnostics
+    /// menu reads the untruncated full output separately, not this title.
     private func applyDisplayedTitle() {
         let displayed = (commandConfig.iconOnly && iconIsLoaded) ? "" : renderedTitle
         renderedButtonTitle = displayed
         statusItem?.button?.title = displayed
-    }
-
-    private func setToolTip(_ toolTip: String?) {
-        renderedToolTip = toolTip
-        statusItem?.button?.toolTip = toolTip
     }
 
     private func setVisibility(_ visible: Bool) {

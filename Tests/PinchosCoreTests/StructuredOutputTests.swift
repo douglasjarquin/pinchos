@@ -7,7 +7,6 @@ final class StructuredOutputTests: XCTestCase {
         {
           "version": 1,
           "text": "81%",
-          "tooltip": "Weekly quota resets Monday",
           "state": "warning",
           "hidden": false,
           "symbol": "chart.bar.fill",
@@ -19,7 +18,6 @@ final class StructuredOutputTests: XCTestCase {
         """#)
 
         XCTAssertEqual(output.text, "81%")
-        XCTAssertEqual(output.tooltip, "Weekly quota resets Monday")
         XCTAssertEqual(output.state, .warning)
         XCTAssertEqual(output.hidden, false)
         XCTAssertEqual(output.iconSource, .symbol("chart.bar.fill"))
@@ -39,7 +37,6 @@ final class StructuredOutputTests: XCTestCase {
         """#)
 
         XCTAssertEqual(output.text, "ok")
-        XCTAssertNil(output.tooltip)
     }
 
     func testRequiresVersionOne() {

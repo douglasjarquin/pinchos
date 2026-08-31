@@ -20,7 +20,6 @@ public enum ConfigParser {
         "error_text",
         "on_error",
         "stale_after",
-        "tooltip",
         "action",
         "icon",
         "symbol",
@@ -841,27 +840,6 @@ public enum ConfigParser {
             staleAfter = nil
         }
 
-        let tooltip: String?
-        if let tooltipValue = table["tooltip"] {
-            let value = try stringValue(
-                name: name,
-                key: "tooltip",
-                value: tooltipValue,
-                sourceLines: sourceLines
-            )
-            do {
-                try validateTooltipTemplate(value)
-            } catch let error as TooltipTemplateError {
-                throw ConfigParseError(
-                    message: "item.\(name): invalid tooltip (\(error))",
-                    line: sourceLine(item: name, key: "tooltip", sourceLines: sourceLines)
-                )
-            }
-            tooltip = value
-        } else {
-            tooltip = nil
-        }
-
         let actions = try parseActions(
             name: name,
             value: table["action"],
@@ -1033,7 +1011,6 @@ public enum ConfigParser {
             ) ?? "\u{2013}",
             onError: onError,
             staleAfter: staleAfter,
-            tooltip: tooltip,
             actions: actions,
             icon: iconSource?.filePath,
             symbol: iconSource?.symbolName,

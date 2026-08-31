@@ -21,7 +21,6 @@ final class ConfigParserTests: XCTestCase {
         XCTAssertEqual(item.errorText, "\u{2013}")
         XCTAssertEqual(item.onError, .replace)
         XCTAssertNil(item.staleAfter)
-        XCTAssertNil(item.tooltip)
         XCTAssertEqual(item.timeout, 15)
         XCTAssertEqual(item.maxOutputBytes, 64 * 1024)
         XCTAssertNil(item.maxLength)
@@ -149,7 +148,6 @@ final class ConfigParserTests: XCTestCase {
             (key: "error_text", value: "[]", expectedMessage: "must be a string"),
             (key: "on_error", value: "false", expectedMessage: "must be a string"),
             (key: "stale_after", value: "5", expectedMessage: "must be a string"),
-            (key: "tooltip", value: "42", expectedMessage: "must be a string"),
             (key: "action", value: "\"not an array\"", expectedMessage: "must be an array"),
             (key: "icon", value: "false", expectedMessage: "must be a string"),
             (key: "symbol", value: "false", expectedMessage: "must be a string"),
@@ -650,7 +648,6 @@ final class ConfigParserTests: XCTestCase {
             "error_text",
             "on_error",
             "stale_after",
-            "tooltip",
             "action",
             "icon",
             "symbol",
@@ -666,36 +663,19 @@ final class ConfigParserTests: XCTestCase {
         XCTAssertEqual(ConfigParser.supportedActionKeys, ["title", "run", "refresh"])
     }
 
-    func testParsesTooltipErrorPolicyAndStaleAfter() throws {
+    func testParsesErrorPolicyAndStaleAfter() throws {
         let toml = """
         [item.limits]
         type = "command"
         run = "echo 42"
         on_error = "keep_last"
         stale_after = "15m"
-        tooltip = "Updated {updated_at}"
         """
 
         let item = try ConfigParser.parse(toml).items[0].command
 
         XCTAssertEqual(item.onError, .keepLast)
         XCTAssertEqual(item.staleAfter, 900)
-        XCTAssertEqual(item.tooltip, "Updated {updated_at}")
-    }
-
-    func testRejectsUnknownTooltipPlaceholder() {
-        let toml = """
-        [item.limits]
-        type = "command"
-        run = "echo 42"
-        tooltip = "{not_a_placeholder}"
-        """
-
-        XCTAssertThrowsError(try ConfigParser.parse(toml)) { error in
-            let parseError = error as? ConfigParseError
-            XCTAssertTrue(parseError?.message.contains("tooltip") == true)
-            XCTAssertTrue(parseError?.message.contains("not_a_placeholder") == true)
-        }
     }
 
     func testRejectsInvalidErrorPolicyAndStaleAfter() {

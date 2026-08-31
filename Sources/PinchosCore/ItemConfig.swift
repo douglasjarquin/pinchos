@@ -71,7 +71,7 @@ public enum ItemIconSource: Equatable, Sendable {
 
 /// A single `[item.<name>]` command module: everything needed to run a
 /// shell command on a schedule (or manually) and project its result onto a
-/// menu-bar title, tooltip, and diagnostics menu. This is the only item
+/// menu-bar title and diagnostics menu. This is the only item
 /// kind in v1; `GroupItemConfig` (see below) is the second kind added by
 /// the grouped-status-items feature, and `ItemConfig` is the sum type that
 /// lets `PinchosConfig.items` hold either without accumulating one kind's
@@ -98,7 +98,6 @@ public struct CommandItemConfig: Equatable, Sendable {
     public let errorText: String
     public let onError: ItemErrorPolicy
     public let staleAfter: TimeInterval?
-    public let tooltip: String?
     public let actions: [ItemAction]
     public let iconSource: ItemIconSource?
     public let maxLength: Int?
@@ -128,7 +127,6 @@ public struct CommandItemConfig: Equatable, Sendable {
         errorText: String = "\u{2013}",
         onError: ItemErrorPolicy = .replace,
         staleAfter: TimeInterval? = nil,
-        tooltip: String? = nil,
         actions: [ItemAction] = [],
         icon: String? = nil,
         symbol: String? = nil,
@@ -158,7 +156,6 @@ public struct CommandItemConfig: Equatable, Sendable {
         self.errorText = errorText
         self.onError = onError
         self.staleAfter = staleAfter
-        self.tooltip = tooltip
         self.actions = actions
         self.iconSource = ItemIconSource.make(icon: icon, symbol: symbol)
         self.maxLength = maxLength
@@ -308,7 +305,6 @@ extension ItemConfig {
         errorText: String = "\u{2013}",
         onError: ItemErrorPolicy = .replace,
         staleAfter: TimeInterval? = nil,
-        tooltip: String? = nil,
         actions: [ItemAction] = [],
         icon: String? = nil,
         symbol: String? = nil,
@@ -340,7 +336,6 @@ extension ItemConfig {
                 errorText: errorText,
                 onError: onError,
                 staleAfter: staleAfter,
-                tooltip: tooltip,
                 actions: actions,
                 icon: icon,
                 symbol: symbol,
@@ -433,6 +428,5 @@ public enum ExampleConfig {
     format = "{output}"
     on_error = "keep_last"
     stale_after = "15m"
-    tooltip = "Updated {updated_at} ({status})"
     """
 }

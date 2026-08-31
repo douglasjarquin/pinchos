@@ -95,8 +95,7 @@ final class ConfigDiffTests: XCTestCase {
                 run: "echo x",
                 interval: .scheduled(60),
                 onError: .keepLast,
-                staleAfter: 900,
-                tooltip: "{status}"
+                staleAfter: 900
             )
         ])
 

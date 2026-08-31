@@ -149,8 +149,7 @@ final class RecoveryLifecycleTests: XCTestCase {
                 name: "recovery",
                 run: "count=$(cat '\(marker.path)' 2>/dev/null || echo 0); count=$((count + 1)); printf '%s' \"$count\" > '\(marker.path)'; if [ \"$count\" -eq 1 ]; then printf 'good\\n'; elif [ \"$count\" -eq 2 ]; then printf 'transient diagnostic\\n' >&2; exit 7; else printf 'recovered\\n'; fi",
                 interval: .manual,
-                onError: .keepLast,
-                tooltip: "{status}|{output}|{error}"
+                onError: .keepLast
             ),
             initiallyVisible: false
         )
@@ -178,7 +177,6 @@ final class RecoveryLifecycleTests: XCTestCase {
         XCTAssertEqual(failure.fullOutput, "good\n")
         XCTAssertEqual(failure.lastExecution?.exitCode, 7)
         XCTAssertEqual(failure.errorSummary, "transient diagnostic")
-        XCTAssertEqual(item.renderedToolTip, "error|good\n|transient diagnostic")
 
         item.refreshNow()
         let recovery = try await waitForRuntimeSnapshot(item) { snapshot in
@@ -188,7 +186,6 @@ final class RecoveryLifecycleTests: XCTestCase {
         XCTAssertGreaterThan(try XCTUnwrap(recovery.lastUpdatedAt), firstUpdate)
         XCTAssertEqual(recovery.fullOutput, "recovered\n")
         XCTAssertEqual(recovery.lastExecution?.exitCode, 0)
-        XCTAssertEqual(item.renderedToolTip, "fresh|recovered\n|")
     }
 
     @MainActor
@@ -198,8 +195,7 @@ final class RecoveryLifecycleTests: XCTestCase {
                 name: "first-failure",
                 run: "printf 'first failure\\n' >&2; exit 9",
                 interval: .manual,
-                onError: .keepLast,
-                tooltip: "{status}|{output}|{updated_at}|{attempted_at}|{error}"
+                onError: .keepLast
             ),
             initiallyVisible: false
         )
@@ -217,7 +213,6 @@ final class RecoveryLifecycleTests: XCTestCase {
         XCTAssertNotNil(state.lastAttemptedAt)
         XCTAssertEqual(state.lastExecution?.exitCode, 9)
         XCTAssertEqual(state.errorSummary, "first failure")
-        XCTAssertEqual(item.renderedToolTip?.components(separatedBy: "|").prefix(3).joined(separator: "|"), "error||")
     }
 
     @MainActor
@@ -275,13 +270,12 @@ final class RecoveryLifecycleTests: XCTestCase {
     }
 
     @MainActor
-    func testRunningRefreshPreservesConfiguredTooltipAndRecordsAttemptStart() async throws {
+    func testRunningRefreshRecordsAttemptStartAndKeepsLastValue() async throws {
         let item = makeHeadlessItem(
             config: ItemConfig(
                 name: "running",
                 run: "sleep 0.4; printf running",
-                interval: .manual,
-                tooltip: "Value={output}; Status={status}; Attempted={attempted_at}"
+                interval: .manual
             ),
             initiallyVisible: false
         )
@@ -291,13 +285,10 @@ final class RecoveryLifecycleTests: XCTestCase {
 
         item.refreshNow()
         try await waitForRunning(item)
-        let tooltipBeforeRuntimeObservation = item.renderedToolTip
         let running = await item.runtimeSnapshot()
 
         XCTAssertEqual(running.status, .running)
         XCTAssertNotNil(running.lastAttemptedAt)
-        XCTAssertTrue(tooltipBeforeRuntimeObservation?.contains("Status=running") == true)
-        XCTAssertNotEqual(tooltipBeforeRuntimeObservation, "Refreshing...")
 
         _ = try await waitForRuntimeSnapshot(item) { snapshot in
             snapshot.status == .fresh && snapshot.fullOutput == "running"
@@ -1156,11 +1147,10 @@ final class RecoveryLifecycleTests: XCTestCase {
 
         XCTAssertEqual(state.errorSummary, "1")
         XCTAssertEqual(item.renderedTitle, "ERR ⚠︎")
-        XCTAssertTrue(item.renderedToolTip?.contains("Status: error") == true)
     }
 
     @MainActor
-    func testMaxLengthTruncatesRenderedTitleButKeepsFullOutputForTooltipAndDiagnostics() async throws {
+    func testMaxLengthTruncatesRenderedTitleButKeepsFullOutputForDiagnostics() async throws {
         let item = makeHeadlessItem(
             config: ItemConfig(
                 name: "max-length",
@@ -1181,7 +1171,6 @@ final class RecoveryLifecycleTests: XCTestCase {
 
         XCTAssertEqual(item.renderedTitle, "hell\u{2026}")
         XCTAssertEqual(snapshot.fullOutput, "hello world")
-        XCTAssertTrue(item.renderedToolTip?.contains("hello world") == true)
     }
 
     @MainActor
@@ -1434,7 +1423,7 @@ final class RecoveryLifecycleTests: XCTestCase {
     }
 
     @MainActor
-    func testIconOnlyClearsDisplayedTitleWhenIconLoadsButKeepsFullTitleAndTooltip() async throws {
+    func testIconOnlyClearsDisplayedTitleWhenIconLoadsButKeepsFullTitle() async throws {
         let iconURL = FileManager.default.temporaryDirectory
             .appendingPathComponent("pinchos-icon-only-\(UUID().uuidString).png")
         try writeTestIcon(to: iconURL)
@@ -1460,7 +1449,6 @@ final class RecoveryLifecycleTests: XCTestCase {
 
         XCTAssertEqual(item.renderedTitle, "value")
         XCTAssertEqual(item.renderedButtonTitle, "")
-        XCTAssertTrue(item.renderedToolTip?.contains("value") == true)
     }
 
     @MainActor

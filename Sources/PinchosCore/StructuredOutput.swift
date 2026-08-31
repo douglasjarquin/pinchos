@@ -16,7 +16,6 @@ public enum StructuredOutputState: String, Equatable, Sendable {
 
 public struct StructuredCommandOutput: Equatable, Sendable {
     public let text: String?
-    public let tooltip: String?
     public let state: StructuredOutputState?
     public let hidden: Bool?
     public let iconSource: ItemIconSource?
@@ -24,14 +23,12 @@ public struct StructuredCommandOutput: Equatable, Sendable {
 
     public init(
         text: String? = nil,
-        tooltip: String? = nil,
         state: StructuredOutputState? = nil,
         hidden: Bool? = nil,
         iconSource: ItemIconSource? = nil,
         actions: [ItemAction]? = nil
     ) {
         self.text = text
-        self.tooltip = tooltip
         self.state = state
         self.hidden = hidden
         self.iconSource = iconSource
@@ -91,7 +88,6 @@ public enum StructuredOutputParser {
     private struct Payload: Decodable {
         let version: Int?
         let text: String?
-        let tooltip: String?
         let state: String?
         let hidden: Bool?
         let icon: String?
@@ -99,14 +95,13 @@ public enum StructuredOutputParser {
         let actions: [ActionPayload]?
 
         private enum CodingKeys: String, CodingKey {
-            case version, text, tooltip, state, hidden, icon, symbol, actions
+            case version, text, state, hidden, icon, symbol, actions
         }
 
         init(from decoder: Decoder) throws {
             let container = try decoder.container(keyedBy: CodingKeys.self)
             version = try Self.decodeOptional(container, key: .version, field: "version")
             text = try Self.decodeOptional(container, key: .text, field: "text")
-            tooltip = try Self.decodeOptional(container, key: .tooltip, field: "tooltip")
             state = try Self.decodeOptional(container, key: .state, field: "state")
             hidden = try Self.decodeOptional(container, key: .hidden, field: "hidden")
             icon = try Self.decodeOptional(container, key: .icon, field: "icon")
@@ -153,7 +148,6 @@ public enum StructuredOutputParser {
 
             return StructuredCommandOutput(
                 text: text,
-                tooltip: tooltip,
                 state: parsedState,
                 hidden: hidden,
                 iconSource: iconSource,

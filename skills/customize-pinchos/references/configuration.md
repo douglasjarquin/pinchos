@@ -129,7 +129,6 @@ The parser supports these item keys.
 | `error_text` | string | `"–"` | Text shown when the command fails under the default error policy. |
 | `on_error` | string | `"replace"` | Use `"replace"` or `"keep_last"` when a command fails. |
 | `stale_after` | string | absent | Mark the last successful value stale after this duration. |
-| `tooltip` | string | absent | Native tooltip template. |
 | `action` | array of tables | empty | Add menu actions in declaration order. |
 | `icon` | string | absent | Local image path. It cannot appear with `symbol`. |
 | `symbol` | string | absent | macOS SF Symbol name. It cannot appear with `icon`. |
@@ -137,7 +136,7 @@ The parser supports these item keys.
 | `hide_when_empty` | boolean | `false` | Hide the item after a completed successful run with empty trimmed output. |
 | `hide_on_error` | boolean | `false` | Hide the item after a completed failed run. |
 | `hidden` | boolean | `false` | Keep the item out of the menu bar until this key becomes `false` or is removed. |
-| `icon_only` | boolean | `false` | Show only a loaded icon while keeping the full title in the tooltip and diagnostics. |
+| `icon_only` | boolean | `false` | Show only a loaded icon while keeping the full title in the diagnostics menu. |
 | `disabled` | boolean | `false` | Keep the item visible but stop scheduled, click, refresh, and action execution. |
 | `notify_on` | array of strings | empty | Notify on `"failure"`, `"recovery"`, or both. |
 | `notify_cooldown` | string | absent | Suppress repeated failure notifications for this duration. |
@@ -205,14 +204,13 @@ The member keeps its own schedule, actions, diagnostics, and refresh behavior.
 
 ## Structured output
 
-Set `output = "json-v1"` when a command needs to provide display state, a tooltip, an icon, or declarative actions.
+Set `output = "json-v1"` when a command needs to provide display state, an icon, or declarative actions.
 The command must write one JSON object with integer `version = 1`.
 
 ```json
 {
   "version": 1,
   "text": "81%",
-  "tooltip": "Weekly quota resets Monday at 3:00 PM",
   "state": "warning",
   "hidden": false,
   "symbol": "chart.bar.fill",
@@ -223,7 +221,6 @@ The command must write one JSON object with integer `version = 1`.
 ```
 
 The optional `text` field becomes the displayed title.
-The optional `tooltip` field becomes the native tooltip.
 The optional `state` is `"normal"`, `"warning"`, or `"error"`.
 The optional `hidden` field controls visibility for that successful run.
 The optional `icon` and `symbol` fields override the configured icon source and remain mutually exclusive.
@@ -235,12 +232,8 @@ Use `on_error = "keep_last"` when retaining a known-good value is safer for your
 
 ## Display and diagnostics
 
-`tooltip` supports `{output}`, `{updated_at}`, `{attempted_at}`, `{duration}`, `{exit_status}`, `{error}`, `{stale}`, and `{status}`.
-Use `{{` and `}}` for literal braces.
-An unknown placeholder or unmatched brace is a configuration error.
-
 `max_length` limits only the menu-bar title.
-The tooltip and diagnostics retain the full title.
+The diagnostics menu retains the full title.
 `max_output` limits retained stdout and stderr without stopping the command from draining its streams.
 Every collector also draws from one shared 8MiB output-memory budget.
 

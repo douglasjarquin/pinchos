@@ -244,14 +244,13 @@ refresh_on_click = true  # optional, refresh `run` on left-click when `click` is
 error_text = "–"   # optional, default "–". Shown when `run` fails, instead of the item disappearing.
 on_error = "keep_last" # optional, default "replace". Keep the last successful value when `run` fails.
 stale_after = "15m"    # optional. Mark the last successful value stale at or after this age.
-tooltip = "Updated {updated_at} ({status})" # optional. Native tooltip template.
 icon = "/path/to/icon.svg" # optional, a local image file (SVG/PNG/PDF) rendered as a template icon left of the text. Mutually exclusive with `symbol`
 symbol = "chart.bar.fill" # optional, SF Symbol name rendered with native menu-bar tint. Mutually exclusive with `icon`
 max_length = 24        # optional. Truncates the rendered title to this many grapheme clusters, appending "…"
 hide_when_empty = false # optional, default false. Hide the item when the last successful run's trimmed output is empty
 hide_on_error = false   # optional, default false. Hide the item while its last completed run is a failure
 hidden = false          # optional, default false. Keep the item out of the menu bar until config sets this back to false
-icon_only = false       # optional, default false. Suppress the text title once `icon` or `symbol` has loaded; the full title stays available in the tooltip and diagnostics
+icon_only = false       # optional, default false. Suppress the text title once `icon` or `symbol` has loaded; the full title stays available in the diagnostics menu
 disabled = false        # optional, default false. Stop scheduling and block manual/click/action execution while keeping the item visible for diagnostics
 notify_on = ["failure", "recovery"] # optional. Notify only on these terminal state transitions; omitted = no notifications
 notify_cooldown = "15m" # optional. Suppress a new failure notification for this duration after the previous one
@@ -281,7 +280,6 @@ All other fields are optional:
 {
   "version": 1,
   "text": "81%",
-  "tooltip": "Weekly quota resets Monday at 3:00 PM",
   "state": "warning",
   "hidden": false,
   "symbol": "chart.bar.fill",
@@ -292,7 +290,7 @@ All other fields are optional:
 }
 ```
 
-`text` is the displayed title, `tooltip` is the native tooltip, `hidden` controls visibility, and `icon` or `symbol` overrides the configured icon source for that successful run.
+`text` is the displayed title, `hidden` controls visibility, and `icon` or `symbol` overrides the configured icon source for that successful run.
 `state` accepts `normal`, `warning`, or `error` and maps to Pinchos's native fresh, warning, or error presentation.
 `icon` and `symbol` are mutually exclusive.
 `actions` uses the same declarative action shape as TOML: every entry needs a non-empty `title` and exactly one of a shell `run` string or `refresh: true`.
@@ -302,7 +300,7 @@ Unknown top-level fields are ignored so additive fields do not change the v1 con
 Malformed JSON, a missing or unsupported version, invalid field types, conflicting icon sources, invalid actions, and truncated stdout are treated as a failed structured run.
 The item stays safe, applies its configured `on_error` policy, and exposes the structured-output diagnostic in its normal right-click diagnostics.
 Structured output is decoded only from the command runner's retained stdout, so the existing `max_output` per-stream limit and shared output-memory budget apply without change.
-Structured text and tooltips also use Pinchos's existing bounded diagnostic previews before reaching native AppKit surfaces.
+Structured text also uses Pinchos's existing bounded diagnostic previews before reaching native AppKit surfaces.
 The protocol deliberately has no HTML, CSS, Markdown, webview, arbitrary UI, or SwiftBar semantics.
 
 An optional top-level `[scheduler]` table overrides the global active-session limit (see "Scheduler" below); it is not per-item:
@@ -312,11 +310,7 @@ An optional top-level `[scheduler]` table overrides the global active-session li
 max_active_sessions = 4 # optional, default min(4, CPU cores). Range 1-32.
 ```
 
-- `tooltip` is rendered by the native status-item tooltip. Supported placeholders are `{output}` (the retained stdout, including newlines, as a bounded preview — see "Diagnostics previews vs. retained output" below), `{updated_at}` (the last successful completion time), `{attempted_at}` (the last command start time), `{duration}` (the last run duration with three decimal places and an `s` suffix), `{exit_status}` (the last exit code or terminal result), `{error}` (the latest bounded stderr line or terminal error), `{stale}` (`yes` or `no`), and `{status}` (`running`, `fresh`, `warning`, `stale`, `error`, or `unavailable`).
 - Timestamps use UTC ISO-8601 format.
-- Before the first successful run, `{output}` and `{updated_at}` are empty, while `{attempted_at}` and diagnostic placeholders become available after an attempt.
-- `{{` and `}}` escape literal braces.
-- An unknown placeholder or unmatched brace is a configuration error, so raw placeholder braces never leak into a native tooltip.
 - The full output is the command runner's retained output subject to `max_output`; a truncation flag and byte counts remain visible in the right-click diagnostics menu, and the exact retained bytes stay available via **Copy Full Output**/**Copy Full Error**.
 - `shell` is an executable path followed by the arguments used to invoke it; `run` is appended as the final argument. The default is `[/bin/sh, -c]`, preserving the original behavior.
 - `shell` and `working_directory` are resolved when the config loads. A leading `~` expands to the launching user's home directory, and relative filesystem paths are resolved relative to the config file, including `icon` paths. `symbol` is an SF Symbol catalog name, not a filesystem path, and is not tilde-expanded.
@@ -343,10 +337,10 @@ max_active_sessions = 4 # optional, default min(4, CPU cores). Range 1-32.
 - Each item may set at most one icon source: `icon` (a local image file) or `symbol` (an SF Symbol name). Setting both is a configuration error reported with the item, key, and source line. Omitting both keeps the item text-only.
 - `icon` is a plain filesystem path, not a built-in icon library — pinchos ships with no bundled icon catalog. Point it at any image file you like; it's drawn as a template image (tinted automatically for light/dark menu bars) at 16×16, to the left of the item's text. A missing or unreadable file just falls back to text-only — it never crashes the app.
 - `symbol` names a system SF Symbol such as `chart.bar.fill`. Pinchos does not bundle or download a catalog; availability is whatever the running macOS release provides. A known symbol is drawn to the left of the title at the same 16×16 visual target as file icons, using AppKit's native template/automatic tint so it follows the menu bar in light and dark appearances (no hard-coded black or white). An empty or non-string `symbol` is a configuration error. A name that is valid TOML but missing from this Mac's catalog keeps the item running as text-only and is reported by `pinchos doctor` (and the item's diagnostics menu) rather than rejecting the reload — newer symbol names can be absent on an older supported macOS release.
-- `max_length` truncates only the rendered menu-bar title, counting grapheme clusters (so multi-scalar emoji and combining marks are never split) and appending a single `…`; the full untruncated title remains available in the native tooltip and the right-click diagnostics menu. Omitted or non-positive values apply no cap. It must be a positive integer — zero, negative, or non-integer values are a configuration error.
+- `max_length` truncates only the rendered menu-bar title, counting grapheme clusters (so multi-scalar emoji and combining marks are never split) and appending a single `…`; the full untruncated title remains available in the right-click diagnostics menu. Omitted or non-positive values apply no cap. It must be a positive integer — zero, negative, or non-integer values are a configuration error.
 - `hide_when_empty` and `hide_on_error` are display-only policies evaluated after each completed run; they never skip execution, and an item is never hidden before its first completed attempt (so a slow-starting item stays visible instead of vanishing). `hide_on_error` takes effect on the very first run if that run fails. When both apply, a failing run defers to `hide_on_error`.
 - `hidden` is a persistent display-only policy. It keeps the item's status item out of the menu bar while its command continues running, and the item's **Hide** menu action writes `hidden = true` into the matching TOML table. Remove the key or set it to `false` and Pinchos restores the item on the next successful reload.
-- `icon_only` clears the rendered title from the status bar button once `icon` or `symbol` has successfully loaded, showing only the icon; if the source is absent, the file is unreadable, or the symbol is unavailable on this macOS version, `icon_only` has no visible effect and the text title is shown as usual. The tooltip and diagnostics menu always retain the full title regardless of `icon_only`.
+- `icon_only` clears the rendered title from the status bar button once `icon` or `symbol` has successfully loaded, showing only the icon; if the source is absent, the file is unreadable, or the symbol is unavailable on this macOS version, `icon_only` has no visible effect and the text title is shown as usual. The diagnostics menu always retains the full title regardless of `icon_only`.
 - `disabled` stops the item's scheduled timer and blocks left-click, `refresh_on_click`, and declarative `action` execution (each is a no-op while disabled; already-running work is cancelled the moment `disabled` becomes true through a live reload). The item stays visible with a "Disabled: yes" line in its right-click diagnostics menu, and the menu's action entries and **Refresh Now** fallback are shown but disabled, so a disabled item remains inspectable without being actionable. Right-click still opens normally. Flipping `disabled` back to `false` through a live reload resumes scheduling and re-enables actions.
 - `notify_on` is opt-in per item and accepts `"failure"`, `"recovery"`, or both. A failure is a non-zero exit, signal, timeout, cancellation, launch failure, or structured-output diagnostic; a successful structured result whose declared state is `"error"` is not a command failure.
 - Notifications are transition-oriented: a failure is emitted once when the item enters a failed state, and a recovery is emitted once when a later successful command exits that state. Repeated refreshes while the item remains failed do not notify, and stale presentation alone is not a failure transition.
@@ -356,11 +350,11 @@ max_active_sessions = 4 # optional, default min(4, CPU cores). Range 1-32.
 - `stale_after` uses the last successful completion as its clock origin and becomes stale when the age is greater than or equal to the configured threshold. A first-run failure is `error`/`unavailable` rather than a fabricated stale value.
 - Command runs for a given item never overlap: if the previous run for that item hasn't finished when the next tick fires, the tick is skipped.
 - Manual refreshes use the same per-item execution gate as scheduled ticks, so repeated Refresh Now actions are skipped while a run is active.
-- While a refresh is running, the last good value stays visible and the item's native tooltip reports the running state. The right-click diagnostics menu reports a bounded preview of the retained value (see below), state, last attempt, last success, stale flag, duration, exit/error details, and the hardened runner's per-stream diagnostics.
+- While a refresh is running, the last good value stays visible. The right-click diagnostics menu reports a bounded preview of the retained value (see below), state, last attempt, last success, stale flag, duration, exit/error details, and the hardened runner's per-stream diagnostics.
 - Skipped ticks are counted in the item's right-click diagnostics menu without replacing the last completed result.
 - The same timeout and output bounds apply to an optional click command, which is cancelled when its item is removed or Pinchos quits.
 - The diagnostics menu reports the last exit code or signal, duration, skipped ticks, per-stream truncation, and the latest bounded stderr line.
-- `click` is fire-and-forget only in the sense that the left-click never blocks the UI and never replaces the item's primary displayed value — it is not silent. A configured `click` command gets its own **Click Action** section in the right-click menu, independent of the primary refresh diagnostics: current state (never run, running, completed, error, timed out, or cancelled), last attempt/completion time, duration, exit/signal/timeout/cancellation/launch-failure detail, skipped-invocation count (while the click runner is already busy), per-stream byte counts and truncation, a bounded stderr preview, and **Copy Click Output**/**Copy Click Error** actions for the complete retained streams. A click failure never overwrites the menu-bar title, tooltip output, or the primary runner's last-good value. Diagnostics for the click runner are retained across presentation-only reloads and reset only when the click command or its execution settings (shell, environment, working directory, timeout, or `max_output`) change or `click` is removed.
+- `click` is fire-and-forget only in the sense that the left-click never blocks the UI and never replaces the item's primary displayed value — it is not silent. A configured `click` command gets its own **Click Action** section in the right-click menu, independent of the primary refresh diagnostics: current state (never run, running, completed, error, timed out, or cancelled), last attempt/completion time, duration, exit/signal/timeout/cancellation/launch-failure detail, skipped-invocation count (while the click runner is already busy), per-stream byte counts and truncation, a bounded stderr preview, and **Copy Click Output**/**Copy Click Error** actions for the complete retained streams. A click failure never overwrites the menu-bar title or the primary runner's last-good value. Diagnostics for the click runner are retained across presentation-only reloads and reset only when the click command or its execution settings (shell, environment, working directory, timeout, or `max_output`) change or `click` is removed.
 - A command action's diagnostics offer their own **Copy "&lt;title&gt;" Output**/**Copy "&lt;title&gt;" Error** entries once that action has produced non-empty output/error, mirroring the click and primary sections.
 - An unresolvable shell or working directory is reported in the config warning; a launch failure during execution is retained in the item's diagnostics menu with the resolved path.
 
@@ -399,10 +393,9 @@ Every Pinchos-managed command session — a scheduled tick, a manual **Refresh N
 
 ### Diagnostics previews vs. retained output
 
-Every command-derived `NSMenuItem` title and tooltip expansion is a **bounded preview**, not the raw retained string, produced by `DiagnosticPreviewFormatter` (`Sources/PinchosCore/DiagnosticPreviewFormatter.swift`). This decouples the cost of opening a right-click menu or rendering a tooltip from `max_output` (up to 4MiB per stream): the primary "Value:" line, stderr/error lines, and per-action diagnostics are capped independently in grapheme clusters, UTF-8 bytes, and line count, so a pathologically large or control-character-heavy command output can never inflate a menu's layout or hide the global **Open Config**/**Reload Config**/**Quit Pinchos** actions beneath it.
+Every command-derived `NSMenuItem` title is a **bounded preview**, not the raw retained string, produced by `DiagnosticPreviewFormatter` (`Sources/PinchosCore/DiagnosticPreviewFormatter.swift`). This decouples the cost of opening a right-click menu from `max_output` (up to 4MiB per stream): the primary "Value:" line, stderr/error lines, and per-action diagnostics are capped independently in grapheme clusters, UTF-8 bytes, and line count, so a pathologically large or control-character-heavy command output can never inflate a menu's layout or hide the global **Open Config**/**Reload Config**/**Quit Pinchos** actions beneath it.
 
 - Menu titles render as one visual line: embedded line breaks are visibly escaped (joined with `␊`) rather than becoming real newlines, since AppKit renders an `NSMenuItem.title` as a single row.
-- Tooltips are a native multi-line surface and keep real line breaks, but still cap total size and line count for the same reason.
 - NUL, other C0/C1 control characters, DEL, and bidi format controls are replaced with a visible placeholder (mostly the Unicode Control Pictures block, e.g. tab becomes `␉`, escape becomes `␛`) so they can neither disappear nor visually distort surrounding text; ordinary Unicode, including multi-scalar emoji and combining marks, passes through unchanged. Truncation never splits an extended grapheme cluster.
 - Whenever a preview is actually shortened, it ends with an explicit marker naming the original byte and line counts, e.g. `… (truncated, 65536 bytes / 1 line total)`, and the corresponding menu item's accessibility label/help calls out the truncation for VoiceOver.
 - The preview never replaces the retained data: **Copy Full Output**, **Copy Full Error**, **Copy Click Output**/**Copy Click Error**, and each action's **Copy "&lt;title&gt;" Output**/**Copy "&lt;title&gt;" Error** place the exact retained stdout/stderr on the clipboard, unabridged, and are omitted whenever the corresponding stream is empty.
