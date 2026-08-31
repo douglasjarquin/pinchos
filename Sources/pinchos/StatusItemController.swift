@@ -268,10 +268,10 @@ final class StatusItemController: StatusItemMenuDelegate {
             : "pinchos \u{26A0}\u{FE0E}"
     }
 
-    /// A plain left/right click shows the compact menu (actions, one summary
-    /// line, Hide, and the global items). Holding Option while clicking reveals
-    /// the full diagnostics menu instead -- the same way Option-clicking the
-    /// system WiFi item shows signal details.
+    /// A plain left/right click shows the compact menu (Refresh Now, configured
+    /// actions, Hide, and the global items -- no runtime state or diagnostics).
+    /// Holding Option while clicking reveals the full diagnostics menu instead
+    /// -- the same way Option-clicking the system WiFi item shows signal details.
     func showLifecycleMenu(for statusItem: NSStatusItem) {
         let revealsDiagnostics = NSApp.currentEvent?.modifierFlags.contains(.option) == true
         Task { @MainActor [weak self] in
@@ -533,7 +533,6 @@ final class StatusItemController: StatusItemMenuDelegate {
         if let item {
             await addMenuContent(for: item, to: menu, revealsDiagnostics: revealsDiagnostics)
         }
-        menu.addItem(makePresentationMenuItem())
         await addGlobalMenuContent(to: menu, includesSchedulerDiagnostics: revealsDiagnostics)
         return menu
     }
@@ -551,7 +550,6 @@ final class StatusItemController: StatusItemMenuDelegate {
             menu.addItem(disabledItem(title: "No visible Pinchos"))
         }
         menu.addItem(NSMenuItem.separator())
-        menu.addItem(makePresentationMenuItem())
         await addGlobalMenuContent(to: menu, includesSchedulerDiagnostics: revealsDiagnostics)
         return menu
     }
@@ -595,11 +593,13 @@ final class StatusItemController: StatusItemMenuDelegate {
         return item
     }
 
+    /// The shared bottom group of every item menu: Open Config, Reload Config,
+    /// the Collapse/Expand Pinchos presentation toggle, and Quit Pinchos. The
+    /// presentation toggle lives here (below Reload Config) rather than between
+    /// the item content and the global items.
     private func addGlobalMenuContent(to menu: NSMenu, includesSchedulerDiagnostics: Bool = true) async {
         if includesSchedulerDiagnostics {
             await addSchedulerDiagnostics(to: menu)
-        } else {
-            menu.addItem(NSMenuItem.separator())
         }
         let openConfig = NSMenuItem(title: "Open Config", action: #selector(openConfigAction), keyEquivalent: "")
         openConfig.target = self
@@ -607,6 +607,7 @@ final class StatusItemController: StatusItemMenuDelegate {
         let reload = NSMenuItem(title: "Reload Config", action: #selector(reloadConfigAction), keyEquivalent: "r")
         reload.target = self
         menu.addItem(reload)
+        menu.addItem(makePresentationMenuItem())
         let quit = NSMenuItem(title: "Quit Pinchos", action: #selector(quitAction), keyEquivalent: "q")
         quit.target = self
         menu.addItem(quit)
@@ -625,16 +626,8 @@ final class StatusItemController: StatusItemMenuDelegate {
         switch item.config {
         case .command(let commandConfig):
             await addCommandContent(item: item, commandConfig: commandConfig, to: menu, revealsDiagnostics: revealsDiagnostics)
-        case .group(let group):
-            await addGroupContent(group, to: menu, revealsDiagnostics: revealsDiagnostics)
-        }
-
-        if !item.config.hidden {
-            menu.addItem(NSMenuItem.separator())
-            let hide = NSMenuItem(title: "Hide", action: #selector(hideAction(_:)), keyEquivalent: "")
-            hide.target = self
-            hide.representedObject = HideActionTarget(item: item)
-            menu.addItem(hide)
+        case .group:
+            await addGroupContent(item, to: menu, revealsDiagnostics: revealsDiagnostics)
         }
         menu.addItem(NSMenuItem.separator())
     }
@@ -668,60 +661,36 @@ final class StatusItemController: StatusItemMenuDelegate {
             menuItem.isEnabled = !commandConfig.disabled
             menu.addItem(menuItem)
         }
+        // Hide lives in the same top group as the refresh/actions, so a plain
+        // click on an item shows one tight action cluster and nothing else.
+        if !item.config.hidden {
+            let hide = NSMenuItem(title: "Hide", action: #selector(hideAction(_:)), keyEquivalent: "")
+            hide.target = self
+            hide.representedObject = HideActionTarget(item: item)
+            menu.addItem(hide)
+        }
+        // The compact (non-Option) menu ends here: refresh, actions, Hide, then
+        // the shared bottom group. No runtime state or diagnostics appear.
+        guard revealsDiagnostics else { return }
         menu.addItem(NSMenuItem.separator())
         let runtime = await item.runtimeSnapshot()
-        if revealsDiagnostics {
-            addRuntimeState(from: runtime, to: menu)
-            if let note = item.iconDiagnosticNote {
-                menu.addItem(disabledItem(title: "Icon: \(note)"))
-            }
+        addRuntimeState(from: runtime, to: menu)
+        if let note = item.iconDiagnosticNote {
+            menu.addItem(disabledItem(title: "Icon: \(note)"))
+        }
+        menu.addItem(NSMenuItem.separator())
+        addDiagnostics(from: runtime.runnerSnapshot, to: menu)
+        var actionSnapshots: [(index: Int, snapshot: CommandRunnerSnapshot?)] = []
+        for index in item.actions.indices {
+            actionSnapshots.append((index: index, snapshot: await item.actionSnapshot(at: index)))
+        }
+        if actionSnapshots.contains(where: { $0.snapshot != nil }) {
             menu.addItem(NSMenuItem.separator())
-            addDiagnostics(from: runtime.runnerSnapshot, to: menu)
-            var actionSnapshots: [(index: Int, snapshot: CommandRunnerSnapshot?)] = []
-            for index in item.actions.indices {
-                actionSnapshots.append((index: index, snapshot: await item.actionSnapshot(at: index)))
-            }
-            if actionSnapshots.contains(where: { $0.snapshot != nil }) {
-                menu.addItem(NSMenuItem.separator())
-                addActionDiagnostics(actions: item.actions, snapshots: actionSnapshots, to: menu)
-            }
-            if commandConfig.disabled {
-                menu.addItem(NSMenuItem.separator())
-                menu.addItem(disabledItem(title: "Disabled: yes"))
-            }
-        } else {
-            menu.addItem(disabledItem(title: compactSummaryTitle(from: runtime, commandConfig: commandConfig)))
+            addActionDiagnostics(actions: item.actions, snapshots: actionSnapshots, to: menu)
         }
-    }
-
-    /// The single line the compact (non-Option) menu shows in place of the
-    /// full runtime-state and diagnostics sections: the item's current value
-    /// plus a terse status qualifier, mirroring the summary line of the
-    /// interactive design mockup. No timestamps, byte counts, or other
-    /// diagnostics appear here -- Option-click reveals those.
-    private func compactSummaryTitle(from snapshot: ItemRuntimeSnapshot, commandConfig: CommandItemConfig) -> String {
-        let value: String
-        if let structuredText = snapshot.structuredOutput?.text {
-            value = DiagnosticPreviewFormatter.preview(structuredText, limits: .menuValue).text
-        } else if let fullOutput = snapshot.fullOutput {
-            value = DiagnosticPreviewFormatter.preview(fullOutput, limits: .menuValue).text
-        } else {
-            value = ""
-        }
-        switch snapshot.status {
-        case .fresh:
-            return value.isEmpty ? "Fresh" : value
-        case .running:
-            return value.isEmpty ? "Running\u{2026}" : "\(value) \u{b7} refreshing"
-        case .warning:
-            return value.isEmpty ? "Warning" : "\(value) \u{b7} warning"
-        case .stale:
-            return value.isEmpty ? "Stale" : "\(value) \u{b7} stale"
-        case .error, .unavailable:
-            if value.isEmpty {
-                return commandConfig.onError == .keepLast ? "Failed" : commandConfig.errorText
-            }
-            return "\(value) \u{b7} failed \u{b7} showing last good value"
+        if commandConfig.disabled {
+            menu.addItem(NSMenuItem.separator())
+            menu.addItem(disabledItem(title: "Disabled: yes"))
         }
     }
 
@@ -736,7 +705,8 @@ final class StatusItemController: StatusItemMenuDelegate {
     /// menu would show (actions, current value/state, diagnostics, manual
     /// refresh) -- nothing about a member's presentation changes because it
     /// is being shown inside a group instead of at the top level.
-    private func addGroupContent(_ group: GroupItemConfig, to menu: NSMenu, revealsDiagnostics: Bool) async {
+    private func addGroupContent(_ item: any ManagedItemLifecycle, to menu: NSMenu, revealsDiagnostics: Bool) async {
+        guard case .group(let group) = item.config else { return }
         var memberEntries: [(name: String, item: any ManagedItemLifecycle, valuePreview: String)] = []
         for memberName in group.members {
             guard let member = items[memberName], !member.config.hidden else { continue }
@@ -757,7 +727,7 @@ final class StatusItemController: StatusItemMenuDelegate {
         }
 
         menu.addItem(disabledItem(title: groupSummaryTitle(group, entries: memberEntries)))
-        if revealsDiagnostics, let note = items[group.name]?.iconDiagnosticNote {
+        if revealsDiagnostics, let note = item.iconDiagnosticNote {
             menu.addItem(disabledItem(title: "Icon: \(note)"))
         }
         menu.addItem(NSMenuItem.separator())
@@ -772,6 +742,13 @@ final class StatusItemController: StatusItemMenuDelegate {
             )
             memberItem.submenu = submenu
             menu.addItem(memberItem)
+        }
+        if !group.hidden {
+            menu.addItem(NSMenuItem.separator())
+            let hide = NSMenuItem(title: "Hide", action: #selector(hideAction(_:)), keyEquivalent: "")
+            hide.target = self
+            hide.representedObject = HideActionTarget(item: item)
+            menu.addItem(hide)
         }
     }
 

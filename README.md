@@ -51,7 +51,7 @@ Use `mise run site:build` to create the static output in `site/dist/`, or `mise 
 See [`site/README.md`](site/README.md) for site-specific details.
 
 It has no Dock icon and no main window (`NSApp.setActivationPolicy(.accessory)`) — it lives entirely in the menu bar.
-Clicking any item (left or right) opens its compact menu: the item's Run/Refresh actions, a one-line status summary, Hide, and the global **Open Config**/**Reload Config**/**Quit Pinchos** items.
+Clicking any item (left or right) opens its compact menu: **Refresh Now** and any configured actions, **Hide**, and the global **Open Config**/**Reload Config**/**Collapse Pinchos**/**Quit Pinchos** items.
 Hold Option while clicking to reveal the full diagnostics menu instead (state, timestamps, exit/error details, per-stream byte counts, **Copy Full Output**/**Copy Full Error**, and the scheduler line) — the same way Option-clicking the system WiFi item shows signal details.
 Quit it from any item's menu, or `killall pinchos`.
 `killall pinchos` sends SIGTERM to each matching Pinchos process, and each process runs the same bounded cleanup used by the native Quit action.
