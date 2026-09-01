@@ -5,7 +5,6 @@ final class NotificationTests: XCTestCase {
     func testNotificationsAreOptInByDefault() throws {
         let item = try ConfigParser.parse("""
         [item.example]
-        type = "command"
         run = "check-status"
         """).items[0].command
 
@@ -13,19 +12,17 @@ final class NotificationTests: XCTestCase {
         XCTAssertNil(item.notifyCooldown)
     }
 
-    func testParsesFailureAndRecoveryNotificationPolicy() throws {
+    func testNotificationConfigurationIsRejectedByTheCanonicalSchema() throws {
         let toml = """
         [item.example]
-        type = "command"
         run = "check-status"
         notify_on = ["failure", "recovery"]
         notify_cooldown = "15m"
         """
 
-        let item = try ConfigParser.parse(toml).items[0].command
-
-        XCTAssertEqual(item.notifyOn, [.failure, .recovery])
-        XCTAssertEqual(item.notifyCooldown, 900)
+        XCTAssertThrowsError(try ConfigParser.parse(toml)) { error in
+            XCTAssertTrue((error as? ConfigParseError)?.message.contains("unknown key") == true)
+        }
     }
 
     func testNotificationTransitionsDeduplicateFailuresAndHonorCooldown() {
@@ -55,7 +52,6 @@ final class NotificationTests: XCTestCase {
         for field in invalidConfigs {
             let toml = """
             [item.example]
-            type = "command"
             run = "check-status"
             \(field)
             """

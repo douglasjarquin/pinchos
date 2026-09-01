@@ -9,7 +9,7 @@
 #   this does not inspect project-local version files.
 
 [item.node]
-type = "command"
+
 run = "node --version"
 interval = "30m"
 format = "node {output}"

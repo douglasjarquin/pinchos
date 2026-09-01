@@ -131,15 +131,6 @@ private final class RefreshActionTarget: NSObject {
 }
 
 @MainActor
-private final class HideActionTarget: NSObject {
-    let item: any ManagedItemLifecycle
-
-    init(item: any ManagedItemLifecycle) {
-        self.item = item
-    }
-}
-
-@MainActor
 private final class ItemActionTarget: NSObject {
     let item: any ManagedItemLifecycle
     let index: Int
@@ -594,12 +585,6 @@ final class StatusItemController: StatusItemMenuDelegate {
             }
             scheduleInfoRowRefresh(for: item, config: commandConfig)
         }
-        if !item.config.hidden {
-            let hide = NSMenuItem(title: "Hide", action: #selector(hideAction(_:)), keyEquivalent: "")
-            hide.target = self
-            hide.representedObject = HideActionTarget(item: item)
-            menu.addItem(hide)
-        }
     }
 
     private func addGroupContentImmediately(_ item: any ManagedItemLifecycle, to menu: NSMenu) {
@@ -843,16 +828,8 @@ final class StatusItemController: StatusItemMenuDelegate {
             }
             scheduleInfoRowRefresh(for: item, config: commandConfig)
         }
-        // Hide lives in the same top group as the refresh/actions, so a plain
-        // click on an item shows one tight action cluster and nothing else.
-        if !item.config.hidden {
-            let hide = NSMenuItem(title: "Hide", action: #selector(hideAction(_:)), keyEquivalent: "")
-            hide.target = self
-            hide.representedObject = HideActionTarget(item: item)
-            menu.addItem(hide)
-        }
-        // The compact (non-Option) menu ends here: refresh, actions, Hide, then
-        // the shared bottom group. No runtime state or diagnostics appear.
+        // The compact (non-Option) menu ends here: refresh, actions, then the
+        // shared bottom group. No runtime state or diagnostics appear.
         guard revealsDiagnostics else { return }
         menu.addItem(NSMenuItem.separator())
         let runtime = await item.runtimeSnapshot()
@@ -936,13 +913,6 @@ final class StatusItemController: StatusItemMenuDelegate {
             )
             memberItem.submenu = submenu
             menu.addItem(memberItem)
-        }
-        if !group.hidden {
-            menu.addItem(NSMenuItem.separator())
-            let hide = NSMenuItem(title: "Hide", action: #selector(hideAction(_:)), keyEquivalent: "")
-            hide.target = self
-            hide.representedObject = HideActionTarget(item: item)
-            menu.addItem(hide)
         }
     }
 
@@ -1196,21 +1166,6 @@ final class StatusItemController: StatusItemMenuDelegate {
     @objc private func refreshAction(_ sender: NSMenuItem) {
         guard let target = sender.representedObject as? RefreshActionTarget else { return }
         target.item.refreshNow()
-    }
-
-    @objc private func hideAction(_ sender: NSMenuItem) {
-        guard let target = sender.representedObject as? HideActionTarget,
-              !target.item.config.hidden else { return }
-        do {
-            try ConfigFileEditor.setHidden(
-                true,
-                for: target.item.config,
-                at: URL(fileURLWithPath: configPath)
-            )
-            onReload()
-        } catch {
-            showRecoveryError(error)
-        }
     }
 
     @objc private func itemAction(_ sender: NSMenuItem) {

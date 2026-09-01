@@ -9,8 +9,7 @@
 #   missing context or unreadable config reports an error.
 
 [item.kubernetes]
-type = "command"
+
 run = "kubectl config current-context"
 interval = "1m"
 format = "k8s {output}"
-on_error = "keep_last"

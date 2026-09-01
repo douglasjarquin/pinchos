@@ -8,7 +8,7 @@
 #   particular query; an empty result means macOS has no parsed nameserver.
 
 [item.dns]
-type = "command"
+
 run = "scutil --dns | awk '/nameserver\\[[0-9]+\\]/{print $3; exit}'"
 interval = "5m"
 format = "DNS {output}"

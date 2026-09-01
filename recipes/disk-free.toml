@@ -10,7 +10,7 @@
 #   to check safely; it still checks the shell and other config basics.
 
 [item.disk_free]
-type = "command"
+
 run = "df -h / | awk 'NR==2{print $4}'"
 interval = "5m"
 format = "free {output}"

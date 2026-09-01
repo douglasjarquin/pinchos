@@ -1435,7 +1435,6 @@ final class RecoveryLifecycleTests: XCTestCase {
         )
         try """
         [item.clock]
-        type = "command"
         run = "echo clock"
         """.write(to: configURL, atomically: true, encoding: .utf8)
 

@@ -8,7 +8,7 @@
 #   this is a snapshot, not a historical or performance metric.
 
 [item.processes]
-type = "command"
+
 run = "ps -axo pid= | wc -l | tr -d ' '"
 interval = "1m"
 format = "procs {output}"

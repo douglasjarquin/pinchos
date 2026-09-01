@@ -8,10 +8,8 @@
 #   only running containers, not exited containers or Kubernetes workloads.
 
 [item.docker_containers]
-type = "command"
+
 run = "docker ps -q | wc -l | tr -d ' '"
 interval = "1m"
 timeout = "10s"
 format = "docker {output} running"
-on_error = "keep_last"
-stale_after = "15m"

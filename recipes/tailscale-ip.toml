@@ -8,10 +8,8 @@
 #   that is intentionally kept as the last good value by this recipe.
 
 [item.tailscale]
-type = "command"
+
 run = "tailscale ip -4"
 interval = "1m"
 timeout = "10s"
 format = "TS {output}"
-on_error = "keep_last"
-stale_after = "15m"

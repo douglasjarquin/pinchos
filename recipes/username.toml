@@ -8,7 +8,7 @@
 #   cloud-account identity.
 
 [item.username]
-type = "command"
+
 run = "id -un"
 interval = "10m"
 format = "{output}"

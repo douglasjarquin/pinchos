@@ -8,10 +8,8 @@
 #   remote registries; an unavailable engine leaves the last good value.
 
 [item.docker_images]
-type = "command"
+
 run = "docker images -q | sort -u | wc -l | tr -d ' '"
 interval = "10m"
 timeout = "10s"
 format = "images {output}"
-on_error = "keep_last"
-stale_after = "30m"

@@ -10,7 +10,7 @@
 #   launches Pinchos, so it may not be English on every machine.
 
 [item.weekday]
-type = "command"
+
 run = "date '+%A'"
 interval = "5m"
 format = "{output}"

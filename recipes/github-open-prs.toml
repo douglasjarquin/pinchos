@@ -10,10 +10,8 @@
 #   when you need a fixed repository.
 
 [item.github_open_prs]
-type = "command"
+
 run = "gh pr list --state open --limit 100 --json number --jq 'length'"
 interval = "5m"
 timeout = "15s"
 format = "PRs {output}"
-on_error = "keep_last"
-stale_after = "30m"

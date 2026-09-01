@@ -35,9 +35,7 @@
 #   .build/release/pinchos run latency
 
 [item.latency]
-type = "command"
+
 run = "ping -c 1 -t 2 example.com 2>/dev/null | tail -1 | awk -F'/' '{avg=$5} END{print (avg==\"\" ? \"unreachable\" : avg)}'"
 interval = "1m"
 timeout = "5s"
-on_error = "keep_last"
-stale_after = "10m"

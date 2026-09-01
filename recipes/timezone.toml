@@ -8,7 +8,7 @@
 #   timezone, not necessarily a remote service's timezone.
 
 [item.timezone]
-type = "command"
+
 run = "date '+%Z %z'"
 interval = "10m"
 format = "{output}"

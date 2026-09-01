@@ -216,42 +216,16 @@ final class StatusItemControllerTests: XCTestCase {
         XCTAssertEqual(Array(menu.items.suffix(3).map(\.title)), ["Open Config", "Reload Config", "Quit Pinchos"])
     }
 
-    func testLifecycleMenuOffersHideThatPersistsAndRequestsReload() async throws {
-        let configURL = FileManager.default.temporaryDirectory
-            .appendingPathComponent("pinchos-hide-menu-\(UUID().uuidString).toml")
-        let source = """
-        [item.alpha]
-        type = "command"
-        run = "echo alpha"
-        """
-        try Data(source.utf8).write(to: configURL)
-        addTeardownBlock {
-            try? FileManager.default.removeItem(at: configURL)
-        }
-        var reloadCount = 0
+    func testLifecycleMenuOmitsDeprecatedHideAction() async throws {
         let factory = FakeManagedItemFactory()
-        let controller = makeController(
-            factory: factory,
-            configPath: configURL.path,
-            onReload: { reloadCount += 1 }
-        )
+        let controller = makeController(factory: factory)
         addTeardownBlock { @MainActor in
             await controller.shutdown()
         }
 
-        let config = try ConfigParser.parse(source, relativeTo: configURL)
-        await controller.apply(config: config)
+        await controller.apply(config: PinchosConfig(items: [item("alpha")]))
         let menu = await controller.makeLifecycleMenu(forManagedItem: factory.created[0])
-        let hide = try XCTUnwrap(menu.items.first(where: { $0.title == "Hide" }))
-
-        XCTAssertTrue(hide.isEnabled)
-        XCTAssertTrue(NSApplication.shared.sendAction(hide.action!, to: hide.target, from: hide))
-        XCTAssertEqual(reloadCount, 1)
-
-        let updated = try String(contentsOf: configURL, encoding: .utf8)
-        XCTAssertTrue(updated.contains("run = \"echo alpha\""))
-        XCTAssertTrue(updated.contains("hidden = true"))
-        XCTAssertTrue(try ConfigParser.parse(updated).items[0].hidden)
+        XCTAssertFalse(menu.items.contains { $0.title == "Hide" })
     }
 
     func testHiddenConfigUpdatesTheExistingManagedItemInPlace() async throws {
@@ -321,7 +295,7 @@ final class StatusItemControllerTests: XCTestCase {
         XCTAssertTrue(titles.contains("Skipped ticks: 2"))
     }
 
-    func testCompactLifecycleMenuShowsOnlyActionsAndHide() async throws {
+    func testCompactLifecycleMenuShowsOnlyActions() async throws {
         let factory = FakeManagedItemFactory()
         let controller = makeController(factory: factory)
         addTeardownBlock { @MainActor in
@@ -354,7 +328,7 @@ final class StatusItemControllerTests: XCTestCase {
         let titles = menu.items.map(\.title)
 
         // Refresh Now leads the top group; Hide sits directly under it.
-        XCTAssertEqual(Array(titles.prefix(2)), ["Refresh Now", "Hide"])
+        XCTAssertEqual(Array(titles.prefix(1)), ["Refresh Now"])
         // Collapse Pinchos lives in the shared bottom group, below Reload Config.
         XCTAssertEqual(Array(titles.suffix(3)), ["Open Config", "Reload Config", "Quit Pinchos"])
         // No runtime state, diagnostics, or value summary appears.
@@ -370,16 +344,11 @@ final class StatusItemControllerTests: XCTestCase {
     func testLifecycleMenuPlacesDeclarativeActionsBeforeGlobalActions() async throws {
         let toml = """
         [item.codex]
-        type = "command"
         run = "echo value"
 
-        [[item.codex.action]]
-        title = "Open usage"
-        run = "open https://example.com/usage"
-
-        [[item.codex.action]]
-        title = "Refresh now"
-        refresh = true
+        [[item.codex.menu]]
+        label = "Open usage"
+        action = "open https://example.com/usage"
         """
         let config = try ConfigParser.parse(toml)
         let factory = FakeManagedItemFactory()
@@ -392,9 +361,9 @@ final class StatusItemControllerTests: XCTestCase {
         let menu = await controller.makeLifecycleMenu(forManagedItem: factory.created[0])
         let titles = menu.items.map(\.title)
 
-        XCTAssertEqual(Array(titles.prefix(2)), ["Open usage", "Refresh now"])
-        XCTAssertTrue(titles.contains("Refresh now"))
-        XCTAssertFalse(titles.contains("Refresh Now"))
+        XCTAssertEqual(Array(titles.prefix(2)), ["Refresh Now", "Open usage"])
+        XCTAssertTrue(titles.contains("Open usage"))
+        XCTAssertTrue(titles.contains("Refresh Now"))
         XCTAssertEqual(Array(titles.suffix(3)), ["Open Config", "Reload Config", "Quit Pinchos"])
     }
 
@@ -637,11 +606,9 @@ final class StatusItemControllerTests: XCTestCase {
 
         let config = try ConfigParser.parse("""
         [item.zebra]
-        type = "command"
         run = "echo z"
 
         [item.apple]
-        type = "command"
         run = "echo a"
         """)
         XCTAssertEqual(config.items.map(\.name), ["zebra", "apple"])

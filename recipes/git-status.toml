@@ -12,11 +12,7 @@
 #   to check safely.
 
 [item.worktree]
-type = "command"
-run = "git -C \"$REPO_PATH\" status --porcelain=v1 | wc -l | tr -d ' '"
+
+run = "git -C \"/path/to/repository\" status --porcelain=v1 | wc -l | tr -d ' '"
 interval = "30s"
 format = "changes {output}"
-on_error = "keep_last"
-
-[item.worktree.env]
-REPO_PATH = "/path/to/repository"

@@ -8,7 +8,7 @@
 #   affected by Rosetta when a process is launched under translation.
 
 [item.architecture]
-type = "command"
+
 run = "uname -m"
 interval = "30m"
 format = "{output}"

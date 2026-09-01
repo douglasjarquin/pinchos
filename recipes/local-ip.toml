@@ -8,7 +8,7 @@
 #   Mac's network hardware uses another BSD name. Offline state is empty.
 
 [item.local_ip]
-type = "command"
+
 run = "ipconfig getifaddr en0 || echo offline"
 interval = "1m"
 format = "IP {output}"

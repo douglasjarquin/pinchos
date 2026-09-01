@@ -10,7 +10,7 @@
 #   process names containing spaces are reduced to their first token.
 
 [item.top_process]
-type = "command"
+
 run = "ps -Ao comm=,pcpu= | sort -k2 -nr | head -1 | awk '{print $1}'"
 interval = "30s"
 format = "CPU {output}"

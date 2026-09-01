@@ -10,8 +10,7 @@
 #   to check safely.
 
 [item.xcode]
-type = "command"
+
 run = "xcodebuild -version | awk 'NR==1{print $2}'"
 interval = "30m"
 format = "Xcode {output}"
-on_error = "keep_last"

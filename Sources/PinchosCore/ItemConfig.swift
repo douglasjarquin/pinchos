@@ -56,6 +56,33 @@ public struct ItemInfoRow: Equatable, Sendable {
     }
 }
 
+public struct MenuRowConfig: Equatable, Sendable {
+    public let label: String?
+    public let value: String?
+    public let run: String?
+    public let action: String?
+    public let cache: TimeInterval?
+    public let separator: Bool
+
+    public init(
+        label: String? = nil,
+        value: String? = nil,
+        run: String? = nil,
+        action: String? = nil,
+        cache: TimeInterval? = nil,
+        separator: Bool = false
+    ) {
+        self.label = label
+        self.value = value
+        self.run = run
+        self.action = action
+        self.cache = cache
+        self.separator = separator
+    }
+
+    public static let separator = MenuRowConfig(separator: true)
+}
+
 /// One effective status-item icon source. `symbol` and `icon` are mutually
 /// exclusive at parse time (a config that sets both is rejected); the runtime
 /// model therefore never has to rank them.
@@ -113,6 +140,7 @@ public struct CommandItemConfig: Equatable, Sendable {
     public let staleAfter: TimeInterval?
     public let actions: [ItemAction]
     public let infoRows: [ItemInfoRow]
+    public let menu: [MenuRowConfig]
     public let iconSource: ItemIconSource?
     public let maxLength: Int?
     public let hideWhenEmpty: Bool
@@ -141,6 +169,7 @@ public struct CommandItemConfig: Equatable, Sendable {
         staleAfter: TimeInterval? = nil,
         actions: [ItemAction] = [],
         infoRows: [ItemInfoRow] = [],
+        menu: [MenuRowConfig] = [],
         icon: String? = nil,
         symbol: String? = nil,
         maxLength: Int? = nil,
@@ -167,8 +196,9 @@ public struct CommandItemConfig: Equatable, Sendable {
         self.errorText = errorText
         self.onError = onError
         self.staleAfter = staleAfter
-        self.actions = actions
-        self.infoRows = infoRows
+        self.menu = menu
+        self.actions = actions.isEmpty ? Self.legacyActions(from: menu) : actions
+        self.infoRows = infoRows.isEmpty ? Self.legacyInfoRows(from: menu) : infoRows
         self.iconSource = ItemIconSource.make(icon: icon, symbol: symbol)
         self.maxLength = maxLength
         self.hideWhenEmpty = hideWhenEmpty
@@ -187,6 +217,20 @@ public struct CommandItemConfig: Equatable, Sendable {
 
     /// SF Symbol name when `iconSource` is `.symbol`; `nil` otherwise.
     public var symbol: String? { iconSource?.symbolName }
+
+    private static func legacyActions(from menu: [MenuRowConfig]) -> [ItemAction] {
+        menu.compactMap { row in
+            guard let action = row.action else { return nil }
+            return ItemAction(title: row.label ?? "", kind: .command(action))
+        }
+    }
+
+    private static func legacyInfoRows(from menu: [MenuRowConfig]) -> [ItemInfoRow] {
+        menu.compactMap { row in
+            guard let label = row.label, let run = row.run else { return nil }
+            return ItemInfoRow(title: label, run: run)
+        }
+    }
 }
 
 /// A `[group.<name>]` module: one native status item that stands in for a
@@ -317,6 +361,7 @@ extension ItemConfig {
         staleAfter: TimeInterval? = nil,
         actions: [ItemAction] = [],
         info: [ItemInfoRow] = [],
+        menu: [MenuRowConfig] = [],
         icon: String? = nil,
         symbol: String? = nil,
         maxLength: Int? = nil,
@@ -347,6 +392,7 @@ extension ItemConfig {
                 staleAfter: staleAfter,
                 actions: actions,
                 infoRows: info,
+                menu: menu,
                 icon: icon,
                 symbol: symbol,
                 maxLength: maxLength,
@@ -431,12 +477,33 @@ public struct RecoveryMenu: Equatable, Sendable {
 
 public enum ExampleConfig {
     public static let text = """
-    [item.clock]
-    type = "command"
-    run = "date '+%H:%M:%S'"
-    interval = "60s"
+    [item.codex]
+    run = "quota-axi codex --short"
+    interval = "5m"
+    timeout = "15s"
     format = "{output}"
-    on_error = "keep_last"
-    stale_after = "15m"
+    symbol = "terminal"
+
+    [[item.codex.menu]]
+    label = "Usage"
+    run = "quota-axi codex --usage"
+    cache = "5m"
+
+    [[item.codex.menu]]
+    label = "Pace"
+    run = "quota-axi codex --pace"
+    cache = "5m"
+
+    [[item.codex.menu]]
+    label = "Reset"
+    run = "quota-axi codex --reset"
+    cache = "5m"
+
+    [[item.codex.menu]]
+    label = "Open Codex"
+    action = "open https://chatgpt.com/codex"
+
+    [[item.codex.menu]]
+    separator = true
     """
 }

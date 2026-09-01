@@ -10,7 +10,7 @@
 #   to check safely.
 
 [item.memory_pressure]
-type = "command"
+
 run = "vm_stat | awk '/Pages free/{free=$3} /Pages active/{active=$3} /Pages inactive/{inactive=$3} /Pages speculative/{spec=$3} /Pages wired down/{wired=$4} END{gsub(/\\./,\"\",free); gsub(/\\./,\"\",active); gsub(/\\./,\"\",inactive); gsub(/\\./,\"\",spec); gsub(/\\./,\"\",wired); used=active+inactive+wired; total=used+free+spec; print int(used/total*100+0.5)}'"
 interval = "1m"
 format = "{output}% memory"

@@ -8,10 +8,8 @@
 #   may be needed before the count reflects current package metadata.
 
 [item.brew_outdated]
-type = "command"
+
 run = "brew outdated --quiet | wc -l | tr -d ' '"
 interval = "30m"
 timeout = "30s"
 format = "brew {output} outdated"
-on_error = "keep_last"
-stale_after = "2h"

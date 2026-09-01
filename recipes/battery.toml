@@ -23,9 +23,7 @@
 #   .build/release/pinchos run battery
 
 [item.battery]
-type = "command"
+
 run = "pmset -g batt | grep -Eo '[0-9]+%' | head -1"
 interval = "1m"
 format = "🔋 {output}"
-on_error = "keep_last"
-stale_after = "15m"

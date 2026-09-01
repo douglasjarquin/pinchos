@@ -8,7 +8,7 @@
 #   is required after an update.
 
 [item.macos]
-type = "command"
+
 run = "sw_vers -productVersion"
 interval = "30m"
 format = "macOS {output}"

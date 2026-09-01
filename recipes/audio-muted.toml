@@ -8,7 +8,7 @@
 #   a specific application is silent.
 
 [item.muted]
-type = "command"
+
 run = "osascript -e 'output muted of (get volume settings)'"
 interval = "30s"
 format = "muted {output}"

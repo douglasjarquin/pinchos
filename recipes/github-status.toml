@@ -30,11 +30,8 @@
 #   .build/release/pinchos run github_notifications
 
 [item.github_notifications]
-type = "command"
+
 run = "gh api notifications --jq 'length'"
 interval = "5m"
 timeout = "15s"
 format = "🔔 {output}"
-error_text = "–"
-on_error = "keep_last"
-stale_after = "30m"

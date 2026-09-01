@@ -9,7 +9,7 @@
 #   work.
 
 [item.load_average]
-type = "command"
+
 run = "sysctl -n vm.loadavg | awk '{print $2}'"
 interval = "30s"
 format = "load {output}"

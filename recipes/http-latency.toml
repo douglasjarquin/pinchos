@@ -9,10 +9,8 @@
 #   and item timeout are independent bounds.
 
 [item.http_latency]
-type = "command"
+
 run = "curl -sS -o /dev/null -w '%{time_total}' --max-time 5 https://example.com"
 interval = "5m"
 timeout = "8s"
 format = "HTTP {output}s"
-on_error = "keep_last"
-stale_after = "15m"

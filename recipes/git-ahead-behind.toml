@@ -11,11 +11,7 @@
 #   to check safely.
 
 [item.git_sync]
-type = "command"
-run = "git -C \"$REPO_PATH\" rev-list --left-right --count '@{upstream}...HEAD' | awk '{print \"ahead \" $2 \" behind \" $1}'"
+
+run = "git -C \"/path/to/repository\" rev-list --left-right --count '@{upstream}...HEAD' | awk '{print \"ahead \" $2 \" behind \" $1}'"
 interval = "2m"
 format = "{output}"
-on_error = "keep_last"
-
-[item.git_sync.env]
-REPO_PATH = "/path/to/repository"

@@ -15,18 +15,15 @@ Config (`XDG_CONFIG_HOME=/tmp/pinchos-rss-config`):
 
 ```toml
 [item.limits]
-type = "command"
 run = "echo 42"
 interval = "60s"
 format = "👀 {output}%"
 
 [item.clock]
-type = "command"
 run = "date '+%H:%M'"
 interval = "60s"
 
 [item.battery]
-type = "command"
 run = "pmset -g batt | grep -Eo '[0-9]+%' | head -1"
 interval = "60s"
 format = "🔋 {output}"
@@ -51,12 +48,10 @@ Config (`XDG_CONFIG_HOME=/tmp/pinchos-demo-config`), two items each appending a 
 
 ```toml
 [item.alpha]
-type = "command"
 run = "date +%s.%N >> /tmp/pinchos-demo-config/alpha.marker; echo alpha-ok"
 interval = "2s"
 
 [item.beta]
-type = "command"
 run = "date +%s.%N >> /tmp/pinchos-demo-config/beta.marker; echo beta-ok"
 interval = "2s"
 ```

@@ -8,7 +8,7 @@
 #   is a separate diagnostic and can be less useful on normal Macs.
 
 [item.disk_inodes]
-type = "command"
+
 run = "df -Pi / | awk 'NR==2{print $5}'"
 interval = "10m"
 format = "inodes {output}"

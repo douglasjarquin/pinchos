@@ -8,7 +8,7 @@
 #   a shell profile does not change an already running process until restart.
 
 [item.locale]
-type = "command"
+
 run = "locale | awk -F= '/^LANG=/{print $2}'"
 interval = "30m"
 format = "{output}"

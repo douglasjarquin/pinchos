@@ -36,13 +36,8 @@
 #   .build/release/pinchos run aws_account
 
 [item.aws_account]
-type = "command"
+
 run = "aws sts get-caller-identity --query Account --output text"
 interval = "10m"
 timeout = "10s"
 format = "AWS {output}"
-on_error = "keep_last"
-stale_after = "30m"
-
-[item.aws_account.env]
-AWS_PROFILE = "default"

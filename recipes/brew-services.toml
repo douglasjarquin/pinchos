@@ -8,9 +8,8 @@
 #   releases; this is a local snapshot and does not inspect child health.
 
 [item.brew_services]
-type = "command"
+
 run = "brew services list | awk 'NR>1 && $2 != \"none\" {count++} END{print count+0}'"
 interval = "5m"
 timeout = "15s"
 format = "services {output}"
-on_error = "keep_last"

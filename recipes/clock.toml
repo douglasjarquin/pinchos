@@ -17,7 +17,7 @@
 #   .build/release/pinchos run clock
 
 [item.clock]
-type = "command"
+
 run = "date '+%H:%M'"
 interval = "30s"
 # {output} is the trimmed last stdout line of `run` (here, the whole line).

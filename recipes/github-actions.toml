@@ -9,10 +9,8 @@
 #   repository with no runs returns an empty result.
 
 [item.github_actions]
-type = "command"
+
 run = "gh run list --limit 1 --json conclusion,status --jq '.[0] | if .status == \"completed\" then .conclusion else .status end'"
 interval = "2m"
 timeout = "15s"
 format = "CI {output}"
-on_error = "keep_last"
-stale_after = "30m"

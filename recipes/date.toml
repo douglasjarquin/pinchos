@@ -13,7 +13,7 @@
 #   .build/release/pinchos run date
 
 [item.date]
-type = "command"
+
 run = "date '+%Y-%m-%d'"
 interval = "1m"
 format = "{output}"

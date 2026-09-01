@@ -9,10 +9,8 @@
 #   `--repo owner/name` when you want a fixed repository from any directory.
 
 [item.github_open_issues]
-type = "command"
+
 run = "gh issue list --state open --limit 100 --json number --jq 'length'"
 interval = "5m"
 timeout = "15s"
 format = "issues {output}"
-on_error = "keep_last"
-stale_after = "30m"

@@ -30,10 +30,8 @@
 #   .build/release/pinchos run http_health
 
 [item.http_health]
-type = "command"
+
 run = "curl -s -o /dev/null -w '%{http_code}' --max-time 5 https://example.com"
 interval = "5m"
 timeout = "8s"
 format = "HTTP {output}"
-on_error = "keep_last"
-stale_after = "15m"

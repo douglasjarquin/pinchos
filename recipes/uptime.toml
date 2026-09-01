@@ -9,7 +9,7 @@
 #   the small sed cleanup intentionally drops the logged-in-user count.
 
 [item.uptime]
-type = "command"
+
 run = "uptime | sed 's/.*up //' | sed 's/, [0-9]* user.*//'"
 interval = "5m"
 format = "up {output}"

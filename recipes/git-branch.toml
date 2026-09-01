@@ -9,11 +9,7 @@
 #   does not guess which repository is intended from Pinchos' config folder.
 
 [item.branch]
-type = "command"
-run = "git -C \"$REPO_PATH\" branch --show-current"
+
+run = "git -C \"/path/to/repository\" branch --show-current"
 interval = "1m"
 format = "{output}"
-on_error = "keep_last"
-
-[item.branch.env]
-REPO_PATH = "/path/to/repository"

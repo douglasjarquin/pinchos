@@ -10,8 +10,7 @@
 #   to check safely.
 
 [item.mise]
-type = "command"
+
 run = "mise --version | awk '{print $1}'"
 interval = "30m"
 format = "mise {output}"
-on_error = "keep_last"
