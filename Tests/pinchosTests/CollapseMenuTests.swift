@@ -183,7 +183,8 @@ final class CollapseMenuTests: XCTestCase {
 
         let collapsed = await controller.makeCollapsedMenu()
         let firstLevelTitles = collapsed.items.filter { !$0.isSeparatorItem }.map(\.title)
-        XCTAssertEqual(firstLevelTitles, ["–", "–", "–", "Scheduler: 0/4 active", "Expand Pinchos", "Open Config", "Reload Config", "Quit Pinchos"])
+        let schedulerTitle = "Scheduler: 0/\(CommandScheduler.defaultMaxActiveSessions) active"
+        XCTAssertEqual(firstLevelTitles, ["–", "–", "–", schedulerTitle, "Expand Pinchos", "Open Config", "Reload Config", "Quit Pinchos"])
 
         let standalone = try XCTUnwrap(collapsed.items.first(where: { $0.title == "–" && $0.submenu != nil }))
         let standaloneMenu = try XCTUnwrap(standalone.submenu)
