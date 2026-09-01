@@ -126,8 +126,8 @@ document rather than automated pass/fail. Extending it to P0–P5, a baseline/th
 file, and a scheduled or self-hosted CI workflow that retains artifacts is tracked as
 follow-up work under issue #55.
 
-The clean-head sample committed with this release candidate is [`docs/manual-qa/0.1.0-p1.json`](manual-qa/0.1.0-p1.json).
-It records three settled `phys_footprint` samples between 13.19 MB and 13.21 MB on an arm64 Mac15,11, below the 15 MB P1 budget.
+The exact-head reference sample committed with this draft is [`docs/manual-qa/0.1.0-p1.json`](manual-qa/0.1.0-p1.json).
+It records three settled `phys_footprint` samples between 13.78 MB and 13.81 MB on an arm64 Mac15,11, below the 15 MB P1 budget.
 
 For a worked example of this measurement (a prior manual pass, before this script
 existed), see [`docs/manual-qa/0.1.0-evidence.md`](manual-qa/0.1.0-evidence.md), section "Idle

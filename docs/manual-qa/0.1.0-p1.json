@@ -6,11 +6,11 @@
   },
   "settle_seconds": 15,
   "phys_footprint_bytes_samples": [
-    13189792,
-    13206176,
-    13206176
+    13779640,
+    13812408,
+    13812408
   ],
-  "commit_sha": "365b574155c90ee16c170ed6ff12a4023e1e1af2",
+  "commit_sha": "44bb2b3d3fd8bc90ae52e4d2da2dd7b4b0e7aeb6",
   "dirty": false,
   "macos_version": "26.6.2",
   "hardware_model": "Mac15,11",
