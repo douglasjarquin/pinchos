@@ -140,6 +140,8 @@ final class RecoveryLifecycleTests: XCTestCase {
         let secondSnapshot = await second.runnerSnapshot()
         XCTAssertEqual(firstSnapshot.lastExecution?.stdout, "shared\n")
         XCTAssertEqual(secondSnapshot.lastExecution?.stdout, "shared\n")
+        _ = await second.runtimeSnapshot()
+        XCTAssertEqual(second.renderedTitle, "shared")
         XCTAssertEqual(registry.sourceCount, 1)
     }
 

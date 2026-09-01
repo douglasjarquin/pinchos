@@ -134,7 +134,7 @@ final class CommandSourceTests: XCTestCase {
         _ = await first.value
         let maxActiveRuns = await runner.maxActiveRuns
 
-        XCTAssertEqual(duringRefresh.state, .refreshing)
+        XCTAssertEqual(duringRefresh.state, .fresh)
         XCTAssertEqual(maxActiveRuns, 1)
     }
 

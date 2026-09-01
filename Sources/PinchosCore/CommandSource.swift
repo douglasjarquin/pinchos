@@ -116,6 +116,7 @@ public actor CommandSource {
     private var runnerStarted = false
     private var generation: UInt64 = 0
     private var refreshTask: Task<Void, Never>?
+    private var refreshWaiters: [CheckedContinuation<CachedValue, Never>] = []
 
     public init(
         configuration: CommandSourceConfiguration,
@@ -152,8 +153,23 @@ public actor CommandSource {
     }
 
     public func refresh() async -> CachedValue {
-        guard !isRefreshing else { return snapshot() }
+        if isRefreshing {
+            return await withCheckedContinuation { continuation in
+                refreshWaiters.append(continuation)
+            }
+        }
         isRefreshing = true
+        let value = await performRefresh()
+        isRefreshing = false
+        let waiters = refreshWaiters
+        refreshWaiters.removeAll()
+        for waiter in waiters {
+            waiter.resume(returning: value)
+        }
+        return value
+    }
+
+    private func performRefresh() async -> CachedValue {
         generation &+= 1
         let refreshGeneration = generation
         let attemptedAt = clock.now()
@@ -165,8 +181,6 @@ public actor CommandSource {
             lastExecution: cachedValue.lastExecution,
             diagnostic: cachedValue.diagnostic
         )
-        defer { isRefreshing = false }
-
         do {
             try await scheduler.acquirePermit()
         } catch {
@@ -208,7 +222,6 @@ public actor CommandSource {
         refreshTask?.cancel()
         refreshTask = nil
         await runner.cancelActive()
-        isRefreshing = false
     }
 
     public func runnerSnapshot() async -> CommandRunnerSnapshot {
