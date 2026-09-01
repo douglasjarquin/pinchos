@@ -19,7 +19,7 @@ runner to runner. Pinchos therefore splits performance evidence into two tiers:
 2. **Wall-clock/RSS/wakeup budgets, run manually on a controlled machine.** These are the
    absolute product claims (the "under 15MB" line in the README). They're measured with
    the real release binary using `footprint`'s `phys_footprint` (Apple's own private-memory
-   metric — see the note in [`docs/manual-qa/v1-evidence.md`](manual-qa/v1-evidence.md) on
+   metric — see the note in [`docs/manual-qa/0.1.0-evidence.md`](manual-qa/0.1.0-evidence.md) on
    why this is preferred over `ps` RSS), run repeatedly, and compared against both an
    absolute budget and a percentage regression threshold. There is currently no scheduled
    CI workflow for this tier; it is a documented local command (below) run by a maintainer
@@ -127,7 +127,7 @@ file, and a scheduled or self-hosted CI workflow that retains artifacts is track
 follow-up work under issue #55.
 
 For a worked example of this measurement (a prior manual pass, before this script
-existed), see [`docs/manual-qa/v1-evidence.md`](manual-qa/v1-evidence.md), section "Idle
+existed), see [`docs/manual-qa/0.1.0-evidence.md`](manual-qa/0.1.0-evidence.md), section "Idle
 RSS with the example shape" — `phys_footprint: 14 MB`, under the 15MB bar.
 
 ## Absolute budgets (current)

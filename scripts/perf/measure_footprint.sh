@@ -50,17 +50,14 @@ trap cleanup EXIT
 mkdir -p "$scratch_dir/pinchos"
 cat > "$scratch_dir/pinchos/pinchos.toml" <<'EOF'
 [item.alpha]
-type = "command"
 run = "echo 42"
 interval = "60s"
 
 [item.beta]
-type = "command"
 run = "date '+%H:%M'"
 interval = "60s"
 
 [item.gamma]
-type = "command"
 run = "echo ok"
 interval = "60s"
 EOF
