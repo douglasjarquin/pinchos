@@ -40,7 +40,7 @@ The canonical source is [`example/pinchos.toml`](example/pinchos.toml).
 
 ```toml
 [item.codex]
-run = "quota-axi codex --short"
+run = "quota-axi --provider codex --json | jq -r '.providers[0].windows[] | select(.label==\"week\") | .percentRemaining'"
 interval = "5m"
 timeout = "15s"
 format = "{output}"
@@ -48,13 +48,19 @@ symbol = "terminal"
 
 [[item.codex.menu]]
 label = "Usage"
-run = "quota-axi codex --usage"
+run = "quota-axi --provider codex --json | jq -r '.providers[0].windows[] | select(.label==\"week\") | .percentRemaining'"
 cache = "5m"
 
 [[item.codex.menu]]
 label = "Pace"
-run = "quota-axi codex --pace"
+run = "quota-axi --provider codex --json | jq -r '.providers[0].windows[] | select(.label==\"week\") | .pace.status'"
 cache = "5m"
+
+[[item.codex.menu]]
+label = "Refresh"
+run = "quota-axi --provider codex --json | jq -r '.providers[0].windows[] | select(.label==\"week\") | .percentRemaining'"
+cache = "5m"
+action = "open https://chatgpt.com/codex"
 
 [[item.codex.menu]]
 label = "Open Codex"

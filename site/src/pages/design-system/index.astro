@@ -157,7 +157,7 @@ const spaces = [4, 8, 12, 16, 24, 32, 48, 64, 96];
           <div class="form-layout">
             <form class="specimen-form">
               <label for="item-name">Item name</label><input id="item-name" value="codex" />
-              <label for="item-command">Command</label><input id="item-command" value="quota-axi codex --short" />
+              <label for="item-command">Command</label><input id="item-command" value="quota-axi --provider codex --json | jq -r '.providers[0].windows[] | select(.label==\"week\") | .percentRemaining'" />
               <label for="item-interval">Interval</label><select id="item-interval"><option>5m</option></select>
               <button type="button" class="button button--primary">Validate</button>
             </form>

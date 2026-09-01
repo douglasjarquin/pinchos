@@ -22,7 +22,7 @@ Example:
 
 ```toml
 [item.codex]
-run = "quota-axi codex --short"
+run = "quota-axi --provider codex --json | jq -r '.providers[0].windows[] | select(.label==\"week\") | .percentRemaining'"
 interval = "5m"
 timeout = "15s"
 format = "{output}"
@@ -30,7 +30,7 @@ symbol = "terminal"
 
 [[item.codex.menu]]
 label = "Usage"
-run = "quota-axi codex --usage"
+run = "quota-axi --provider codex --json | jq -r '.providers[0].windows[] | select(.label==\"week\") | .percentRemaining'"
 cache = "5m"
 
 [[item.codex.menu]]

@@ -141,7 +141,7 @@ public struct RecoveryMenu: Equatable, Sendable {
 public enum ExampleConfig {
     public static let text = """
     [item.codex]
-    run = "quota-axi codex --short"
+    run = "quota-axi --provider codex --json | jq -r '.providers[0].windows[] | select(.label==\"week\") | .percentRemaining'"
     interval = "5m"
     timeout = "15s"
     format = "{output}"
@@ -149,18 +149,19 @@ public enum ExampleConfig {
 
     [[item.codex.menu]]
     label = "Usage"
-    run = "quota-axi codex --usage"
+    run = "quota-axi --provider codex --json | jq -r '.providers[0].windows[] | select(.label==\"week\") | .percentRemaining'"
     cache = "5m"
 
     [[item.codex.menu]]
     label = "Pace"
-    run = "quota-axi codex --pace"
+    run = "quota-axi --provider codex --json | jq -r '.providers[0].windows[] | select(.label==\"week\") | .pace.status'"
     cache = "5m"
 
     [[item.codex.menu]]
-    label = "Reset"
-    run = "quota-axi codex --reset"
+    label = "Refresh"
+    run = "quota-axi --provider codex --json | jq -r '.providers[0].windows[] | select(.label==\"week\") | .percentRemaining'"
     cache = "5m"
+    action = "open https://chatgpt.com/codex"
 
     [[item.codex.menu]]
     label = "Open Codex"
