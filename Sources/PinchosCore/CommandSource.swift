@@ -186,6 +186,10 @@ public actor CommandSource {
         } catch {
             return snapshot()
         }
+        guard refreshGeneration == generation, !Task.isCancelled else {
+            await scheduler.releasePermit()
+            return snapshot()
+        }
         runnerStarted = true
         let outcome = await runner.runIfIdle()
         let execution = await runner.awaitSettledExecution()

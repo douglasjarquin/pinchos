@@ -5,6 +5,7 @@ import XCTest
 private actor FakeSourceRunner: CommandSourceRunner {
     private var outcomes: [CommandRunOutcome]
     private var lastExecution: CommandExecution?
+    private(set) var runCount = 0
     private(set) var activeRuns = 0
     private(set) var maxActiveRuns = 0
     private let delay: Duration
@@ -15,6 +16,7 @@ private actor FakeSourceRunner: CommandSourceRunner {
     }
 
     func runIfIdle() async -> CommandRunOutcome {
+        runCount += 1
         activeRuns += 1
         maxActiveRuns = max(maxActiveRuns, activeRuns)
         if delay > .zero {
@@ -68,6 +70,19 @@ final class CommandSourceTests: XCTestCase {
         duration: 0.2
     )
 
+    private func waitUntil(
+        _ condition: @escaping () async -> Bool,
+        timeout: Duration = .seconds(2)
+    ) async throws {
+        let deadline = ContinuousClock.now.advanced(by: timeout)
+        while !(await condition()) {
+            try await Task.sleep(for: .milliseconds(10))
+            if ContinuousClock.now >= deadline {
+                throw NSError(domain: "CommandSourceTests", code: 1)
+            }
+        }
+    }
+
     private func source(
         outcomes: [CommandRunOutcome],
         clock: TestSourceClock = TestSourceClock(Date(timeIntervalSince1970: 1_700_000_000)),
@@ -87,6 +102,32 @@ final class CommandSourceTests: XCTestCase {
             runner: runner
         )
         return (source, runner, clock)
+    }
+
+    func testCancellingWhileWaitingForPermitDoesNotLaunchQueuedSource() async throws {
+        let scheduler = CommandScheduler(maxActiveSessions: 1)
+        try await scheduler.acquirePermit()
+        let runner = FakeSourceRunner(outcomes: [.completed(success)])
+        let source = CommandSource(
+            configuration: CommandSourceConfiguration(command: "ignored", timeout: 1),
+            scheduler: scheduler,
+            runner: runner
+        )
+
+        let refresh = Task { await source.refresh() }
+        try await waitUntil {
+            await scheduler.diagnostics().queuedSessions == 1
+        }
+
+        await source.cancel()
+        await scheduler.releasePermit()
+        _ = await refresh.value
+
+        let runCount = await runner.runCount
+        XCTAssertEqual(runCount, 0)
+        let diagnostics = await scheduler.diagnostics()
+        XCTAssertEqual(diagnostics.activeSessions, 0)
+        XCTAssertEqual(diagnostics.queuedSessions, 0)
     }
 
     func testRefreshPublishesBoundedCachedValueAndTerminalState() async {
