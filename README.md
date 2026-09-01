@@ -79,7 +79,7 @@ The two icon keys are mutually exclusive.
 Every non-separator menu row needs a non-empty `label`.
 Use `value` for static text, `run` for a cached command value, and `action` for a clickable command.
 A row may combine `run` and `action`.
-`cache` is required only for a dynamic row and controls its freshness interval.
+`cache` is optional for a dynamic row; when present, it controls the row's freshness interval, while an omitted value makes the row manual-only.
 `separator = true` cannot be combined with any other row key.
 
 Opening a menu is synchronous and never executes a command.
