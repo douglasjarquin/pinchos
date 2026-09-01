@@ -14,7 +14,7 @@ runner to runner. Pinchos therefore splits performance evidence into two tiers:
 1. **Deterministic architectural invariants, in ordinary PR CI.** These don't measure
    wall-clock time or absolute memory; they prove structural properties that can only be
    true or false, regardless of runner noise, e.g. "a manual-interval item never holds a
-   timer" or "retained output never exceeds its configured byte budget." Enforced by
+   timer" or "retained output never exceeds its fixed per-runner byte budget." Enforced by
    `.github/workflows/verify.yml` (`swift build`, `swift test`, `swift build -c release`).
 2. **Wall-clock/RSS/wakeup budgets, run manually on a controlled machine.** These are the
    absolute product claims (the "under 15MB" line in the README). They're measured with
@@ -77,15 +77,15 @@ Deterministic resource-invariant tests, run as part of `swift test`:
   concurrent runners, each individually configured to retain more than its fair share,
   never collectively exceed the shared budget). [`Tests/PinchosCoreTests/PerformanceInvariantTests.swift`](../Tests/PinchosCoreTests/PerformanceInvariantTests.swift)
   adds one more thing neither covers: an end-to-end, timing-independent proof (`head -c`,
-  not `yes`, so there's no process-scheduling race) that a real `run`+`max_output`
-  configuration retains *exactly* its configured budget and *exactly* the tail of the
+  not `yes`, so there's no process-scheduling race) that a real `CommandRunner` retains
+  *exactly* its explicit per-runner budget and *exactly* the tail of the
   stream through the same `CommandRunner` path `ManagedItem` uses in production. Together
   these are the architectural half of the P4 budget.
-- **Menu construction cost, independent of `max_output`** (issue #53) —
-  [`Tests/pinchosTests/StatusItemControllerTests.swift`](../Tests/pinchosTests/StatusItemControllerTests.swift)`.testMenuConstructionCostIsBoundedIndependentOfMaxOutput`
+- **Menu construction cost, independent of retained output size** (issue #53) —
+  [`Tests/pinchosTests/StatusItemControllerTests.swift`](../Tests/pinchosTests/StatusItemControllerTests.swift)`.testMenuConstructionCostIsBoundedIndependentOfRetainedOutput`
   builds a real lifecycle menu against the maximum allowed retained output
-  (`maxAllowedOutputBytes`, 4MiB) simultaneously across the primary value, primary
-  stderr, and a command action's stdout/stderr, and proves the combined size of every
+  (a pathological 4MiB retained value) simultaneously across the primary value,
+  primary stderr, and a menu action's stdout/stderr, and proves the combined size of every
   resulting menu title stays a small, fixed budget — the deterministic, timing-free half
   of "menu construction stays under a measured main-thread latency budget in a release
   build." [`Tests/PinchosCoreTests/DiagnosticPreviewFormatterTests.swift`](../Tests/PinchosCoreTests/DiagnosticPreviewFormatterTests.swift)

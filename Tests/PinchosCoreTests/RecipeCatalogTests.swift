@@ -55,10 +55,6 @@ final class RecipeCatalogTests: XCTestCase {
                     item.symbol,
                     "\(recipeURL.lastPathComponent): item.\(item.name) sets a symbol, which recipes must avoid"
                 )
-                XCTAssertNil(
-                    item.workingDirectory,
-                    "\(recipeURL.lastPathComponent): item.\(item.name) sets working_directory, which recipes must avoid"
-                )
             }
         }
     }

@@ -9,9 +9,6 @@ public struct CommandSourceConfiguration: Equatable, Sendable {
     public let command: String
     public let timeout: TimeInterval
     public let maxOutputBytes: Int
-    public let shell: [String]
-    public let workingDirectory: String?
-    public let environment: [String: String]
     public let refreshPolicy: CommandSourceRefreshPolicy
     public let staleAfter: TimeInterval?
 
@@ -19,18 +16,12 @@ public struct CommandSourceConfiguration: Equatable, Sendable {
         command: String,
         timeout: TimeInterval,
         maxOutputBytes: Int,
-        shell: [String] = CommandItemConfig.defaultShell,
-        workingDirectory: String? = nil,
-        environment: [String: String] = [:],
         refreshPolicy: CommandSourceRefreshPolicy = .manual,
         staleAfter: TimeInterval? = nil
     ) {
         self.command = command
         self.timeout = timeout
         self.maxOutputBytes = maxOutputBytes
-        self.shell = shell
-        self.workingDirectory = workingDirectory
-        self.environment = environment
         self.refreshPolicy = refreshPolicy
         self.staleAfter = staleAfter
     }
@@ -123,10 +114,7 @@ public actor CommandSource {
         self.runner = runner ?? CommandRunner(
             command: configuration.command,
             timeout: configuration.timeout,
-            maxOutputBytes: configuration.maxOutputBytes,
-            shell: configuration.shell,
-            workingDirectory: configuration.workingDirectory,
-            environment: configuration.environment
+            maxOutputBytes: configuration.maxOutputBytes
         )
     }
 

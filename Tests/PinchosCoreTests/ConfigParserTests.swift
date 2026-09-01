@@ -115,7 +115,7 @@ final class ConfigParserTests: XCTestCase {
         ])
     }
 
-    func testCanonicalRowsBridgeDynamicValuesAndActionsForCurrentRuntime() throws {
+    func testCanonicalRowsPreserveDynamicValuesAndActions() throws {
         let item = try ConfigParser.parse("""
         [item.codex]
         run = "echo primary"
@@ -126,7 +126,8 @@ final class ConfigParserTests: XCTestCase {
         label = "Open"
         action = "open ."
         """).items[0]
-        XCTAssertEqual(item.actions, [ItemAction(title: "Open", kind: .command("open ."))])
+        XCTAssertEqual(item.menu[0].run, "echo usage")
+        XCTAssertEqual(item.menu[1].action, "open .")
     }
 
     func testCanonicalRowsRejectInvalidTypesAndCombinations() {

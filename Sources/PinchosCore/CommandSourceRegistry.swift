@@ -4,21 +4,11 @@ public struct CommandSourceIdentity: Hashable, Sendable {
     public let command: String
     public let timeout: TimeInterval
     public let maxOutputBytes: Int
-    public let shell: [String]
-    public let workingDirectory: String?
-    public let environment: String
 
     public init(configuration: CommandSourceConfiguration) {
         command = configuration.command
         timeout = configuration.timeout
         maxOutputBytes = configuration.maxOutputBytes
-        shell = configuration.shell
-        workingDirectory = configuration.workingDirectory
-        environment = configuration.environment
-            .keys
-            .sorted()
-            .map { "\($0)=\(configuration.environment[$0] ?? "")" }
-            .joined(separator: "\u{1F}" )
     }
 }
 

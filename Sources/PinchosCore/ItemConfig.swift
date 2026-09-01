@@ -1,45 +1,11 @@
 import Foundation
 
-public enum ItemErrorPolicy: String, Equatable, Sendable {
-    case replace = "replace"
-    case keepLast = "keep_last"
-}
-
 public enum RefreshInterval: Equatable, Sendable {
     case scheduled(TimeInterval)
     case manual
 }
 
-public enum ItemActionKind: Equatable, Sendable {
-    case command(String)
-    case refresh
-}
-
-public struct ItemAction: Equatable, Sendable {
-    public let title: String
-    public let kind: ItemActionKind
-
-    public init(title: String, kind: ItemActionKind) {
-        self.title = title
-        self.kind = kind
-    }
-}
-
-public struct ItemInfoRow: Equatable, Sendable {
-    public let title: String
-    public let run: String
-
-    public init(title: String, run: String) {
-        self.title = title
-        self.run = run
-    }
-}
-
-/// A read-only status line shown in an item's menu (e.g. "Reset: Sep 7" or
-/// "Pace: ahead"). Unlike an `ItemAction`, it is never clickable: its command
-/// is run with the item's shell/environment when the menu opens and its stdout
-/// is rendered as a disabled row beside `title`. A failing or empty command
-/// renders the title with a `–` value rather than hiding the row.
+/// One ordered row in an item's native submenu.
 public struct MenuRowConfig: Equatable, Sendable {
     public let label: String?
     public let value: String?
@@ -95,9 +61,8 @@ public enum ItemIconSource: Equatable, Sendable {
     }
 }
 
-/// A single `[item.<name>]` command module: everything needed to run a
-/// shell command on a schedule (or manually) and project its result onto a
-/// menu-bar title and diagnostics menu. This is the only item kind in v1.
+/// A single `[item.<name>]` command module: the canonical 0.1 configuration
+/// needed to run a bounded command and project its result onto the menu bar.
 public struct CommandItemConfig: Equatable, Sendable {
     public static let defaultShell = ["/bin/sh", "-c"]
     public static let defaultTimeout: TimeInterval = 15
@@ -108,71 +73,26 @@ public struct CommandItemConfig: Equatable, Sendable {
     public let interval: RefreshInterval
     public let format: String?
     public let timeout: TimeInterval
-    public let maxOutputBytes: Int
-    public let shell: [String]
-    public let workingDirectory: String?
-    public let environment: [String: String]
-    public let errorText: String
-    public let onError: ItemErrorPolicy
-    public let staleAfter: TimeInterval?
-    public let actions: [ItemAction]
-    public let infoRows: [ItemInfoRow]
     public let menu: [MenuRowConfig]
     public let iconSource: ItemIconSource?
-    public let maxLength: Int?
-    public let hideWhenEmpty: Bool
-    public let hideOnError: Bool
-    public let hidden: Bool
-    public let iconOnly: Bool
-    public let disabled: Bool
 
     public init(
         name: String,
         run: String,
         interval: RefreshInterval,
         timeout: TimeInterval = CommandItemConfig.defaultTimeout,
-        maxOutputBytes: Int = CommandItemConfig.defaultMaxOutputBytes,
-        shell: [String] = CommandItemConfig.defaultShell,
-        workingDirectory: String? = nil,
-        environment: [String: String] = [:],
         format: String? = nil,
-        errorText: String = "\u{2013}",
-        onError: ItemErrorPolicy = .replace,
-        staleAfter: TimeInterval? = nil,
-        actions: [ItemAction] = [],
-        infoRows: [ItemInfoRow] = [],
         menu: [MenuRowConfig] = [],
         icon: String? = nil,
-        symbol: String? = nil,
-        maxLength: Int? = nil,
-        hideWhenEmpty: Bool = false,
-        hideOnError: Bool = false,
-        hidden: Bool = false,
-        iconOnly: Bool = false,
-        disabled: Bool = false
+        symbol: String? = nil
     ) {
         self.name = name
         self.run = run
         self.interval = interval
         self.format = format
         self.timeout = timeout
-        self.maxOutputBytes = maxOutputBytes
-        self.shell = shell
-        self.workingDirectory = workingDirectory
-        self.environment = environment
-        self.errorText = errorText
-        self.onError = onError
-        self.staleAfter = staleAfter
-        self.actions = actions.isEmpty ? Self.legacyActions(from: menu) : actions
-        self.infoRows = infoRows.isEmpty ? Self.legacyInfoRows(from: menu) : infoRows
         self.menu = menu
         self.iconSource = ItemIconSource.make(icon: icon, symbol: symbol)
-        self.maxLength = maxLength
-        self.hideWhenEmpty = hideWhenEmpty
-        self.hideOnError = hideOnError
-        self.hidden = hidden
-        self.iconOnly = iconOnly
-        self.disabled = disabled
     }
 
     /// Local-file path when `iconSource` is `.file`; `nil` for a symbol or
@@ -182,21 +102,6 @@ public struct CommandItemConfig: Equatable, Sendable {
 
     /// SF Symbol name when `iconSource` is `.symbol`; `nil` otherwise.
     public var symbol: String? { iconSource?.symbolName }
-
-
-    private static func legacyActions(from menu: [MenuRowConfig]) -> [ItemAction] {
-        menu.compactMap { row in
-            guard let action = row.action else { return nil }
-            return ItemAction(title: row.label ?? "", kind: .command(action))
-        }
-    }
-
-    private static func legacyInfoRows(from menu: [MenuRowConfig]) -> [ItemInfoRow] {
-        menu.compactMap { row in
-            guard let label = row.label, let run = row.run else { return nil }
-            return ItemInfoRow(title: label, run: run)
-        }
-    }
 }
 
 public typealias ItemConfig = CommandItemConfig

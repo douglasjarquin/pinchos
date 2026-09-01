@@ -152,7 +152,7 @@ final class CommandExecutionTests: XCTestCase {
     func testAggregateOutputBudgetCapsRetainedBytesAcrossManyRunners() async {
         // Each runner is individually configured to retain far more than
         // its fair share of the shared budget; the budget - not the
-        // per-runner `max_output` - is what actually bounds retained
+        // per-runner retention limit - is what actually bounds retained
         // memory once many runners produce output concurrently.
         let budget = OutputMemoryBudget(totalBytes: 256 * 1024)
         let perStreamLimit = 256 * 1024

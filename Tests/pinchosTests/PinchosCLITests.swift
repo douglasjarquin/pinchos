@@ -184,7 +184,7 @@ final class PinchosCLITests: XCTestCase {
         XCTAssertTrue(capture.stderr.contains("line 1"))
     }
 
-    func testValidateReportsShellWorkingDirectoryAndEnvironmentFailures() async throws {
+    func testValidateRejectsDeferredItemOptions() async throws {
         let root = try makeRoot()
         defer { try? FileManager.default.removeItem(at: root) }
         let configURL = root.appendingPathComponent("pinchos/pinchos.toml")
@@ -393,7 +393,7 @@ final class PinchosCLITests: XCTestCase {
         XCTAssertTrue(capture.stdout.contains("definitely_missing_pinchos_command"))
     }
 
-    func testRunUsesConfiguredShellWorkingDirectoryAndMergedEnvironment() async throws {
+    func testRunExecutesCanonicalItem() async throws {
         let root = try makeRoot()
         defer { try? FileManager.default.removeItem(at: root) }
         let configURL = root.appendingPathComponent("pinchos/pinchos.toml")

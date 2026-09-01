@@ -162,20 +162,15 @@ final class TailByteBufferTests: XCTestCase {
     }
 
     func testAppendCostDoesNotGrowWithLimitForAFixedInputSize() {
-        // The three retention sizes called out by the issue's acceptance
-        // criteria: the default, a mid-size configuration, and the largest
-        // configurable per-stream limit.
-        let limits = [64 * 1024, 1024 * 1024, maxAllowedOutputBytes]
+        let limits = [64 * 1024, 1024 * 1024, 4 * 1024 * 1024]
         let totalBytes = 4 * 1024 * 1024
         let chunkSize = 16 * 1024
 
         let durations = limits.map { measureAppendDuration(limit: $0, totalBytes: totalBytes, chunkSize: chunkSize) }
         let baseline = durations[0]
 
-        // For the same total input, appending against a much larger
-        // configured limit should not be dramatically slower - a stale
-        // O(bytesRead x limit) implementation scales its cost directly
-        // with the limit even though the same number of bytes was read.
+        // For the same total input, appending against a much larger limit
+        // should not be dramatically slower.
         for (limit, duration) in zip(limits, durations) {
             XCTAssertLessThan(duration, max(baseline * 8, 0.2), "limit \(limit): durations=\(durations)")
         }

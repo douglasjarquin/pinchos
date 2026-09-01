@@ -246,10 +246,7 @@ struct PinchosCLI {
         let runner = CommandRunner(
             command: item.run,
             timeout: item.timeout,
-            maxOutputBytes: item.maxOutputBytes,
-            shell: item.shell,
-            workingDirectory: item.workingDirectory,
-            environment: item.environment
+            maxOutputBytes: CommandItemConfig.defaultMaxOutputBytes
         )
         guard runnerRegistry.register(runner) else {
             return shutdownCoordinator?.terminationExitCode ?? CLIExitCode.execution
@@ -363,52 +360,23 @@ struct PinchosCLI {
             }
             for entry in config.items {
                 let item = entry
-                    if fileManager.isExecutableFile(atPath: item.shell[0]) {
-                        reportSuccess("item.\(item.name).shell", item.shell[0])
+                problemCount += reportIconSource(
+                    path: "item.\(item.name)",
+                    source: item.iconSource,
+                    reportAbsentAsIconNotConfigured: true
+                )
+
+                if let command = commandName(from: item.run) {
+                    if let executablePath = executablePath(for: command, processEnvironment: processEnvironment) {
+                        reportSuccess("item.\(item.name).run", executablePath)
                     } else {
-                        reportFailure("item.\(item.name).shell", "executable cannot be resolved: \(item.shell[0])")
+                        reportFailure("item.\(item.name).run", "command '\(command)' is unavailable in the process environment")
                         problemCount += 1
                     }
-
-                    if let workingDirectory = item.workingDirectory {
-                        var itemIsDirectory = ObjCBool(false)
-                        if fileManager.fileExists(atPath: workingDirectory, isDirectory: &itemIsDirectory), itemIsDirectory.boolValue {
-                            reportSuccess("item.\(item.name).working_directory", workingDirectory)
-                        } else {
-                            reportFailure("item.\(item.name).working_directory", "directory cannot be resolved: \(workingDirectory)")
-                            problemCount += 1
-                        }
-                    } else {
-                        reportSuccess("item.\(item.name).working_directory", "inherits Pinchos working directory")
-                    }
-
-                    problemCount += reportIconSource(
-                        path: "item.\(item.name)",
-                        source: item.iconSource,
-                        reportAbsentAsIconNotConfigured: true
-                    )
-
-                    if item.environment.isEmpty {
-                        reportSuccess("item.\(item.name).env", "inherits process environment")
-                    } else {
-                        reportSuccess("item.\(item.name).env", "\(item.environment.count) configured variable\(item.environment.count == 1 ? "" : "s")")
-                    }
-
-                    if let command = commandName(from: item.run) {
-                        if let executablePath = executablePath(
-                            for: command,
-                            item: item,
-                            processEnvironment: processEnvironment
-                        ) {
-                            reportSuccess("item.\(item.name).run", executablePath)
-                        } else {
-                            reportFailure("item.\(item.name).run", "command '\(command)' is unavailable in the configured shell environment")
-                            problemCount += 1
-                        }
-                    } else {
-                        reportFailure("item.\(item.name).run", "could not identify a single command to check safely")
-                        problemCount += 1
-                    }
+                } else {
+                    reportFailure("item.\(item.name).run", "could not identify a single command to check safely")
+                    problemCount += 1
+                }
             }
         }
 
@@ -422,7 +390,6 @@ struct PinchosCLI {
 
     private func executablePath(
         for command: String,
-        item: CommandItemConfig,
         processEnvironment: [String: String]
     ) -> String? {
         if command.contains("/") {
@@ -430,13 +397,12 @@ struct PinchosCLI {
             if command.hasPrefix("/") {
                 path = command
             } else {
-                let base = item.workingDirectory ?? fileManager.currentDirectoryPath
-                path = URL(fileURLWithPath: base).appendingPathComponent(command).path
+                path = URL(fileURLWithPath: fileManager.currentDirectoryPath).appendingPathComponent(command).path
             }
             return fileManager.isExecutableFile(atPath: path) ? path : nil
         }
 
-        let pathValue = item.environment["PATH"] ?? processEnvironment["PATH"] ?? ""
+        let pathValue = processEnvironment["PATH"] ?? ""
         for directory in pathValue.split(separator: ":", omittingEmptySubsequences: false) {
             let directoryPath = directory.isEmpty
                 ? fileManager.currentDirectoryPath
@@ -500,9 +466,7 @@ struct PinchosCLI {
 
     /// Reports the configured icon source. Missing files and unavailable
     /// symbols are doctor failures (the item itself stays valid and renders
-    /// text-only). `reportAbsentAsIconNotConfigured` preserves the historical
-    /// command-item "icon: not configured" line; groups omit the absent case
-    /// so existing doctor output for icon-free groups stays unchanged.
+    /// text-only).
     @discardableResult
     private func reportIconSource(
         path: String,
@@ -655,7 +619,7 @@ struct PinchosCLI {
     }
 
     private func printDoctorHelp() {
-        output.stdout("Usage: pinchos doctor\n\nInspect config accessibility, shells, commands, working directories, icons and SF Symbols, and environment.\n")
+        output.stdout("Usage: pinchos doctor\n\nInspect config accessibility, commands, icons and SF Symbols, and the process environment.\n")
     }
 
     private func printConfigPathHelp() {
@@ -667,7 +631,7 @@ struct PinchosCLI {
     }
 
     private func printRunHelp() {
-        output.stdout("Usage: pinchos run <item>\n\nExecute one configured item with the shell, working directory, merged environment, timeout, and output limits used by Pinchos.\n")
+        output.stdout("Usage: pinchos run <item>\n\nExecute one configured item with its timeout and bounded output handling.\n")
     }
 
 }

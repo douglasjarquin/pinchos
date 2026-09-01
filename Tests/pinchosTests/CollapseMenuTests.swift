@@ -20,16 +20,15 @@ private final class CollapseFakeItem: ManagedItemLifecycle {
 
     init(config: ItemConfig) {
         self.config = config
-        self.isVisible = !config.hidden
+        self.isVisible = true
     }
 
-    var actions: [ItemAction] { config.actions }
     var iconDiagnosticNote: String?
 
     func owns(statusItem: NSStatusItem) -> Bool { false }
 
     func activate() {
-        isVisible = !config.hidden
+        isVisible = true
         statusItemVisible = isVisible
     }
 
@@ -44,7 +43,7 @@ private final class CollapseFakeItem: ManagedItemLifecycle {
     func commitPreparedUpdate() {
         config = pendingConfig!
         pendingConfig = nil
-        isVisible = !config.hidden
+        isVisible = true
     }
 
     func prepareRemoval(deadline: ContinuousClock.Instant) async {}
@@ -89,8 +88,8 @@ private final class CollapseFakeItem: ManagedItemLifecycle {
         runtimeSnapshotRelease = nil
     }
 
-    func actionSnapshot(at index: Int) async -> CommandRunnerSnapshot? { nil }
-    func invokeAction(at index: Int) {}
+    func menuRowSnapshot(at index: Int) async -> CommandRunnerSnapshot? { nil }
+    func invokeMenuRow(at index: Int) {}
     func refreshNow() {}
 }
 
@@ -132,8 +131,8 @@ private final class CollapseFakeStatusItemHost: StatusItemHost {
 
 @MainActor
 final class CollapseMenuTests: XCTestCase {
-    private func command(_ name: String, hidden: Bool = false) -> ItemConfig {
-        ItemConfig(name: name, run: "echo \(name)", interval: .manual, hidden: hidden)
+    private func command(_ name: String) -> ItemConfig {
+        ItemConfig(name: name, run: "echo \(name)", interval: .manual)
     }
 
     private func makeController(
@@ -255,9 +254,9 @@ final class CollapseMenuTests: XCTestCase {
         let controller = makeController(factory: factory, host: host)
         addTeardownBlock { @MainActor in await controller.shutdown() }
 
-        await controller.apply(config: PinchosConfig(items: [command("alpha"), command("hidden", hidden: true)]))
+        await controller.apply(config: PinchosConfig(items: [command("alpha"), command("beta")]))
         let visibleItem = try createdItem("alpha", in: factory)
-        let hiddenItem = try createdItem("hidden", in: factory)
+        let secondItem = try createdItem("beta", in: factory)
         let menu = await controller.makeLifecycleMenu(forManagedItem: visibleItem)
         let collapse = try XCTUnwrap(menu.items.first(where: { $0.title == "Collapse Pinchos" }))
         XCTAssertTrue(NSApplication.shared.sendAction(collapse.action!, to: collapse.target, from: collapse))
@@ -269,7 +268,7 @@ final class CollapseMenuTests: XCTestCase {
         XCTAssertEqual(host.created, 1)
         XCTAssertEqual(host.removed, 1)
         XCTAssertTrue(visibleItem.statusItemVisible)
-        XCTAssertFalse(hiddenItem.statusItemVisible)
+        XCTAssertTrue(secondItem.statusItemVisible)
     }
 
     func testRecoveryWarningReappearsAfterExpanding() async throws {

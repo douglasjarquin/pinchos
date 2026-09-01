@@ -18,7 +18,7 @@ public final class OutputMemoryBudget: @unchecked Sendable {
     /// streams x `CommandItemConfig.defaultMaxOutputBytes` = 128KiB per item, or
     /// ~384KiB total) while still bounding a pathological many-item or
     /// many-action configuration far below what summing every configured
-    /// `max_output` would otherwise allow. See README "Output memory
+    /// the fixed per-runner retention limit would otherwise allow. See README "Output memory
     /// budget".
     public static let shared = OutputMemoryBudget(totalBytes: 8 * 1024 * 1024)
 

@@ -190,8 +190,7 @@ final class RecoveryLifecycleTests: XCTestCase {
             config: ItemConfig(
                 name: "recovery",
                 run: "count=$(cat '\(marker.path)' 2>/dev/null || echo 0); count=$((count + 1)); printf '%s' \"$count\" > '\(marker.path)'; if [ \"$count\" -eq 1 ]; then printf 'good\\n'; elif [ \"$count\" -eq 2 ]; then printf 'transient diagnostic\\n' >&2; exit 7; else printf 'recovered\\n'; fi",
-                interval: .manual,
-                onError: .keepLast
+                interval: .manual
             ),
             initiallyVisible: false
         )
@@ -236,8 +235,7 @@ final class RecoveryLifecycleTests: XCTestCase {
             config: ItemConfig(
                 name: "first-failure",
                 run: "printf 'first failure\\n' >&2; exit 9",
-                interval: .manual,
-                onError: .keepLast
+                interval: .manual
             ),
             initiallyVisible: false
         )
@@ -255,60 +253,6 @@ final class RecoveryLifecycleTests: XCTestCase {
         XCTAssertNotNil(state.lastAttemptedAt)
         XCTAssertEqual(state.lastExecution?.exitCode, 9)
         XCTAssertEqual(state.errorSummary, "first failure")
-    }
-
-    @MainActor
-    func testStaleAfterUsesInjectedClockAndTurnsStaleAtThreshold() async throws {
-        var now = Date(timeIntervalSince1970: 1_700_000_000)
-        let item = makeHeadlessItem(
-            config: ItemConfig(
-                name: "stale",
-                run: "printf 'fresh\\n'",
-                interval: .manual,
-                staleAfter: 60
-            ),
-            initiallyVisible: false,
-            now: { now }
-        )
-        addTeardownBlock { @MainActor in
-            await item.tearDown()
-        }
-
-        item.refreshNow()
-        let fresh = try await waitForRuntimeSnapshot(item) { snapshot in
-            snapshot.status == .fresh
-        }
-        XCTAssertFalse(fresh.isStale)
-
-        now = now.addingTimeInterval(60)
-        let stale = await item.runtimeSnapshot()
-        XCTAssertTrue(stale.isStale)
-        XCTAssertEqual(stale.status, .stale)
-        XCTAssertTrue(item.renderedTitle.hasSuffix("⌛︎"))
-    }
-
-    @MainActor
-    func testExtremeStaleAfterDoesNotTrapDuringPresentationScheduling() async throws {
-        let item = makeHeadlessItem(
-            config: ItemConfig(
-                name: "extreme-stale",
-                run: "printf 'value'",
-                interval: .manual,
-                staleAfter: TimeInterval(Int.max) * 3_600
-            ),
-            initiallyVisible: false
-        )
-        addTeardownBlock { @MainActor in
-            await item.tearDown()
-        }
-
-        item.refreshNow()
-        let snapshot = try await waitForRuntimeSnapshot(item) { snapshot in
-            snapshot.status == .fresh && snapshot.fullOutput == "value"
-        }
-
-        XCTAssertFalse(snapshot.isStale)
-        XCTAssertEqual(item.renderedTitle, "value")
     }
 
     @MainActor
@@ -451,7 +395,7 @@ final class RecoveryLifecycleTests: XCTestCase {
                 name: "shutdown-runners",
                 run: command(mainPIDURL),
                 interval: .manual,
-                actions: [ItemAction(title: "Run action", kind: .command(command(actionPIDURL)))]
+                menu: [MenuRowConfig(label: "Run action", action: command(actionPIDURL))]
             ),
             initiallyVisible: false
         )
@@ -461,23 +405,23 @@ final class RecoveryLifecycleTests: XCTestCase {
         }
 
         item.refreshNow()
-        item.invokeAction(at: 0)
+        item.invokeMenuRow(at: 0)
 
         let mainPID = try await waitForPID(at: mainPIDURL)
         let actionPID = try await waitForPID(at: actionPIDURL)
         try await waitForRunning(item)
-        try await waitForActionRunning(item, at: 0)
+        try await waitForMenuRowRunning(item, at: 0)
 
         await item.tearDown()
 
         let mainGone = await waitUntilGone(mainPID)
         let actionGone = await waitUntilGone(actionPID)
         let runnerSnapshot = await item.runnerSnapshot()
-        let actionSnapshot = await item.actionSnapshot(at: 0)
+        let menuRowSnapshot = await item.menuRowSnapshot(at: 0)
         XCTAssertTrue(mainGone, "item shutdown left main descendant \(mainPID) alive")
         XCTAssertTrue(actionGone, "item shutdown left action descendant \(actionPID) alive")
         XCTAssertFalse(runnerSnapshot.isRunning)
-        XCTAssertFalse(actionSnapshot?.isRunning ?? true)
+        XCTAssertFalse(menuRowSnapshot?.isRunning ?? true)
     }
 
     /// Issue #54: a single item's primary and action runner cancellation
@@ -493,7 +437,7 @@ final class RecoveryLifecycleTests: XCTestCase {
                 name: "concurrent-cancel",
                 run: "printf primary",
                 interval: .manual,
-                actions: [ItemAction(title: "Run action", kind: .command("printf action"))]
+                menu: [MenuRowConfig(label: "Run action", action: "printf action")]
             ),
             initiallyVisible: false
         )
@@ -532,12 +476,12 @@ final class RecoveryLifecycleTests: XCTestCase {
                 name: "deadline-bound",
                 run: "printf primary",
                 interval: .manual,
-                actions: [ItemAction(title: "Run action", kind: .command("printf action"))]
+                menu: [MenuRowConfig(label: "Run action", action: "printf action")]
             ),
             initiallyVisible: false
         )
         item.cancellationSettlementDelayForTesting = { role in
-            if role == "action:0" {
+            if role == "menu-row:0" {
                 try? await Task.sleep(for: .seconds(2))
             }
         }
@@ -552,49 +496,10 @@ final class RecoveryLifecycleTests: XCTestCase {
         let elapsed = started.duration(to: clock.now)
 
         XCTAssertLessThan(elapsed, .seconds(2), "prepareRemoval must not block past its shared deadline")
-        XCTAssertEqual(reportedTimeouts.map(\.identity), ["deadline-bound:action[0]"])
+        XCTAssertEqual(reportedTimeouts.map(\.identity), ["deadline-bound:menu-row[0]"])
 
         item.cancellationSettlementDelayForTesting = nil
         item.commitRemoval()
-    }
-
-    @MainActor
-    func testStaleScheduleAfterConfigReloadUsesLastSuccessfulUpdate() async throws {
-        let item = makeHeadlessItem(
-            config: ItemConfig(
-                name: "stale-reload",
-                run: "printf value",
-                interval: .manual,
-                staleAfter: 5
-            ),
-            initiallyVisible: false
-        )
-        addTeardownBlock { @MainActor in
-            await item.tearDown()
-        }
-
-        item.refreshNow()
-        _ = try await waitForRuntimeSnapshot(item) { snapshot in
-            snapshot.status == .fresh && snapshot.fullOutput == "value"
-        }
-        try await Task.sleep(for: .milliseconds(1_200))
-
-        await item.prepareUpdate(config: ItemConfig(
-            name: "stale-reload",
-            run: "printf value",
-            interval: .manual,
-            staleAfter: 2
-        ))
-        item.commitPreparedUpdate()
-
-        let freshAfterReload = await item.runtimeSnapshot()
-        XCTAssertEqual(freshAfterReload.status, .fresh)
-        try await Task.sleep(for: .milliseconds(1_100))
-
-        let stale = await item.runtimeSnapshot()
-        XCTAssertEqual(stale.status, .stale)
-        XCTAssertTrue(stale.isStale)
-        XCTAssertTrue(item.renderedTitle.hasSuffix("⌛︎"))
     }
 
     @MainActor
@@ -691,102 +596,12 @@ final class RecoveryLifecycleTests: XCTestCase {
     }
 
     @MainActor
-    func testBuiltInRefreshActionUsesItemRunnerAndSharesItsBusyGate() async throws {
-        let item = makeHeadlessItem(
-            config: ItemConfig(
-                name: "refresh-action",
-                run: "sleep 0.25; printf refreshed",
-                interval: .manual,
-                actions: [ItemAction(title: "Refresh now", kind: .refresh)]
-            ),
-            initiallyVisible: false
-        )
-        addTeardownBlock { @MainActor in
-            await item.tearDown()
-        }
-
-        item.invokeAction(at: 0)
-        try await waitForRunning(item)
-        let actionSnapshot = await item.actionSnapshot(at: 0)
-        XCTAssertNil(actionSnapshot)
-
-        item.invokeAction(at: 0)
-        let skipped = try await waitForSkippedRefresh(item)
-        XCTAssertEqual(skipped.skippedRefreshes, 1)
-
-        try await waitForIdle(item)
-        _ = try await waitForRuntimeSnapshot(item) { snapshot in
-            snapshot.fullOutput == "refreshed" && snapshot.status == .fresh
-        }
-    }
-
-    @MainActor
-    func testCommandActionInheritsEnvironmentAndSkipsRepeatedInvocation() async throws {
-        let item = makeHeadlessItem(
-            config: ItemConfig(
-                name: "command-action",
-                run: "printf unused",
-                interval: .manual,
-                environment: ["PINCHOS_ACTION_VALUE": "configured"],
-                actions: [
-                    ItemAction(
-                        title: "Run action",
-                        kind: .command("printf '%s' \"$PINCHOS_ACTION_VALUE\"; sleep 0.25")
-                    )
-                ]
-            ),
-            initiallyVisible: false
-        )
-        addTeardownBlock { @MainActor in
-            await item.tearDown()
-        }
-
-        item.invokeAction(at: 0)
-        try await waitForActionRunning(item, at: 0)
-        item.invokeAction(at: 0)
-        let skipped = try await waitForActionSkipped(item, at: 0)
-        XCTAssertEqual(skipped.skippedRefreshes, 1)
-
-        let completed = try await waitForActionExecution(item, at: 0)
-        XCTAssertEqual(completed.lastExecution?.terminalReason, .exited(code: 0))
-        XCTAssertEqual(completed.lastExecution?.stdout, "configured")
-    }
-
-    @MainActor
-    func testCommandActionFailureRetainsDiagnosticsForMenuProjection() async throws {
-        let item = makeHeadlessItem(
-            config: ItemConfig(
-                name: "failed-action",
-                run: "printf unused",
-                interval: .manual,
-                actions: [
-                    ItemAction(
-                        title: "Fail action",
-                        kind: .command("printf 'action-error\\n' >&2; exit 7")
-                    )
-                ]
-            ),
-            initiallyVisible: false
-        )
-        addTeardownBlock { @MainActor in
-            await item.tearDown()
-        }
-
-        item.invokeAction(at: 0)
-        let snapshot = try await waitForActionExecution(item, at: 0)
-
-        XCTAssertEqual(snapshot.lastExecution?.terminalReason, .exited(code: 7))
-        XCTAssertEqual(snapshot.lastExecution?.stderr, "action-error\n")
-    }
-
-    @MainActor
     func testFailedRefreshClearsRunningFeedback() async throws {
         let item = makeHeadlessItem(
             config: ItemConfig(
                 name: "manual",
                 run: "exit 1",
-                interval: .manual,
-                errorText: "ERR"
+                interval: .manual
             ),
             menuDelegate: NoopStatusItemMenuDelegate(),
             initiallyVisible: false
@@ -801,17 +616,17 @@ final class RecoveryLifecycleTests: XCTestCase {
         }
 
         XCTAssertEqual(state.errorSummary, "1")
-        XCTAssertEqual(item.renderedTitle, "ERR ⚠︎")
+        XCTAssertEqual(item.renderedTitle, "– ⚠︎")
     }
 
     @MainActor
-    func testMaxLengthTruncatesRenderedTitleButKeepsFullOutputForDiagnostics() async throws {
+    func testRenderedTitleUsesFixedConciseLimitButKeepsFullOutputForDiagnostics() async throws {
+        let output = String(repeating: "v", count: 70)
         let item = makeHeadlessItem(
             config: ItemConfig(
-                name: "max-length",
-                run: "printf 'hello world'",
-                interval: .manual,
-                maxLength: 5
+                name: "concise-title",
+                run: "printf '\(output)'",
+                interval: .manual
             ),
             initiallyVisible: false
         )
@@ -821,262 +636,15 @@ final class RecoveryLifecycleTests: XCTestCase {
 
         item.refreshNow()
         let snapshot = try await waitForRuntimeSnapshot(item) { snapshot in
-            snapshot.fullOutput == "hello world"
+            snapshot.fullOutput == output
         }
 
-        XCTAssertEqual(item.renderedTitle, "hell\u{2026}")
-        XCTAssertEqual(snapshot.fullOutput, "hello world")
+        XCTAssertEqual(item.renderedTitle, String(output.prefix(59)) + "\u{2026}")
+        XCTAssertEqual(snapshot.fullOutput, output)
     }
 
     @MainActor
-    func testMaxLengthTruncationPreservesGraphemeClustersInRenderedTitle() async throws {
-        let item = makeHeadlessItem(
-            config: ItemConfig(
-                name: "max-length-emoji",
-                run: "printf '🇺🇸hi'",
-                interval: .manual,
-                maxLength: 2
-            ),
-            initiallyVisible: false
-        )
-        addTeardownBlock { @MainActor in
-            await item.tearDown()
-        }
-
-        item.refreshNow()
-        _ = try await waitForRuntimeSnapshot(item) { snapshot in
-            snapshot.fullOutput == "🇺🇸hi"
-        }
-
-        // A naive UTF-16/scalar-based truncation would split the two-scalar
-        // flag emoji; grapheme-cluster counting must keep it intact.
-        XCTAssertEqual(item.renderedTitle, "🇺🇸\u{2026}")
-    }
-
-    @MainActor
-    func testHideWhenEmptyHidesOnEmptySuccessAndRestoresOnLaterNonEmptySuccess() async throws {
-        let marker = FileManager.default.temporaryDirectory
-            .appendingPathComponent("pinchos-hide-when-empty-\(UUID().uuidString)")
-        let item = makeHeadlessItem(
-            config: ItemConfig(
-                name: "hide-empty",
-                run: "if [ -e '\(marker.path)' ]; then printf 'value\\n'; else printf ''; fi",
-                interval: .manual,
-                hideWhenEmpty: true
-            ),
-            initiallyVisible: false
-        )
-        addTeardownBlock { @MainActor in
-            await item.tearDown()
-            try? FileManager.default.removeItem(at: marker)
-        }
-
-        item.activate()
-        _ = try await waitForRuntimeSnapshot(item) { snapshot in
-            snapshot.status == .fresh && snapshot.fullOutput == ""
-        }
-        XCTAssertFalse(item.isVisible)
-
-        try Data().write(to: marker)
-        item.refreshNow()
-        _ = try await waitForRuntimeSnapshot(item) { snapshot in
-            snapshot.fullOutput == "value\n"
-        }
-        XCTAssertTrue(item.isVisible)
-    }
-
-    @MainActor
-    func testHideOnErrorHidesCompletedFailureIncludingFirstRunAndRestoresAfterRecovery() async throws {
-        let marker = FileManager.default.temporaryDirectory
-            .appendingPathComponent("pinchos-hide-on-error-\(UUID().uuidString)")
-        let item = makeHeadlessItem(
-            config: ItemConfig(
-                name: "hide-on-error",
-                run: "if [ -e '\(marker.path)' ]; then printf good; else exit 1; fi",
-                interval: .manual,
-                hideOnError: true
-            ),
-            initiallyVisible: false
-        )
-        addTeardownBlock { @MainActor in
-            await item.tearDown()
-            try? FileManager.default.removeItem(at: marker)
-        }
-
-        item.activate()
-        _ = try await waitForRuntimeSnapshot(item) { snapshot in
-            snapshot.status == .error
-        }
-        XCTAssertFalse(item.isVisible)
-
-        try Data().write(to: marker)
-        item.refreshNow()
-        _ = try await waitForRuntimeSnapshot(item) { snapshot in
-            snapshot.status == .fresh
-        }
-        XCTAssertTrue(item.isVisible)
-    }
-
-    @MainActor
-    func testExplicitlyHiddenItemStaysHiddenUntilConfigReloadUnhidesIt() async throws {
-        let hiddenConfig = ItemConfig(
-            name: "manual-hidden",
-            run: "printf visible",
-            interval: .manual,
-            hidden: true
-        )
-        let visibleConfig = ItemConfig(
-            name: "manual-hidden",
-            run: "printf visible",
-            interval: .manual
-        )
-        let item = makeHeadlessItem(config: hiddenConfig, initiallyVisible: false)
-        addTeardownBlock { @MainActor in await item.tearDown() }
-
-        item.activate()
-        _ = try await waitForRuntimeSnapshot(item) { snapshot in
-            snapshot.fullOutput == "visible"
-        }
-        XCTAssertFalse(item.isVisible)
-
-        await item.prepareUpdate(config: visibleConfig)
-        item.commitPreparedUpdate()
-        _ = try await waitForRuntimeSnapshot(item) { _ in item.isVisible }
-        XCTAssertTrue(item.isVisible)
-    }
-
-    @MainActor
-    func testHideOnErrorAndHideWhenEmptyNeverHideAnItemBeforeItsFirstAttempt() async throws {
-        let item = makeHeadlessItem(
-            config: ItemConfig(
-                name: "pre-attempt",
-                run: "sleep 0.3; exit 1",
-                interval: .manual,
-                hideWhenEmpty: true,
-                hideOnError: true
-            ),
-            initiallyVisible: true
-        )
-        addTeardownBlock { @MainActor in
-            await item.tearDown()
-        }
-
-        item.refreshNow()
-        try await waitForRunning(item)
-        // Still mid-flight with no completed execution yet: hide policies must not apply.
-        XCTAssertTrue(item.isVisible)
-
-        _ = try await waitForRuntimeSnapshot(item) { snapshot in
-            snapshot.status == .error
-        }
-        XCTAssertFalse(item.isVisible)
-    }
-
-    @MainActor
-    func testDisabledItemStaysVisibleButPreventsScheduledAndActionExecution() async throws {
-        let marker = FileManager.default.temporaryDirectory
-            .appendingPathComponent("pinchos-disabled-\(UUID().uuidString)")
-        let item = makeHeadlessItem(
-            config: ItemConfig(
-                name: "disabled",
-                run: "touch '\(marker.path)'; printf ran",
-                interval: .manual,
-                actions: [ItemAction(title: "Run", kind: .command("touch '\(marker.path)'"))],
-                disabled: true
-            ),
-            initiallyVisible: true
-        )
-        addTeardownBlock { @MainActor in
-            await item.tearDown()
-            try? FileManager.default.removeItem(at: marker)
-        }
-
-        XCTAssertTrue(item.isVisible)
-
-        item.refreshNow()
-        item.invokeAction(at: 0)
-        try await Task.sleep(for: .milliseconds(200))
-
-        XCTAssertFalse(FileManager.default.fileExists(atPath: marker.path))
-        XCTAssertTrue(item.isVisible)
-        let snapshot = await item.runnerSnapshot()
-        XCTAssertNil(snapshot.lastExecution)
-    }
-
-    @MainActor
-    func testTogglingDisabledThroughLiveReloadCancelsActiveWorkWithoutLeakingChildProcess() async throws {
-        let childPIDURL = FileManager.default.temporaryDirectory
-            .appendingPathComponent("pinchos-disabled-reload-child-\(UUID().uuidString)")
-        let command = "(trap '' TERM; while :; do sleep 1; done) & child=$!; printf '%s' \"$child\" > '\(childPIDURL.path)'; wait \"$child\""
-        let item = makeHeadlessItem(
-            config: ItemConfig(
-                name: "disable-reload",
-                run: command,
-                interval: .manual
-            ),
-            initiallyVisible: false
-        )
-        addTeardownBlock { @MainActor in
-            await item.tearDown()
-            try? FileManager.default.removeItem(at: childPIDURL)
-        }
-
-        item.refreshNow()
-        let childPID = try await waitForPID(at: childPIDURL)
-        try await waitForRunning(item)
-
-        await item.prepareUpdate(config: ItemConfig(
-            name: "disable-reload",
-            run: command,
-            interval: .manual,
-            disabled: true
-        ))
-        let gone = await waitUntilGone(childPID)
-        XCTAssertTrue(gone, "toggling disabled left child process \(childPID) alive")
-        item.commitPreparedUpdate()
-
-        let snapshot = await item.runnerSnapshot()
-        XCTAssertFalse(snapshot.isRunning)
-    }
-
-    @MainActor
-    func testReEnablingADisabledItemThroughLiveReloadAllowsRefreshAgain() async throws {
-        let item = makeHeadlessItem(
-            config: ItemConfig(
-                name: "re-enable",
-                run: "printf value",
-                interval: .manual,
-                disabled: true
-            ),
-            initiallyVisible: false
-        )
-        addTeardownBlock { @MainActor in
-            await item.tearDown()
-        }
-
-        item.refreshNow()
-        try await Task.sleep(for: .milliseconds(100))
-        var snapshot = await item.runnerSnapshot()
-        XCTAssertNil(snapshot.lastExecution)
-
-        await item.prepareUpdate(config: ItemConfig(
-            name: "re-enable",
-            run: "printf value",
-            interval: .manual,
-            disabled: false
-        ))
-        item.commitPreparedUpdate()
-
-        item.refreshNow()
-        _ = try await waitForRuntimeSnapshot(item) { snapshot in
-            snapshot.fullOutput == "value"
-        }
-        snapshot = await item.runnerSnapshot()
-        XCTAssertEqual(snapshot.lastExecution?.stdout, "value")
-    }
-
-    @MainActor
-    func testIconOnlyClearsDisplayedTitleWhenIconLoadsButKeepsFullTitle() async throws {
+    func testConfiguredIconKeepsDisplayedTitleAndFullTitle() async throws {
         let iconURL = FileManager.default.temporaryDirectory
             .appendingPathComponent("pinchos-icon-only-\(UUID().uuidString).png")
         try writeTestIcon(to: iconURL)
@@ -1085,8 +653,7 @@ final class RecoveryLifecycleTests: XCTestCase {
                 name: "icon-only",
                 run: "printf value",
                 interval: .manual,
-                icon: iconURL.path,
-                iconOnly: true
+                icon: iconURL.path
             ),
             initiallyVisible: false
         )
@@ -1101,18 +668,17 @@ final class RecoveryLifecycleTests: XCTestCase {
         }
 
         XCTAssertEqual(item.renderedTitle, "value")
-        XCTAssertEqual(item.renderedButtonTitle, "")
+        XCTAssertEqual(item.renderedButtonTitle, "value")
     }
 
     @MainActor
-    func testIconOnlyFallsBackToTextWhenConfiguredIconIsUnreadable() async throws {
+    func testUnreadableConfiguredIconFallsBackToText() async throws {
         let item = makeHeadlessItem(
             config: ItemConfig(
                 name: "icon-only-missing",
                 run: "printf value",
                 interval: .manual,
-                icon: "/nonexistent/path/to/pinchos-test-icon.png",
-                iconOnly: true
+                icon: "/nonexistent/path/to/pinchos-test-icon.png"
             ),
             initiallyVisible: false
         )
@@ -1129,7 +695,7 @@ final class RecoveryLifecycleTests: XCTestCase {
     }
 
     @MainActor
-    func testUnavailableSymbolFallsBackToTextWithoutCrashingIncludingIconOnly() async throws {
+    func testUnavailableSymbolFallsBackToTextWithoutCrashing() async throws {
         let renderer = StatusItemIconRenderer(
             loadFileImage: { NSImage(contentsOfFile: $0) },
             loadSymbolImage: { _ in nil }
@@ -1139,8 +705,7 @@ final class RecoveryLifecycleTests: XCTestCase {
                 name: "missing-symbol",
                 run: "printf value",
                 interval: .manual,
-                symbol: "pinchos.definitely.not.a.real.symbol",
-                iconOnly: true
+                symbol: "pinchos.definitely.not.a.real.symbol"
             ),
             menuDelegate: NoopStatusItemMenuDelegate(),
             initiallyVisible: false,
@@ -1163,7 +728,7 @@ final class RecoveryLifecycleTests: XCTestCase {
     }
 
     @MainActor
-    func testKnownSymbolWithIconOnlyClearsDisplayedTitleThroughRendererSeam() async throws {
+    func testKnownSymbolKeepsDisplayedTitleThroughRendererSeam() async throws {
         let renderer = StatusItemIconRenderer(
             loadFileImage: { _ in nil },
             loadSymbolImage: { name in
@@ -1176,8 +741,7 @@ final class RecoveryLifecycleTests: XCTestCase {
                 name: "symbol-only",
                 run: "printf value",
                 interval: .manual,
-                symbol: "chart.bar.fill",
-                iconOnly: true
+                symbol: "chart.bar.fill"
             ),
             menuDelegate: NoopStatusItemMenuDelegate(),
             initiallyVisible: false,
@@ -1196,7 +760,7 @@ final class RecoveryLifecycleTests: XCTestCase {
 
         XCTAssertTrue(item.iconIsLoaded)
         XCTAssertEqual(item.renderedTitle, "value")
-        XCTAssertEqual(item.renderedButtonTitle, "")
+        XCTAssertEqual(item.renderedButtonTitle, "value")
         XCTAssertNil(item.iconDiagnosticNote)
     }
 
@@ -1379,10 +943,10 @@ final class RecoveryLifecycleTests: XCTestCase {
     }
 
     @MainActor
-    private func waitForActionRunning(_ item: ManagedItem, at index: Int) async throws {
+    private func waitForMenuRowRunning(_ item: ManagedItem, at index: Int) async throws {
         let deadline = Date().addingTimeInterval(2)
         while Date() < deadline {
-            if await item.actionSnapshot(at: index)?.isRunning == true {
+            if await item.menuRowSnapshot(at: index)?.isRunning == true {
                 return
             }
             try await Task.sleep(for: .milliseconds(10))
@@ -1390,15 +954,15 @@ final class RecoveryLifecycleTests: XCTestCase {
         throw NSError(
             domain: "RecoveryLifecycleTests",
             code: 10,
-            userInfo: [NSLocalizedDescriptionKey: "command action did not become active"]
+            userInfo: [NSLocalizedDescriptionKey: "menu row command did not become active"]
         )
     }
 
     @MainActor
-    private func waitForActionSkipped(_ item: ManagedItem, at index: Int) async throws -> CommandRunnerSnapshot {
+    private func waitForMenuRowSkipped(_ item: ManagedItem, at index: Int) async throws -> CommandRunnerSnapshot {
         let deadline = Date().addingTimeInterval(2)
         while Date() < deadline {
-            if let snapshot = await item.actionSnapshot(at: index), snapshot.skippedRefreshes > 0 {
+            if let snapshot = await item.menuRowSnapshot(at: index), snapshot.skippedRefreshes > 0 {
                 return snapshot
             }
             try await Task.sleep(for: .milliseconds(10))
@@ -1406,15 +970,15 @@ final class RecoveryLifecycleTests: XCTestCase {
         throw NSError(
             domain: "RecoveryLifecycleTests",
             code: 11,
-            userInfo: [NSLocalizedDescriptionKey: "repeated command action was not coalesced while active"]
+            userInfo: [NSLocalizedDescriptionKey: "repeated menu row command was not coalesced while active"]
         )
     }
 
     @MainActor
-    private func waitForActionExecution(_ item: ManagedItem, at index: Int) async throws -> CommandRunnerSnapshot {
+    private func waitForMenuRowExecution(_ item: ManagedItem, at index: Int) async throws -> CommandRunnerSnapshot {
         let deadline = Date().addingTimeInterval(2)
         while Date() < deadline {
-            if let snapshot = await item.actionSnapshot(at: index), snapshot.lastExecution != nil {
+            if let snapshot = await item.menuRowSnapshot(at: index), snapshot.lastExecution != nil {
                 return snapshot
             }
             try await Task.sleep(for: .milliseconds(10))
@@ -1422,7 +986,7 @@ final class RecoveryLifecycleTests: XCTestCase {
         throw NSError(
             domain: "RecoveryLifecycleTests",
             code: 12,
-            userInfo: [NSLocalizedDescriptionKey: "command action did not finish"]
+            userInfo: [NSLocalizedDescriptionKey: "menu row command did not finish"]
         )
     }
 

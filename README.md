@@ -13,7 +13,7 @@ swift test
 ```
 
 The release executable is `.build/release/pinchos`.
-The packaged application and Homebrew distribution are owned by issue [#15](https://github.com/douglasjarquin/pinchos/issues/15).
+The packaged application and Homebrew distribution are owned by issue [#15](https://github.com/douglasjarquin/pinchos/issues/15); release mechanics are documented in [docs/releasing.md](docs/releasing.md).
 
 ## Quick start
 
