@@ -124,7 +124,7 @@ directory. It is a stub, not a full harness: it only covers P1, it doesn't yet r
 baseline to diff against, and its rerun/threshold policy is the manual guidance in this
 document rather than automated pass/fail. Extending it to P0–P5, a baseline/threshold
 file, and a scheduled or self-hosted CI workflow that retains artifacts is tracked as
-follow-up work under issue #55.
+follow-up work in the 0.1 roadmap.
 
 The retained reference sample was captured at runtime commit `44bb2b3d3fd8bc90ae52e4d2da2dd7b4b0e7aeb6` and is recorded in [`docs/manual-qa/0.1.0-p1.json`](manual-qa/0.1.0-p1.json).
 The later evidence-only commit does not change executable code.
