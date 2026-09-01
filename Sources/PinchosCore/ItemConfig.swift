@@ -183,6 +183,7 @@ public struct CommandItemConfig: Equatable, Sendable {
     /// SF Symbol name when `iconSource` is `.symbol`; `nil` otherwise.
     public var symbol: String? { iconSource?.symbolName }
 
+
     private static func legacyActions(from menu: [MenuRowConfig]) -> [ItemAction] {
         menu.compactMap { row in
             guard let action = row.action else { return nil }
@@ -198,81 +199,7 @@ public struct CommandItemConfig: Equatable, Sendable {
     }
 }
 
-/// A configured Pincho item.
-public enum ItemConfig: Equatable, Sendable {
-    case command(CommandItemConfig)
-
-    public var name: String { command.name }
-    public var commandConfig: CommandItemConfig { command }
-
-    public var command: CommandItemConfig {
-        switch self {
-        case .command(let config): return config
-        }
-    }
-
-    public var iconSource: ItemIconSource? { command.iconSource }
-    public var hidden: Bool { command.hidden }
-}
-
-extension ItemConfig {
-    /// Convenience initializer mirroring `CommandItemConfig.init` so every
-    /// existing "one flat command item" call site keeps working unchanged
-    /// against the now-typed `ItemConfig` sum type.
-    public init(
-        name: String,
-        run: String,
-        interval: RefreshInterval,
-        timeout: TimeInterval = CommandItemConfig.defaultTimeout,
-        maxOutputBytes: Int = CommandItemConfig.defaultMaxOutputBytes,
-        shell: [String] = CommandItemConfig.defaultShell,
-        workingDirectory: String? = nil,
-        environment: [String: String] = [:],
-        format: String? = nil,
-        errorText: String = "\u{2013}",
-        onError: ItemErrorPolicy = .replace,
-        staleAfter: TimeInterval? = nil,
-        actions: [ItemAction] = [],
-        info: [ItemInfoRow] = [],
-        menu: [MenuRowConfig] = [],
-        icon: String? = nil,
-        symbol: String? = nil,
-        maxLength: Int? = nil,
-        hideWhenEmpty: Bool = false,
-        hideOnError: Bool = false,
-        hidden: Bool = false,
-        iconOnly: Bool = false,
-        disabled: Bool = false
-    ) {
-        self = .command(
-            CommandItemConfig(
-                name: name,
-                run: run,
-                interval: interval,
-                timeout: timeout,
-                maxOutputBytes: maxOutputBytes,
-                shell: shell,
-                workingDirectory: workingDirectory,
-                environment: environment,
-                format: format,
-                errorText: errorText,
-                onError: onError,
-                staleAfter: staleAfter,
-                actions: actions,
-                infoRows: info,
-                menu: menu,
-                icon: icon,
-                symbol: symbol,
-                maxLength: maxLength,
-                hideWhenEmpty: hideWhenEmpty,
-                hideOnError: hideOnError,
-                hidden: hidden,
-                iconOnly: iconOnly,
-                disabled: disabled
-            )
-        )
-    }
-}
+public typealias ItemConfig = CommandItemConfig
 
 public struct PinchosConfig: Equatable, Sendable {
     public let items: [ItemConfig]

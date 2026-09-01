@@ -9,7 +9,6 @@ private final class CollapseFakeItem: ManagedItemLifecycle {
     private var runtimeSnapshotStartWaiter: CheckedContinuation<Void, Never>?
     private var runtimeSnapshotRelease: CheckedContinuation<Void, Never>?
     private(set) var config: ItemConfig
-    let isTopLevel: Bool
     private(set) var isVisible: Bool
     private(set) var statusItemVisible = false
     var blocksRuntimeSnapshot = false
@@ -19,24 +18,23 @@ private final class CollapseFakeItem: ManagedItemLifecycle {
     var runtimeValue: String?
     private(set) var runtimeSnapshotStarted = false
 
-    init(config: ItemConfig, isTopLevel: Bool) {
+    init(config: ItemConfig) {
         self.config = config
-        self.isTopLevel = isTopLevel
         self.isVisible = !config.hidden
     }
 
-    var actions: [ItemAction] { config.commandConfig.actions }
+    var actions: [ItemAction] { config.actions }
     var iconDiagnosticNote: String?
 
     func owns(statusItem: NSStatusItem) -> Bool { false }
 
     func activate() {
         isVisible = !config.hidden
-        statusItemVisible = isTopLevel && isVisible
+        statusItemVisible = isVisible
     }
 
     func setStatusItemVisible(_ visible: Bool) {
-        statusItemVisible = visible && isTopLevel && isVisible
+        statusItemVisible = visible && isVisible
     }
 
     func prepareUpdate(config: ItemConfig, deadline: ContinuousClock.Instant) async {
@@ -103,10 +101,9 @@ private final class CollapseFakeFactory: ManagedItemFactory {
     func make(
         config: ItemConfig,
         menuDelegate: StatusItemMenuDelegate,
-        initiallyVisible: Bool,
-        isTopLevel: Bool
+        initiallyVisible: Bool
     ) -> any ManagedItemLifecycle {
-        let item = CollapseFakeItem(config: config, isTopLevel: isTopLevel)
+        let item = CollapseFakeItem(config: config)
         created.append(item)
         return item
     }

@@ -75,55 +75,6 @@ If cleanup cannot settle within that bound, Pinchos uses its deliberate forced-e
 The signal integration uses `DispatchSourceSignal` for safe handoff.
 The raw POSIX signal disposition does no async work, actor calls, locking, or allocation; the DispatchSource event handler only posts the signal number to the main actor, where the bounded cleanup state machine runs.
 
-### Launch at login
-
-```sh
-.build/release/pinchos service install    # install and enable
-.build/release/pinchos service status     # report configuration, enabled, and running state
-.build/release/pinchos service uninstall  # disable and remove
-```
-
-`pinchos service install` writes and loads a per-user `launchd` LaunchAgent at
-`~/Library/LaunchAgents/com.pinchos.agent.plist`, targeting the currently
-running binary's absolute path (pass `--executable <absolute-path>` to target
-a different one, for example after copying a new build to
-`~/.local/bin/pinchos`). This is a plain per-user LaunchAgent, not `SMAppService`:
-Pinchos today ships as a standalone SwiftPM binary rather than a signed `.app`
-bundle, and `SMAppService`'s login-item registration is keyed by bundle
-identifier, so it doesn't apply until the `.app` packaging work in [#15](https://github.com/douglasjarquin/pinchos/issues/15).
-No root privileges are required or used.
-
-- **Idempotent**: running `install` again with the same target executable
-  while already enabled makes no changes. Re-running it after upgrading the
-  binary (or with a different `--executable`) unloads the old configuration
-  and loads the new one in place.
-- **One fixed location**: the agent's label (`com.pinchos.agent`) and plist
-  path never change, so there is exactly one possible configuration file for
-  this mechanism — reinstalling always converges that single file instead of
-  accumulating stale entries under old paths or labels, and `uninstall`
-  removes it outright rather than leaving it disabled on disk.
-- **Deterministic environment**: the generated plist sets `PATH` and `HOME`
-  explicitly and does not depend on any interactive shell profile — `launchd`
-  itself never sources `.zshrc`/`.bash_profile` either way, but the generated
-  configuration pins this down explicitly rather than relying on that
-  incidentally. `pinchos` is launched with `RunAtLoad` only, so quitting it
-  normally does not trigger an automatic relaunch until the next login.
-- `service status` reports the configuration file's presence and target
-  executable, whether the agent is enabled (loaded in `launchd`), and whether
-  it is currently running (with its pid). Exit code is `0` when enabled, `1`
-  when not installed or not enabled.
-- stdout/stderr from the launched process are redirected to
-  `~/Library/Logs/pinchos/pinchos.log` and `pinchos.err.log`.
-
-**Manual recovery / removal**, if `pinchos` is ever unavailable to run
-`service uninstall` (for example after deleting the binary):
-
-```sh
-launchctl bootout gui/$(id -u)/com.pinchos.agent   # stop and unload, ignore errors if not loaded
-rm -f ~/Library/LaunchAgents/com.pinchos.agent.plist
-rm -rf ~/Library/Logs/pinchos                      # optional: also remove logs
-```
-
 ## Config
 
 Pinchos reads `$XDG_CONFIG_HOME/pinchos/pinchos.toml` if `XDG_CONFIG_HOME` is set, otherwise `~/.config/pinchos/pinchos.toml`.
@@ -146,19 +97,17 @@ The release binary also provides setup, validation, diagnostics, and one-shot ex
 .build/release/pinchos config-path
 .build/release/pinchos open-config
 .build/release/pinchos run codex
-.build/release/pinchos service install
 ```
 
 Use `pinchos <command> --help` for command-specific help.
 `init` creates the config directory and writes the documented example only when the config does not already exist.
 `validate` rejects missing, empty, malformed, and semantically invalid configurations with item, key, and source-line context when available.
-`doctor` reports config accessibility, shell and command availability, working directories, icons and SF Symbols, environment prerequisites, and launch-at-login state when the app bundle exposes it.
+`doctor` reports config accessibility, commands, icons and SF Symbols, and environment prerequisites.
 `config-path` prints the resolved path without creating files, while `open-config` opens that path in its default application and creates an empty file only when necessary.
-`run <item>` uses the same configured shell vector, working directory, merged environment, timeout, and output bounds as the menu-bar app.
-`service install`/`status`/`uninstall` manage the per-user launch-at-login `launchd` agent; see "Launch at login" above.
+`run <item>` uses the same deterministic shell, environment, timeout, and output bounds as the menu-bar app.
 
 CLI exit codes are suitable for scripts.
-`0` means success, `1` means `service status` found the agent not installed or not enabled, `2` means invalid command usage, `3` means config or open failure, and `4` means `doctor` found a problem.
+`0` means success, `2` means invalid command usage, `3` means config or open failure, and `4` means `doctor` found a problem.
 `run` preserves a configured command's exit code, uses `124` for timeouts, and uses `127` for launch failures.
 
 ### Customize with an agent skill

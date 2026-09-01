@@ -42,7 +42,7 @@ final class RecipeCatalogTests: XCTestCase {
             let text = try String(contentsOf: recipeURL, encoding: .utf8)
             let config = try ConfigParser.parse(text, relativeTo: recipeURL)
             for entry in config.items {
-                guard case .command(let item) = entry else { continue }
+                let item = entry
                 XCTAssertFalse(
                     item.run.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
                     "\(recipeURL.lastPathComponent): item.\(item.name) has an empty run command"
@@ -82,7 +82,7 @@ final class RecipeCatalogTests: XCTestCase {
             String(contentsOf: recipeURL, encoding: .utf8),
             relativeTo: recipeURL
         )
-        let run = try XCTUnwrap(config.items.first(where: { $0.name == "displays" })?.command.run)
+        let run = try XCTUnwrap(config.items.first(where: { $0.name == "displays" })?.run)
         let fixtureURL = FileManager.default.temporaryDirectory
             .appendingPathComponent("pinchos-system-profiler-\(UUID().uuidString).txt")
         let fixture = """

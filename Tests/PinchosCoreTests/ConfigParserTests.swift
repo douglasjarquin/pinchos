@@ -7,7 +7,7 @@ final class ConfigParserTests: XCTestCase {
         let item = try ConfigParser.parse("""
         [item.limits]
         run = "echo 42"
-        """).items[0].command
+        """).items[0]
         XCTAssertEqual(item.name, "limits")
         XCTAssertEqual(item.run, "echo 42")
         XCTAssertEqual(item.interval, .scheduled(60))
@@ -30,7 +30,7 @@ final class ConfigParserTests: XCTestCase {
         label = "Usage"
         value = "72%"
         action = "open ."
-        """, relativeTo: configURL).items[0].command
+        """, relativeTo: configURL).items[0]
         XCTAssertEqual(item.interval, .scheduled(30))
         XCTAssertEqual(item.timeout, 2)
         XCTAssertEqual(item.format, "usage {output}%")
@@ -47,7 +47,7 @@ final class ConfigParserTests: XCTestCase {
         run = "echo manual"
         interval = "manual"
         symbol = "gauge.with.dots"
-        """).items[0].command
+        """).items[0]
         XCTAssertEqual(item.interval, .manual)
         XCTAssertEqual(item.symbol, "gauge.with.dots")
         XCTAssertNil(item.icon)
@@ -70,14 +70,14 @@ final class ConfigParserTests: XCTestCase {
         run = "echo a1"
         """)
         XCTAssertEqual(config.items.map(\.name), ["zebra", "apple"])
-        XCTAssertEqual(config.items[0].command.menu.map(\.label), ["Z one", "Z two"])
-        XCTAssertEqual(config.items[1].command.menu.map(\.label), ["A one"])
+        XCTAssertEqual(config.items[0].menu.map(\.label), ["Z one", "Z two"])
+        XCTAssertEqual(config.items[1].menu.map(\.label), ["A one"])
     }
 
     func testCanonicalExampleParses() throws {
         let config = try ConfigParser.parse(ExampleConfig.text)
         XCTAssertEqual(config.items.map(\.name), ["codex"])
-        XCTAssertEqual(config.items[0].command.menu.count, 5)
+        XCTAssertEqual(config.items[0].menu.count, 5)
     }
 
     func testEmptyAndCommentOnlyConfigsProduceNoItems() throws {
@@ -105,7 +105,7 @@ final class ConfigParserTests: XCTestCase {
         action = "open ."
         [[item.status.menu]]
         separator = true
-        """).items[0].command.menu
+        """).items[0].menu
         XCTAssertEqual(rows, [
             MenuRowConfig(label: "State", value: "Ready"),
             MenuRowConfig(label: "Usage", run: "echo 72%", cache: 60),
@@ -125,7 +125,7 @@ final class ConfigParserTests: XCTestCase {
         [[item.codex.menu]]
         label = "Open"
         action = "open ."
-        """).items[0].command
+        """).items[0]
         XCTAssertEqual(item.actions, [ItemAction(title: "Open", kind: .command("open ."))])
     }
 

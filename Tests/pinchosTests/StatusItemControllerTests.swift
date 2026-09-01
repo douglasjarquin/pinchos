@@ -9,12 +9,11 @@ private final class FakeManagedItem: ManagedItemLifecycle {
     private var pendingConfig: ItemConfig?
     private(set) var config: ItemConfig
     var actions: [ItemAction] {
-        config.commandConfig.actions
+        config.actions
     }
     var iconDiagnosticNote: String?
     private(set) var isVisible: Bool
     let initiallyVisible: Bool
-    let isTopLevel: Bool
     let ownedStatusItem: NSStatusItem?
     var runtimeSnapshotValue: ItemRuntimeSnapshot?
     var actionSnapshotValues: [CommandRunnerSnapshot?] = []
@@ -28,13 +27,11 @@ private final class FakeManagedItem: ManagedItemLifecycle {
         config: ItemConfig,
         eventLog: EventLog,
         initiallyVisible: Bool,
-        isTopLevel: Bool,
         ownedStatusItem: NSStatusItem?
     ) {
         self.config = config
         self.eventLog = eventLog
         self.initiallyVisible = initiallyVisible
-        self.isTopLevel = isTopLevel
         self.ownedStatusItem = ownedStatusItem
         self.isVisible = initiallyVisible && !config.hidden
     }
@@ -134,14 +131,12 @@ private final class FakeManagedItemFactory: ManagedItemFactory {
     func make(
         config: ItemConfig,
         menuDelegate: StatusItemMenuDelegate,
-        initiallyVisible: Bool,
-        isTopLevel: Bool
+        initiallyVisible: Bool
     ) -> any ManagedItemLifecycle {
         let item = FakeManagedItem(
             config: config,
             eventLog: eventLog,
             initiallyVisible: initiallyVisible,
-            isTopLevel: isTopLevel,
             ownedStatusItem: statusItemToOwn
         )
         statusItemToOwn = nil
@@ -567,7 +562,7 @@ final class StatusItemControllerTests: XCTestCase {
             "prepare-update:beta",
             "commit-update:beta"
         ])
-        XCTAssertEqual(beta.config.commandConfig.run, "echo changed")
+        XCTAssertEqual(beta.config.run, "echo changed")
     }
 
     func testIconSourceChangeUpdatesExistingItemInPlace() async {
@@ -593,7 +588,7 @@ final class StatusItemControllerTests: XCTestCase {
             "prepare-update:alpha",
             "commit-update:alpha"
         ])
-        XCTAssertEqual(original.config.command.iconSource, .symbol("chart.bar.fill"))
+        XCTAssertEqual(original.config.iconSource, .symbol("chart.bar.fill"))
     }
 
     func testLifecycleMenuSurfacesUnavailableSymbolDiagnostic() async throws {

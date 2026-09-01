@@ -120,7 +120,7 @@ final class RecoveryLifecycleTests: XCTestCase {
             sourceRegistry: registry
         )
         let second = makeHeadlessItem(
-            config: ItemConfig(name: "another-label", run: config.command.run, interval: .manual),
+            config: ItemConfig(name: "another-label", run: config.run, interval: .manual),
             initiallyVisible: false,
             scheduler: scheduler,
             sourceRegistry: registry

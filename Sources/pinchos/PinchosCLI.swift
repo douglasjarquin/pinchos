@@ -237,9 +237,7 @@ struct PinchosCLI {
         guard let matchedItem = config.items.first(where: { $0.name == name }) else {
             throw CLIError.config("item '\(name)' is not configured in \(configPath)")
         }
-        guard case .command(let item) = matchedItem else {
-            throw CLIError.config("item '\(name)' is a group and has no command to run")
-        }
+        let item = matchedItem
 
         guard shutdownCoordinator?.isShutdownRequested != true else {
             return shutdownCoordinator?.terminationExitCode ?? CLIExitCode.execution
@@ -364,7 +362,7 @@ struct PinchosCLI {
                 problemCount += 1
             }
             for entry in config.items {
-                let item = entry.command
+                let item = entry
                     if fileManager.isExecutableFile(atPath: item.shell[0]) {
                         reportSuccess("item.\(item.name).shell", item.shell[0])
                     } else {

@@ -18,7 +18,7 @@ final class ManagedItem: ManagedItemLifecycle {
     private(set) var renderedButtonTitle: String = ""
     private(set) var isVisible = true
     private(set) var commandConfig: CommandItemConfig
-    var config: ItemConfig { .command(commandConfig) }
+    var config: ItemConfig { commandConfig }
     private(set) var menuRows: [MenuRowConfig]
     private(set) var actions: [ItemAction]
     private(set) var iconIsLoaded = false
@@ -114,7 +114,6 @@ final class ManagedItem: ManagedItemLifecycle {
         config: ItemConfig,
         menuDelegate: StatusItemMenuDelegate,
         initiallyVisible: Bool = true,
-        isTopLevel: Bool = true,
         scheduler: CommandScheduler = .shared,
         sourceRegistry: CommandSourceRegistry = CommandSourceRegistry(),
         now: @escaping () -> Date = Date.init,
@@ -123,7 +122,7 @@ final class ManagedItem: ManagedItemLifecycle {
             NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         }
     ) {
-        let commandConfig = config.command
+        let commandConfig = config
         self.commandConfig = commandConfig
         self.menuRows = commandConfig.menu
         self.actions = commandConfig.actions
@@ -162,10 +161,7 @@ final class ManagedItem: ManagedItemLifecycle {
         )
         self.menuRowSourceLeases = rowLeases
         self.menuRowSources = rowLeases.mapValues(\.source)
-        // A hidden group member gets no real backing `NSStatusItem` at
-        // all: there is no visible status-bar slot to ever reveal for it,
-        // so every `statusItem?.` access in this class simply no-ops.
-        let statusItem = isTopLevel ? statusItemFactory() : nil
+        let statusItem = statusItemFactory()
         self.statusItem = statusItem
         statusItem?.button?.target = self
         statusItem?.button?.action = #selector(handleClick)
@@ -213,7 +209,7 @@ final class ManagedItem: ManagedItemLifecycle {
         deadline: ContinuousClock.Instant = LifecycleDeadline.makeInstant()
     ) async {
         guard isActive, !isPreparingRemoval, pendingUpdate == nil else { return }
-        guard case .command(let newCommandConfig) = config else { return }
+        let newCommandConfig = config
 
         let previousConfig = self.commandConfig
         isPreparingUpdate = true

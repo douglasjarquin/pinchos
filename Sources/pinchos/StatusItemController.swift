@@ -56,7 +56,7 @@ protocol ManagedItemLifecycle: AnyObject {
 }
 
 extension ManagedItemLifecycle {
-    var menuRows: [MenuRowConfig] { config.commandConfig.menu }
+    var menuRows: [MenuRowConfig] { config.menu }
 
     func menuRowValue(at index: Int) -> String? {
         guard menuRows.indices.contains(index) else { return nil }
@@ -78,8 +78,7 @@ protocol ManagedItemFactory: AnyObject {
     func make(
         config: ItemConfig,
         menuDelegate: StatusItemMenuDelegate,
-        initiallyVisible: Bool,
-        isTopLevel: Bool
+        initiallyVisible: Bool
     ) -> any ManagedItemLifecycle
 }
 
@@ -98,14 +97,12 @@ private final class DefaultManagedItemFactory: ManagedItemFactory {
     func make(
         config: ItemConfig,
         menuDelegate: StatusItemMenuDelegate,
-        initiallyVisible: Bool,
-        isTopLevel: Bool
+        initiallyVisible: Bool
     ) -> any ManagedItemLifecycle {
         return ManagedItem(
             config: config,
             menuDelegate: menuDelegate,
             initiallyVisible: initiallyVisible,
-            isTopLevel: isTopLevel,
             scheduler: scheduler,
             sourceRegistry: sourceRegistry
         )
@@ -308,7 +305,7 @@ final class StatusItemController: StatusItemMenuDelegate {
         // the left, so creating items in reverse declaration order makes the
         // rendered menu bar read left-to-right like the TOML file.
         let newItems = config.items.reversed().map {
-            itemFactory.make(config: $0, menuDelegate: self, initiallyVisible: false, isTopLevel: true)
+            itemFactory.make(config: $0, menuDelegate: self, initiallyVisible: false)
         }
 
         for item in oldItems {
@@ -331,7 +328,7 @@ final class StatusItemController: StatusItemMenuDelegate {
         // the desired added sequence so multiple prefix additions retain
         // declaration order after AppKit inserts each one.
         let addedItems = diff.added.reversed().map {
-            itemFactory.make(config: $0, menuDelegate: self, initiallyVisible: false, isTopLevel: true)
+            itemFactory.make(config: $0, menuDelegate: self, initiallyVisible: false)
         }
 
         // Quiescing and cancellation for every changed and removed item is
@@ -549,7 +546,7 @@ final class StatusItemController: StatusItemMenuDelegate {
     private func makeLifecycleMenuImmediately(forManagedItem item: (any ManagedItemLifecycle)?, revealsDiagnostics: Bool) -> NSMenu {
         let menu = NSMenu()
         if let item {
-            addCommandContentImmediately(item: item, commandConfig: item.config.command, to: menu)
+            addCommandContentImmediately(item: item, commandConfig: item.config, to: menu)
         }
         addGlobalMenuContentImmediately(to: menu)
         return menu
@@ -580,7 +577,7 @@ final class StatusItemController: StatusItemMenuDelegate {
             menu.addItem(makeCollapsedRecoveryItem())
         }
         for item in topLevelManagedItems() {
-            let title = item.config.command.errorText
+            let title = item.config.errorText
             let row = NSMenuItem(title: title, action: nil, keyEquivalent: "")
             row.submenu = makeLifecycleMenuImmediately(forManagedItem: item, revealsDiagnostics: revealsDiagnostics)
             menu.addItem(row)
@@ -675,7 +672,7 @@ final class StatusItemController: StatusItemMenuDelegate {
     /// `error_text` when there is no value -- never its config name. The icon
     /// source follows the bar and the config's icon.
     private func collapsedRow(for item: any ManagedItemLifecycle) async -> (title: String, iconSource: ItemIconSource?) {
-        let commandConfig = item.config.command
+        let commandConfig = item.config
         let snapshot = await item.runtimeSnapshot()
         let value = snapshot.fullOutput.map { lastTrimmedLine(of: $0) }
         let base = value.flatMap { $0.isEmpty ? nil : applyFormat(commandConfig.format, output: $0) }
@@ -726,7 +723,7 @@ final class StatusItemController: StatusItemMenuDelegate {
     ) async {
         await addCommandContent(
             item: item,
-            commandConfig: item.config.command,
+            commandConfig: item.config,
             to: menu,
             revealsDiagnostics: revealsDiagnostics
         )
