@@ -64,9 +64,7 @@ public enum ItemIconSource: Equatable, Sendable {
 /// A single `[item.<name>]` command module: the canonical 0.1 configuration
 /// needed to run a bounded command and project its result onto the menu bar.
 public struct CommandItemConfig: Equatable, Sendable {
-    public static let defaultShell = ["/bin/sh", "-c"]
     public static let defaultTimeout: TimeInterval = 15
-    public static let defaultMaxOutputBytes = 64 * 1024
 
     public let name: String
     public let run: String

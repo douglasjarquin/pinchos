@@ -245,8 +245,7 @@ struct PinchosCLI {
 
         let runner = CommandRunner(
             command: item.run,
-            timeout: item.timeout,
-            maxOutputBytes: CommandItemConfig.defaultMaxOutputBytes
+            timeout: item.timeout
         )
         guard runnerRegistry.register(runner) else {
             return shutdownCoordinator?.terminationExitCode ?? CLIExitCode.execution

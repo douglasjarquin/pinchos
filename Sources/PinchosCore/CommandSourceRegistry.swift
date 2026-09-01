@@ -3,7 +3,7 @@ import Foundation
 public struct CommandSourceIdentity: Hashable, Sendable {
     public let command: String
     public let timeout: TimeInterval
-    public let maxOutputBytes: Int
+    let maxOutputBytes: Int
 
     public init(configuration: CommandSourceConfiguration) {
         command = configuration.command

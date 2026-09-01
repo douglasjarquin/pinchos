@@ -129,8 +129,7 @@ final class ManagedItem: ManagedItemLifecycle {
         self.renderedTitle = "–"
         let primaryRunner = CommandRunner(
             command: commandConfig.run,
-            timeout: commandConfig.timeout,
-            maxOutputBytes: CommandItemConfig.defaultMaxOutputBytes
+            timeout: commandConfig.timeout
         )
         let primaryLease = sourceRegistry.acquire(
             configuration: Self.sourceConfiguration(for: commandConfig),
@@ -230,8 +229,7 @@ final class ManagedItem: ManagedItemLifecycle {
             if runnerConfigurationChanged {
                 let newRunner = CommandRunner(
                     command: newCommandConfig.run,
-                    timeout: newCommandConfig.timeout,
-                    maxOutputBytes: CommandItemConfig.defaultMaxOutputBytes
+                    timeout: newCommandConfig.timeout
                 )
                 let lease = sourceRegistry.acquire(
                     configuration: Self.sourceConfiguration(for: newCommandConfig),
@@ -460,7 +458,6 @@ final class ManagedItem: ManagedItemLifecycle {
         return CommandSourceConfiguration(
             command: config.run,
             timeout: config.timeout,
-            maxOutputBytes: CommandItemConfig.defaultMaxOutputBytes,
             refreshPolicy: refreshPolicy
         )
     }
@@ -484,7 +481,6 @@ final class ManagedItem: ManagedItemLifecycle {
             let configuration = CommandSourceConfiguration(
                 command: command,
                 timeout: config.timeout,
-                maxOutputBytes: CommandItemConfig.defaultMaxOutputBytes,
                 refreshPolicy: policy,
                 staleAfter: row.cache
             )
@@ -860,8 +856,7 @@ final class ManagedItem: ManagedItemLifecycle {
             guard let command = row.action else { continue }
             runners[index] = CommandRunner(
                 command: command,
-                timeout: config.timeout,
-                maxOutputBytes: CommandItemConfig.defaultMaxOutputBytes
+                timeout: config.timeout
             )
         }
         return runners

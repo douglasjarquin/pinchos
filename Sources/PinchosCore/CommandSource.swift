@@ -8,11 +8,26 @@ public enum CommandSourceRefreshPolicy: Equatable, Sendable {
 public struct CommandSourceConfiguration: Equatable, Sendable {
     public let command: String
     public let timeout: TimeInterval
-    public let maxOutputBytes: Int
+    let maxOutputBytes: Int
     public let refreshPolicy: CommandSourceRefreshPolicy
     public let staleAfter: TimeInterval?
 
     public init(
+        command: String,
+        timeout: TimeInterval,
+        refreshPolicy: CommandSourceRefreshPolicy = .manual,
+        staleAfter: TimeInterval? = nil
+    ) {
+        self.init(
+            command: command,
+            timeout: timeout,
+            maxOutputBytes: 64 * 1024,
+            refreshPolicy: refreshPolicy,
+            staleAfter: staleAfter
+        )
+    }
+
+    init(
         command: String,
         timeout: TimeInterval,
         maxOutputBytes: Int,
@@ -113,8 +128,7 @@ public actor CommandSource {
         self.clock = clock
         self.runner = runner ?? CommandRunner(
             command: configuration.command,
-            timeout: configuration.timeout,
-            maxOutputBytes: configuration.maxOutputBytes
+            timeout: configuration.timeout
         )
     }
 

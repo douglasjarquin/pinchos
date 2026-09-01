@@ -15,11 +15,10 @@ import Foundation
 public final class OutputMemoryBudget: @unchecked Sendable {
     /// The default aggregate budget shared by every command runner in the
     /// process. Sized well above the default three-item workload (2
-    /// streams x `CommandItemConfig.defaultMaxOutputBytes` = 128KiB per item, or
+    /// streams x 64KiB = 128KiB per item, or
     /// ~384KiB total) while still bounding a pathological many-item or
-    /// many-action configuration far below what summing every configured
-    /// the fixed per-runner retention limit would otherwise allow. See README "Output memory
-    /// budget".
+    /// many-action configuration below the memory that retaining every runner
+    /// at its fixed limit would otherwise use. See README "Output memory budget".
     public static let shared = OutputMemoryBudget(totalBytes: 8 * 1024 * 1024)
 
     public let totalBytes: Int
