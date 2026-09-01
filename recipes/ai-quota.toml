@@ -13,25 +13,16 @@
 #     install jq`).
 # Account/auth requirement: `quota-axi` reads whatever local credentials
 #   the named provider's own CLI or app already stores (e.g. an existing
-#   Claude Code or Codex CLI login) — it needs neither a value nor a
-#   token to be placed in this file or in `[item.<name>.env]`.
+#   Claude Code or Codex CLI login) — no credential belongs in this file.
 #
 # Expected output: "42" when the provider has an active auth session and
-#   a "week" quota window; the underlying JSON shape is
+#   a "week" quota window; the underlying provider response is
 #   `{"providers":[{"windows":[{"label":"week","percentRemaining":42}]}]}`.
 #   Locale-independent, but account- and provider-state-dependent: a
 #   signed-out or rate-limited provider reports `windows: []` (see below).
-# Limitations: when `quota-axi` has no windows for a provider (not signed
-#   in, or the provider does not expose numeric quota), `windows` is `[]`,
-#   `jq -r '.windows[] | ...'` iterates zero times and prints nothing, and
-#   `run` still exits 0 with empty output — the item then renders just
-#   "%" (an empty `{output}` plus the literal `%` from `format`) instead
-#   of an error. Verified directly with `pinchos run claude` in this
-#   state; check with `pinchos run <item>` after signing in if you see
-#   a bare "%".
-#   This recipe uses a shell pipeline (`|`), so `pinchos doctor` reports
-#   that it "could not identify a single command to check safely" for
-#   this item's `run` line — that is expected, not a bug.
+# Limitations: when `quota-axi` has no windows for a provider, the command
+#   produces an empty value. This recipe uses a shell pipeline (`|`), so
+#   review the command before installing it.
 #
 # Copy this file's [item.*] table(s) into your pinchos.toml, replace
 # "claude" with any provider quota-axi supports (see quota-axi --help),

@@ -10,7 +10,7 @@
 ## 1. Direction
 
 Quiet editorial paper with an ink-first hierarchy and restrained olive and terracotta accents.
-The signature moment is the real DOM menu-bar mockup: the only glossy charcoal surface, showing a healthy bar becoming an actionable failure menu.
+The signature moment is the real DOM menu-bar mockup: the only glossy charcoal surface, showing cached values beside a concise native submenu.
 
 ## 2. Color
 
@@ -82,10 +82,10 @@ The mobile breakpoint is 720px; grids collapse to one column and horizontal padd
 
 ### Product mockup
 
-- **Structure:** dark system-font menu bar, failing item marker, and a native-looking in-place submenu with a default Run action, TOML-configured actions, a fallback Refresh Now action, a config-backed Hide action, summary, bounded stderr, copy action, and a modifier-gated diagnostics disclosure.
+- **Structure:** dark system-font menu bar, item labels and values, and a native-looking submenu with static rows, cached rows, actions, and separators.
 - **Variants:** landing hero and docs component specimen.
-- **States:** healthy bar and failing menu are both represented; failure is textual, not color-only; the landing demo switches between the four canonical sample items, opens each item's submenu, exposes `Run <item name>`, configured actions, fallback `Refresh Now`, runtime details, modifier-gated diagnostics, and `Hide`, removes a hidden sample item from the bar, reveals diagnostics only on Option/Alt + left click or Alt+Enter, never reveals them on hover, demonstrates refresh recovery, and supports a collapsed bar where one `pinchos` icon opens first-level pincho rows with each original menu nested beneath its row and an `Expand Pinchos` restore action.
-- **Accessibility:** `figure` has a meaningful label, menu-bar items are native buttons with expanded state and controlled-panel relationships, the first submenu action receives focus for normal keyboard activation, the Hide action is a keyboard-reachable button with an explicit restore-through-config explanation, the native diagnostics disclosure remains keyboard reachable after the Alt+Enter equivalent, collapsed mode labels its single icon `Pinchos`, collapsed rows expose nested-menu relationships and keyboard navigation, menu actions are keyboard reachable, and all product vocabulary remains selectable text.
+- **States:** the landing demo presents the canonical Codex item with cached Usage and Pace rows, an action, a separator, and a config disclosure; opening the menu never executes a command.
+- **Accessibility:** `figure` has a meaningful label, menu rows remain selectable text, the action is a keyboard-reachable button, the config disclosure is keyboard reachable, and the example explains its read-only boundary.
 - **Motion:** no idle motion; the landing demo uses instantaneous state changes and the existing 150ms color/background feedback for controls.
 
 ### Recipe explorer
@@ -118,10 +118,8 @@ The mobile breakpoint is 720px; grids collapse to one column and horizontal padd
 The source designs call for no idle motion.
 Interactive anchors use only a 150ms ease-out transition for affordance feedback.
 The homepage product mockup is a deliberate scoped client-side exception: its script simulates the sample TOML menu without reading local config or executing commands.
-The submenu keeps generated `Run <item name>` and `Refresh Now` defaults first, then renders `[[item.<name>.action]]` entries and the configured `click` action from the canonical TOML sample.
-The submenu's `Hide` action simulates setting `hidden = true` in the selected item's TOML table and removes that item from the sample bar; the real app persists that edit and restores the item when the key is removed or set to `false`.
-Collapsed mode is an in-memory presentation state: the single `pinchos` icon exposes visible top-level items at its first menu level, each row owns the same item submenu as expanded mode, and `Expand Pinchos` restores the individual bar items.
-Diagnostics are hidden from the regular submenu and from hover, and the landing demo reveals the native details disclosure only for an Option/Alt + left click or the Alt+Enter keyboard equivalent.
+The submenu renders the ordered rows from the canonical TOML sample without executing any command while it opens.
+Cached values are presented immediately and refresh in the background when stale or unavailable.
 The recipe explorer's search filters the build-generated card list in place and announces the visible count without changing the URL or duplicating the catalog.
 Interactive state changes are instantaneous and respect the same reduced-motion rule as the rest of the site.
 All motion is disabled under `prefers-reduced-motion: reduce`.
@@ -136,7 +134,7 @@ There are no gradients, glass effects, decorative blobs, or dark page surfaces o
 
 - Target WCAG 2.2 AA with at least 4.5:1 body contrast and 3:1 large-text contrast.
 - Every route has one descriptive title, a language declaration, semantic landmarks, keyboard-reachable links, and visible focus.
-- The site has no client-side JavaScript except the homepage ProductMockup demo, whose scoped script only simulates the canonical sample config, and the recipe explorer's scoped filter; the compact design-system specimen remains static.
+- The site has no client-side JavaScript except the recipe explorer's scoped filter; the homepage menu preview and compact design-system specimen are static.
 - Long technical strings wrap or scroll inside their own code block without causing page-level overflow.
 - Respect `prefers-reduced-motion` even though the design intentionally has no decorative motion.
 

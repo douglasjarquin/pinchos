@@ -12,14 +12,14 @@ const github = 'https://github.com/douglasjarquin/pinchos';
     <div class="hero-copy">
       <div class="overline">macOS menu bar utility</div>
       <h1 class="serif-heading">Pin your scripts to the menu bar.</h1>
-      <p class="hero-copy__lede">pinchos runs the commands you give it and pins their output where you can see it. Quiet while everything is healthy — unmissable the moment something fails.</p>
+      <p class="hero-copy__lede">pinchos runs the commands you give it and keeps their output close at hand. Use one plain-text item and an ordered submenu of values, cached reads, and actions.</p>
       <div class="hero-copy__actions">
         <Button href={github}>View on GitHub <span aria-hidden="true">→</span></Button>
         <a class="text-link" href="#install">Build it yourself ↓</a>
       </div>
       <div class="hero-copy__meta">free · open source · native AppKit · no Electron</div>
     </div>
-    <ProductMockup interactive />
+    <ProductMockup />
   </header>
 
   <section id="how" class="features-band" aria-labelledby="features-heading">
@@ -28,17 +28,17 @@ const github = 'https://github.com/douglasjarquin/pinchos';
       <article class="feature">
         <div class="overline">01 · config</div>
         <h3 class="serif-heading">One plain-text file</h3>
-        <p>Every item is a few lines of TOML — a title, a command, a schedule. Edit it in anything; pinchos picks up the change. There is no settings window.</p>
+        <p>Every item is a few lines of TOML — a command, its refresh cadence, and optional menu rows. Edit it in anything; pinchos picks up the change. There is no settings window.</p>
       </article>
       <article class="feature">
         <div class="overline">02 · signal</div>
-        <h3 class="serif-heading">Quiet when healthy</h3>
-        <p>Healthy items are just text. Failure speaks in place — <code>⚠︎</code> in the bar, the exact cause and a copy button one click away. Stale output gets a <code>~</code>.</p>
+        <h3 class="serif-heading">Rows stay ordered</h3>
+        <p>Static values, cached commands, actions, and separators stay in the order you declare them. Opening a menu reads cached values without starting a command.</p>
       </article>
       <article class="feature">
         <div class="overline">03 · footprint</div>
         <h3 class="serif-heading">Native and tiny</h3>
-        <p>Real <code>NSStatusItems</code> and real <code>NSMenus</code>. System typography, template icons, zero idle motion, no dock icon. It behaves like a built-in menu extra.</p>
+        <p>Real <code>NSStatusItems</code> and real <code>NSMenus</code>. System typography, template icons, zero idle motion, and no dock icon. It behaves like a built-in menu extra.</p>
       </article>
     </div>
   </section>
@@ -47,7 +47,7 @@ const github = 'https://github.com/douglasjarquin/pinchos';
     <div class="container container--landing install-grid">
       <div class="install-copy">
         <h2 id="install-heading" class="serif-heading">Get pinchos</h2>
-        <p>Clone and build with the Swift toolchain, or start from the README — it covers install, the config format, and every marker pinchos can show.</p>
+        <p>Clone and build with the Swift toolchain, or start from the README — it covers install, the canonical config format, and the menu-row contract.</p>
         <a href={github}>Read the README on GitHub →</a>
       </div>
       <CodeBlock lines={['git clone https://github.com/douglasjarquin/pinchos.git', 'cd pinchos', 'swift build -c release']} />

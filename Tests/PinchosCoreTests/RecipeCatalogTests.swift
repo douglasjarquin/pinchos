@@ -16,7 +16,7 @@ final class RecipeCatalogTests: XCTestCase {
         )
         let recipes = entries.filter { $0.pathExtension == "toml" }.sorted { $0.path < $1.path }
         XCTAssertFalse(recipes.isEmpty, "expected at least one recipe under \(recipesDirectory.path)")
-        XCTAssertGreaterThanOrEqual(recipes.count, 50, "expected at least 50 recipes under \(recipesDirectory.path)")
+        XCTAssertEqual(recipes.count, 9, "expected the maintained recipes under \(recipesDirectory.path)")
         return recipes
     }
 
@@ -76,47 +76,4 @@ final class RecipeCatalogTests: XCTestCase {
         }
     }
 
-    func testDisplayCountRecipeCountsIndividualDisplays() throws {
-        let recipeURL = repoRoot.appendingPathComponent("recipes/display-count.toml")
-        let config = try ConfigParser.parse(
-            String(contentsOf: recipeURL, encoding: .utf8),
-            relativeTo: recipeURL
-        )
-        let run = try XCTUnwrap(config.items.first(where: { $0.name == "displays" })?.run)
-        let fixtureURL = FileManager.default.temporaryDirectory
-            .appendingPathComponent("pinchos-system-profiler-\(UUID().uuidString).txt")
-        let fixture = """
-        Graphics/Displays:
-
-            Apple M3 Max:
-
-              Displays:
-                Color LCD:
-                  Resolution: 3456 x 2234 Retina
-                Studio Display:
-                  Resolution: 5120 x 2880
-        """
-        try fixture.write(to: fixtureURL, atomically: true, encoding: .utf8)
-        defer { try? FileManager.default.removeItem(at: fixtureURL) }
-
-        let command = run.replacingOccurrences(
-            of: "system_profiler SPDisplaysDataType",
-            with: "cat '\(fixtureURL.path)'"
-        )
-        let process = Process()
-        let outputPipe = Pipe()
-        process.executableURL = URL(fileURLWithPath: "/bin/zsh")
-        process.arguments = ["-lc", command]
-        process.standardOutput = outputPipe
-        process.standardError = outputPipe
-        try process.run()
-        process.waitUntilExit()
-
-        let output = String(
-            data: outputPipe.fileHandleForReading.readDataToEndOfFile(),
-            encoding: .utf8
-        )?.trimmingCharacters(in: .whitespacesAndNewlines)
-        XCTAssertEqual(process.terminationStatus, 0)
-        XCTAssertEqual(output, "2")
-    }
 }

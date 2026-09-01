@@ -6,8 +6,7 @@
 # Expected output: "14:07" (24-hour HH:MM, updates every 30 seconds).
 #   The value is locale- and timezone-dependent: it reflects the format
 #   string below and the machine's current timezone, not a fixed locale.
-# Limitations: `date` has no failure mode worth handling here, so this
-#   recipe skips `error_text`/`on_error`/`stale_after`. Change the format
+# Limitations: `date` is available on the macOS base system. Change the format
 #   string (see `man strftime`) to show seconds, a date, or a timezone
 #   abbreviation, e.g. "+%H:%M:%S %Z".
 #

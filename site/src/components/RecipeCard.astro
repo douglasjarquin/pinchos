@@ -7,7 +7,7 @@ interface Props {
 
 const { recipe } = Astro.props;
 const titleId = `recipe-${recipe.slug}-title`;
-const previewLabel = recipe.items.length === 1 ? 'menu bar item' : 'menu bar items';
+const previewLabel = recipe.items.length === 1 ? 'canonical item' : 'canonical items';
 ---
 
 <article class="recipe-card raised-card" data-recipe-card data-search-text={recipe.searchText} aria-labelledby={titleId}>
@@ -26,7 +26,7 @@ const previewLabel = recipe.items.length === 1 ? 'menu bar item' : 'menu bar ite
     </section>
 
     <section class="recipe-card__preview" aria-labelledby={`${titleId}-preview`}>
-      <h3 id={`${titleId}-preview`} class="overline">Theoretical {previewLabel}</h3>
+      <h3 id={`${titleId}-preview`} class="overline">{previewLabel}</h3>
       <div class="recipe-preview__bar" aria-label={`Theoretical menu bar preview for ${recipe.title}`}>
         {recipe.items.map((item) => (
           <span class="recipe-preview__item">
@@ -40,10 +40,11 @@ const previewLabel = recipe.items.length === 1 ? 'menu bar item' : 'menu bar ite
           <div>
             <dt>{item.name}</dt>
             <dd>{item.interval} · {item.format}</dd>
+            {item.menuRows.length > 0 && <dd>menu: {item.menuRows.join(', ')}</dd>}
           </div>
         ))}
       </dl>
-      <p class="recipe-preview__note">Copy the item table into your config, replace placeholders, then validate before running it.</p>
+      <p class="recipe-preview__note">Copy the item table into your config, replace placeholders, then validate before running it. Add ordered <code>menu</code> rows when the item needs a submenu.</p>
     </section>
   </div>
 </article>

@@ -7,10 +7,8 @@
 # Dependencies: none beyond the macOS base system (/sbin/ifconfig,
 # /sbin/route).
 #
-# Both commands use a shell pipeline (`|`), so `pinchos doctor` reports
-# that it "could not identify a single command to check safely" for each
-# item's `run` line — that is expected for compound commands, not a bug;
-# `doctor` still checks the configured shell, working directory, and icon.
+# Both commands use a shell pipeline (`|`). Review the commands before
+# installing them.
 
 # --- network -----------------------------------------------------------
 # Expected output: "en0" or "en7" (the BSD name of the interface

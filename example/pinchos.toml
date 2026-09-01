@@ -12,13 +12,13 @@ cache = "5m"
 
 [[item.codex.menu]]
 label = "Pace"
-run = "quota-axi codex --pace"
-cache = "5m"
+value = "healthy"
 
 [[item.codex.menu]]
-label = "Reset"
-run = "quota-axi codex --reset"
+label = "Refresh"
+run = "quota-axi codex --usage"
 cache = "5m"
+action = "open https://chatgpt.com/codex"
 
 [[item.codex.menu]]
 label = "Open Codex"

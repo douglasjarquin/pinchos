@@ -245,7 +245,7 @@ final class PinchosCLITests: XCTestCase {
         XCTAssertTrue(capture.stdout.contains("[PASS] config: readable and parsed"))
         XCTAssertTrue(capture.stdout.contains("[FAIL] item.bad.run"))
         XCTAssertTrue(capture.stdout.contains("[FAIL] item.bad.icon"))
-        XCTAssertTrue(capture.stdout.contains("launch at login"))
+        XCTAssertFalse(capture.stdout.contains("launch at login"))
     }
 
     func testDoctorReportsConfiguredSymbolInsteadOfMissingFileIcon() async throws {
