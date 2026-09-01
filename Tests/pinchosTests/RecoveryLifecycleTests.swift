@@ -38,6 +38,7 @@ final class RecoveryLifecycleTests: XCTestCase {
         initiallyVisible: Bool = true,
         now: @escaping () -> Date = Date.init,
         scheduler: CommandScheduler = CommandScheduler(),
+        sourceRegistry: CommandSourceRegistry = CommandSourceRegistry(),
         notificationSink: ItemNotificationSink? = nil
     ) -> ManagedItem {
         ManagedItem(
@@ -45,6 +46,7 @@ final class RecoveryLifecycleTests: XCTestCase {
             menuDelegate: menuDelegate ?? NoopStatusItemMenuDelegate(),
             initiallyVisible: initiallyVisible,
             scheduler: scheduler,
+            sourceRegistry: sourceRegistry,
             now: now,
             notificationSink: notificationSink,
             statusItemFactory: { nil }
@@ -99,6 +101,48 @@ final class RecoveryLifecycleTests: XCTestCase {
 
         let diagnostics = await scheduler.diagnostics()
         XCTAssertEqual(diagnostics.registeredTimers, 0)
+    }
+
+    @MainActor
+    func testIdenticalPrimarySourcesShareOneExecutionAndCache() async throws {
+        let marker = FileManager.default.temporaryDirectory
+            .appendingPathComponent("pinchos-shared-source-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: marker) }
+        let registry = CommandSourceRegistry()
+        let scheduler = CommandScheduler(maxActiveSessions: 1)
+        let config = ItemConfig(
+            name: "shared",
+            run: "count=$(cat '\(marker.path)' 2>/dev/null || echo 0); count=$((count + 1)); printf '%s' \"$count\" > '\(marker.path)'; sleep 0.1; printf 'shared\\n'",
+            interval: .manual
+        )
+        let first = makeHeadlessItem(
+            config: config,
+            initiallyVisible: false,
+            scheduler: scheduler,
+            sourceRegistry: registry
+        )
+        let second = makeHeadlessItem(
+            config: ItemConfig(name: "another-label", run: config.command.run, interval: .manual),
+            initiallyVisible: false,
+            scheduler: scheduler,
+            sourceRegistry: registry
+        )
+        addTeardownBlock { @MainActor in
+            await first.tearDown()
+            await second.tearDown()
+        }
+
+        first.refreshNow()
+        second.refreshNow()
+        _ = try await waitForExecution(first)
+        try await Task.sleep(for: .milliseconds(150))
+
+        XCTAssertEqual(try String(contentsOf: marker), "1")
+        let firstSnapshot = await first.runnerSnapshot()
+        let secondSnapshot = await second.runnerSnapshot()
+        XCTAssertEqual(firstSnapshot.lastExecution?.stdout, "shared\n")
+        XCTAssertEqual(secondSnapshot.lastExecution?.stdout, "shared\n")
+        XCTAssertEqual(registry.sourceCount, 1)
     }
 
     @MainActor

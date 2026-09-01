@@ -91,10 +91,16 @@ protocol ManagedItemFactory: AnyObject {
 @MainActor
 private final class DefaultManagedItemFactory: ManagedItemFactory {
     private let scheduler: CommandScheduler
+    private let sourceRegistry: CommandSourceRegistry
     private let notificationSink: ItemNotificationSink
 
-    init(scheduler: CommandScheduler, notificationSink: ItemNotificationSink) {
+    init(
+        scheduler: CommandScheduler,
+        sourceRegistry: CommandSourceRegistry,
+        notificationSink: ItemNotificationSink
+    ) {
         self.scheduler = scheduler
+        self.sourceRegistry = sourceRegistry
         self.notificationSink = notificationSink
     }
 
@@ -112,6 +118,7 @@ private final class DefaultManagedItemFactory: ManagedItemFactory {
                 initiallyVisible: initiallyVisible,
                 isTopLevel: isTopLevel,
                 scheduler: scheduler,
+                sourceRegistry: sourceRegistry,
                 notificationSink: notificationSink
             )
         case .group:
@@ -198,6 +205,7 @@ final class StatusItemController: StatusItemMenuDelegate {
     /// module; a custom `itemFactory` injected for testing (e.g. a fake)
     /// may simply not route work through it, in which case it sits idle.
     let scheduler: CommandScheduler
+    let sourceRegistry: CommandSourceRegistry
     private var items: [String: any ManagedItemLifecycle] = [:]
     private var order: [String] = []
     private var warningItem: NSStatusItem?
@@ -219,9 +227,12 @@ final class StatusItemController: StatusItemMenuDelegate {
     ) {
         let resolvedScheduler = scheduler ?? CommandScheduler()
         self.scheduler = resolvedScheduler
+        let resolvedSourceRegistry = CommandSourceRegistry()
+        self.sourceRegistry = resolvedSourceRegistry
         self.statusItemHost = statusItemHost ?? SystemStatusItemHost()
         self.itemFactory = itemFactory ?? DefaultManagedItemFactory(
             scheduler: resolvedScheduler,
+            sourceRegistry: resolvedSourceRegistry,
             notificationSink: SystemItemNotificationSink()
         )
         self.configPath = configPath

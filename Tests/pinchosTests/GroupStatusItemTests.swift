@@ -336,7 +336,7 @@ final class GroupStatusItemTests: XCTestCase {
             name: "claude",
             run: "echo claude",
             interval: .scheduled(60),
-            actions: [ItemAction(title: "Open usage", kind: .command("open https://example.com"))]
+            menu: [MenuRowConfig(label: "Open usage", action: "open https://example.com")]
         )
         await controller.apply(config: PinchosConfig(items: [
             claudeWithAction,
