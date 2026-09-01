@@ -54,16 +54,8 @@ final class ManagedItem: ManagedItemLifecycle {
     /// check and increments `skippedRefreshes` exactly as before.
     private var pendingRefreshPermitTask: Task<Void, Never>?
     private var pendingActionPermitTasks: [Int: Task<Void, Never>] = [:]
-    private let triggerObserverFactory: (any ItemTriggerObserverFactory)?
-    private lazy var triggerCoordinator = ItemTriggerCoordinator(
-        config: commandConfig,
-        observerFactory: triggerObserverFactory,
-        onRefresh: { [weak self] in self?.requestRefresh() }
-    )
     private weak var menuDelegate: StatusItemMenuDelegate?
     private let now: () -> Date
-    private let notificationSink: ItemNotificationSink
-    private var notificationTracker = NotificationTransitionTracker()
     private var isActive = true
     private var configurationGeneration = 0
     private var isPreparingUpdate = false
@@ -74,8 +66,6 @@ final class ManagedItem: ManagedItemLifecycle {
     private var pendingActionInvocations = 0
     private var actionInvocationsDrained: CheckedContinuation<Void, Never>?
     private var lastSuccessfulOutput: String?
-    private var lastStructuredOutput: StructuredCommandOutput?
-    private var structuredOutputDiagnostic: String?
     private var lastAttemptedAt: Date?
     private var lastUpdatedAt: Date?
     private var lastSuccessfulTitle: String?
@@ -118,7 +108,6 @@ final class ManagedItem: ManagedItemLifecycle {
         let timerNeedsRestart: Bool
         let presentationNeedsUpdate: Bool
         let staleAfterChanged: Bool
-        let outputChanged: Bool
     }
 
     init(
@@ -130,8 +119,6 @@ final class ManagedItem: ManagedItemLifecycle {
         sourceRegistry: CommandSourceRegistry = CommandSourceRegistry(),
         now: @escaping () -> Date = Date.init,
         iconRenderer: StatusItemIconRenderer = .system,
-        triggerObserverFactory: (any ItemTriggerObserverFactory)? = nil,
-        notificationSink: ItemNotificationSink? = nil,
         statusItemFactory: @escaping () -> NSStatusItem? = {
             NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         }
@@ -147,8 +134,6 @@ final class ManagedItem: ManagedItemLifecycle {
         let sourceClock = ManagedItemSourceClock(read: now)
         self.sourceClock = sourceClock
         self.iconRenderer = iconRenderer
-        self.triggerObserverFactory = triggerObserverFactory
-        self.notificationSink = notificationSink ?? SystemItemNotificationSink()
         self.renderedTitle = commandConfig.errorText
         let primaryRunner = CommandRunner(
             command: commandConfig.run,
@@ -243,9 +228,7 @@ final class ManagedItem: ManagedItemLifecycle {
             || previousConfig.interval != newCommandConfig.interval
             || previousConfig.disabled != newCommandConfig.disabled
         let staleAfterChanged = previousConfig.staleAfter != newCommandConfig.staleAfter || runnerConfigurationChanged
-        let outputChanged = previousConfig.output != newCommandConfig.output
-        let presentationNeedsUpdate = outputChanged
-            || previousConfig.format != newCommandConfig.format
+        let presentationNeedsUpdate = previousConfig.format != newCommandConfig.format
             || previousConfig.errorText != newCommandConfig.errorText
             || previousConfig.onError != newCommandConfig.onError
             || previousConfig.staleAfter != newCommandConfig.staleAfter
@@ -306,7 +289,6 @@ final class ManagedItem: ManagedItemLifecycle {
         }
 
         let actionRunnersConfigurationChanged = previousConfig.actions != newCommandConfig.actions
-            || previousConfig.output != newCommandConfig.output
             || previousConfig.timeout != newCommandConfig.timeout
             || previousConfig.maxOutputBytes != newCommandConfig.maxOutputBytes
             || previousConfig.shell != newCommandConfig.shell
@@ -380,7 +362,6 @@ final class ManagedItem: ManagedItemLifecycle {
             timerNeedsRestart: timerNeedsRestart,
             presentationNeedsUpdate: presentationNeedsUpdate,
             staleAfterChanged: staleAfterChanged,
-            outputChanged: outputChanged
         )
     }
 
@@ -410,33 +391,19 @@ final class ManagedItem: ManagedItemLifecycle {
             menuRowCachedValues.removeAll()
             startMenuRowSources()
         }
-        if pendingUpdate.outputChanged || commandConfig.output == .plain {
-            lastStructuredOutput = nil
-            structuredOutputDiagnostic = nil
-        }
-        actions = lastStructuredOutput?.actions ?? commandConfig.actions
+        actions = commandConfig.actions
         if pendingUpdate.actionRunnersConfigurationChanged {
             actionRunners = Self.makeActionRunners(for: actions, config: commandConfig)
         }
         applyIcon()
-        if commandConfig.disabled {
-            triggerCoordinator.stop()
-        } else {
-            triggerCoordinator.update(config: commandConfig)
-            if pendingUpdate.timerNeedsRestart {
-                startTimer(runInitialRefresh: false)
-            }
+        if pendingUpdate.timerNeedsRestart {
+            startTimer(runInitialRefresh: false)
         }
         if pendingUpdate.staleAfterChanged {
             scheduleStalePresentation()
         }
         if pendingUpdate.presentationNeedsUpdate {
-            lastSuccessfulTitle = lastSuccessfulOutput.map {
-                let output = lastStructuredOutput.map {
-                    DiagnosticPreviewFormatter.preview($0.text ?? "", limits: .menuValue).text
-                } ?? lastTrimmedLine(of: $0)
-                return applyFormat(commandConfig.format, output: output)
-            }
+            lastSuccessfulTitle = lastSuccessfulOutput.map { applyFormat(commandConfig.format, output: lastTrimmedLine(of: $0)) }
             requestPresentationUpdate()
         }
         isPreparingUpdate = false
@@ -449,7 +416,6 @@ final class ManagedItem: ManagedItemLifecycle {
         stalePresentationTask?.cancel()
         stalePresentationTask = nil
         cancelRefreshTimer()
-        triggerCoordinator.stop()
         pendingRefreshPermitTask?.cancel()
         for task in pendingActionPermitTasks.values {
             task.cancel()
@@ -483,7 +449,6 @@ final class ManagedItem: ManagedItemLifecycle {
 
     func commitRemoval() {
         guard isActive else { return }
-        triggerCoordinator.stop()
         isActive = false
         isPreparingRemoval = false
         if let statusItem {
@@ -679,7 +644,6 @@ final class ManagedItem: ManagedItemLifecycle {
     private func startTimer(runInitialRefresh: Bool = true) {
         cancelRefreshTimer()
         guard !commandConfig.disabled else { return }
-        triggerCoordinator.start()
         guard case .scheduled(let interval) = commandConfig.interval else {
             if runInitialRefresh {
                 requestRefresh()
@@ -755,75 +719,21 @@ final class ManagedItem: ManagedItemLifecycle {
         guard isActive, generation == configurationGeneration else { return }
         guard let execution = cached.lastExecution else { return }
         guard isActive, generation == configurationGeneration else { return }
-        let currentConfig = commandConfig
         lastSuccessfulOutput = cached.value
         lastAttemptedAt = cached.lastAttemptedAt
         lastUpdatedAt = cached.lastSuccessfulAt
         if execution.terminalReason == .exited(code: 0) {
-            if currentConfig.output == .jsonV1 {
-                do {
-                    guard !execution.stdoutTruncated else {
-                        throw StructuredOutputParseError.invalidField(
-                            "output",
-                            "complete JSON within max_output; stdout was truncated"
-                        )
-                    }
-                    let structured = try StructuredOutputParser.parse(execution.stdout)
-                    lastStructuredOutput = structured
-                    structuredOutputDiagnostic = nil
-                    lastSuccessfulOutput = execution.stdout
-                    let structuredText = DiagnosticPreviewFormatter.preview(
-                        structured.text ?? "",
-                        limits: .menuValue
-                    ).text
-                    lastSuccessfulTitle = applyFormat(currentConfig.format, output: structuredText)
-                    await replaceActions(structured.actions ?? currentConfig.actions, config: currentConfig)
-                    scheduleStalePresentation()
-                } catch let error as StructuredOutputParseError {
-                    structuredOutputDiagnostic = error.description
-                } catch {
-                    structuredOutputDiagnostic = "structured output could not be decoded: \(error)"
-                }
-            } else {
-                lastStructuredOutput = nil
-                structuredOutputDiagnostic = nil
-                actions = currentConfig.actions
-                lastSuccessfulTitle = applyFormat(
-                    currentConfig.format,
-                    output: lastTrimmedLine(of: execution.stdout)
-                )
-                scheduleStalePresentation()
-            }
+            actions = commandConfig.actions
+            lastSuccessfulTitle = applyFormat(
+                commandConfig.format,
+                output: lastTrimmedLine(of: execution.stdout)
+            )
+            scheduleStalePresentation()
         }
         let runnerSnapshot = await primarySource.runnerSnapshot()
         guard isActive, generation == configurationGeneration else { return }
         let snapshot = makeRuntimeSnapshot(runnerSnapshot)
         renderPresentation(snapshot)
-        sendNotificationIfNeeded(snapshot)
-    }
-
-    private func sendNotificationIfNeeded(_ snapshot: ItemRuntimeSnapshot) {
-        let isFailure = snapshot.outputDiagnostic != nil
-            || snapshot.lastExecution?.terminalReason != .exited(code: 0)
-        let policy = ItemNotificationConfig(
-            events: commandConfig.notifyOn,
-            cooldown: commandConfig.notifyCooldown
-        )
-        guard let event = notificationTracker.record(isFailure: isFailure, at: now(), policy: policy) else {
-            return
-        }
-
-        let body: String
-        switch event {
-        case .failure:
-            let detail = snapshot.errorSummary.map {
-                DiagnosticPreviewFormatter.preview($0, limits: .menuStderr).text
-            } ?? "command failed"
-            body = "Failure: \(detail)"
-        case .recovery:
-            body = "Recovered successfully"
-        }
-        notificationSink.send(ItemNotification(event: event, itemName: commandConfig.name, body: body))
     }
 
     private func requestPresentationUpdate() {
@@ -875,9 +785,7 @@ final class ManagedItem: ManagedItemLifecycle {
         case .warning:
             baseTitle = lastSuccessfulTitle ?? commandConfig.errorText
         case .error:
-            let isGenuineFailure = snapshot.outputDiagnostic != nil
-                || snapshot.lastExecution?.terminalReason != .exited(code: 0)
-            baseTitle = (!isGenuineFailure || commandConfig.onError == .keepLast)
+            baseTitle = (commandConfig.onError == .keepLast)
                 ? (lastSuccessfulTitle ?? commandConfig.errorText)
                 : commandConfig.errorText
         case .running:
@@ -896,12 +804,11 @@ final class ManagedItem: ManagedItemLifecycle {
             marker = ""
         }
         setTitle(truncateTitle(baseTitle, maxLength: commandConfig.maxLength) + marker)
-        applyIcon(source: snapshot.structuredOutput?.iconSource ?? commandConfig.iconSource)
+        applyIcon(source: commandConfig.iconSource)
         setVisibility(
             computeVisibility(
                 lastExecution: snapshot.lastExecution,
-                fullOutput: snapshot.fullOutput,
-                hidden: snapshot.structuredOutput?.hidden
+                fullOutput: snapshot.fullOutput
             )
         )
     }
@@ -934,9 +841,7 @@ final class ManagedItem: ManagedItemLifecycle {
             lastExecution: runnerSnapshot.lastExecution,
             staleAfter: commandConfig.staleAfter,
             skippedRefreshes: runnerSnapshot.skippedRefreshes,
-            now: now(),
-            structuredOutput: lastStructuredOutput,
-            outputDiagnostic: structuredOutputDiagnostic
+            now: now()
         )
     }
 
@@ -1110,7 +1015,7 @@ final class ManagedItem: ManagedItemLifecycle {
     }
 
     /// Both left- and right-click reveal the lifecycle menu, matching how
-    /// other menu bar items behave (and `ManagedGroupItem`). The menu stays
+    /// other menu bar items behave. The menu stays
     /// reachable even for a `disabled` item, which remains inspectable.
     @objc private func handleClick() {
         guard isActive, !isPreparingUpdate, !isPreparingRemoval else { return }

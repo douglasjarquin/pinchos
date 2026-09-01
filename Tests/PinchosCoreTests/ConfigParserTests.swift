@@ -239,7 +239,7 @@ final class ConfigParserTests: XCTestCase {
     }
 
     func testCanonicalSchemaRejectsFormerKeysAndUnsupportedRoots() {
-        for key in ["type", "shell", "working_directory", "env", "output", "max_output", "error_text", "on_error", "stale_after", "action", "info", "hidden", "triggers", "watch", "notify_on"] {
+        for key in ["type", "shell", "working_directory", "env", "output", "max_output", "error_text", "on_error", "stale_after", "action", "info", "hidden", "triggers", "watch", "notify_on", "notify_cooldown"] {
             assertParseError("""
             [item.clock]
             run = "date"

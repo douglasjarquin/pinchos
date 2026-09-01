@@ -17,22 +17,12 @@ public enum ConfigDiffEngine {
     /// `StatusItemController` can apply incrementally.
     ///
     /// A name shared by both configs is either `unchanged`, `changed` (same
-    /// managed-item instance updates in place), or folded into
-    /// `added`+`removed` together when it must become a *new* managed-item
-    /// instance instead: this happens when its kind changes (a `command`
-    /// becomes a `group` or vice versa, same name) or when its
-    /// group-membership visibility changes (a previously hidden group
-    /// member becomes top-level, or vice versa) -- both cases need a
-    /// native status item created or torn down, which a same-instance
-    /// in-place update cannot do (see `ManagedItem`/`ManagedGroupItem`,
-    /// whose native `NSStatusItem` is fixed at construction time).
+    /// managed-item instance updates in place, or folded into
+    /// `added`+`removed` together when it must become a new managed-item
+    /// instance instead.
     ///
     /// `orderChanged`/`requiresNativeRebuild`/`newOrder` describe native
-    /// status-item placement and therefore only ever consider *top-level*
-    /// (non-hidden-member) names: a hidden group member has no native
-    /// status item to place, so its position among hidden names is
-    /// irrelevant to whether native visual-left insertion can preserve
-    /// declared order.
+    /// status-item placement.
     public static func diff(old: PinchosConfig, new: PinchosConfig) -> ConfigDiff {
         let oldByName = Dictionary(uniqueKeysWithValues: old.items.map { ($0.name, $0) })
         let newByName = Dictionary(uniqueKeysWithValues: new.items.map { ($0.name, $0) })

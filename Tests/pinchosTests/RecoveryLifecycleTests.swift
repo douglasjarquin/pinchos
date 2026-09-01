@@ -38,8 +38,7 @@ final class RecoveryLifecycleTests: XCTestCase {
         initiallyVisible: Bool = true,
         now: @escaping () -> Date = Date.init,
         scheduler: CommandScheduler = CommandScheduler(),
-        sourceRegistry: CommandSourceRegistry = CommandSourceRegistry(),
-        notificationSink: ItemNotificationSink? = nil
+        sourceRegistry: CommandSourceRegistry = CommandSourceRegistry()
     ) -> ManagedItem {
         ManagedItem(
             config: config,
@@ -48,7 +47,6 @@ final class RecoveryLifecycleTests: XCTestCase {
             scheduler: scheduler,
             sourceRegistry: sourceRegistry,
             now: now,
-            notificationSink: notificationSink,
             statusItemFactory: { nil }
         )
     }

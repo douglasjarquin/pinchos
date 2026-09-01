@@ -9,17 +9,7 @@ public enum ConfigParser {
     static let supportedInfoKeys: Set<String> = ["title", "run"]
     static let supportedRootKeys: Set<String> = ["item"]
     static let supportedSchedulerKeys: Set<String> = ["max_active_sessions"]
-    static let supportedGroupKeys: Set<String> = ["title", "members", "icon", "symbol", "hidden"]
-
-    /// Which top-level namespace a scanned declaration name belongs to.
-    /// Item and group names share one flat lookup space for membership
-    /// references, but come from two distinct TOML tables (`[item.*]` vs
-    /// `[group.*]`), so the scanner has to remember which table to read
-    /// each discovered name back out of.
-    private enum ItemNamespace: Equatable {
-        case item
-        case group
-    }
+    private enum ItemNamespace: Equatable { case item }
 
     private enum SourceLineKey: Hashable {
         case rootField(String)
@@ -267,8 +257,8 @@ public enum ConfigParser {
             }
 
             if let components = headerComponents(in: line), components.count >= 2,
-               components[0] == "item" || components[0] == "group" {
-                let entryNamespace: ItemNamespace = components[0] == "item" ? .item : .group
+               components[0] == "item" {
+                let entryNamespace: ItemNamespace = .item
                 let name = components[1]
                 currentItem = name
                 currentSection = components.count == 2 ? nil : components.dropFirst(2).joined(separator: ".")
@@ -307,9 +297,9 @@ public enum ConfigParser {
                     let sourceKey = SourceLineKey.field(item: currentItem, path: path, actionIndex: nil)
                     lines[sourceKey] = lines[sourceKey] ?? lineNumber
                 }
-            } else if keyComponents[0] == "item" || keyComponents[0] == "group" {
+            } else if keyComponents[0] == "item" {
                 let rootKey = keyComponents[0]
-                let entryNamespace: ItemNamespace = rootKey == "item" ? .item : .group
+                let entryNamespace: ItemNamespace = .item
                 let rhs = String(line[line.index(after: equals)...]).trimmingCharacters(in: .whitespaces)
                 let isInlineTable = rhs.hasPrefix("{")
 
@@ -631,14 +621,6 @@ public enum ConfigParser {
         )
         let environment = try parseEnvironment(name: name, value: table["env"], sourceLines: sourceLines)
 
-        let triggers = try parseTriggers(name: name, value: table["triggers"], sourceLines: sourceLines)
-        let watch = try parseWatchPaths(
-            name: name,
-            value: table["watch"],
-            relativeTo: configURL,
-            sourceLines: sourceLines
-        )
-
         let intervalString = try optionalString(
             name: name,
             key: "interval",
@@ -659,25 +641,6 @@ public enum ConfigParser {
                 )
             }
             refreshInterval = .scheduled(interval)
-        }
-
-        let output: CommandOutputFormat
-        if let outputValue = table["output"] {
-            let rawValue = try stringValue(
-                name: name,
-                key: "output",
-                value: outputValue,
-                sourceLines: sourceLines
-            )
-            guard let parsedValue = CommandOutputFormat(rawValue: rawValue), parsedValue != .plain else {
-                throw ConfigParseError(
-                    message: "item.\(name): output must be 'json-v1'",
-                    line: sourceLine(item: name, key: "output", sourceLines: sourceLines)
-                )
-            }
-            output = parsedValue
-        } else {
-            output = .plain
         }
 
         let onError: ItemErrorPolicy
@@ -837,36 +800,10 @@ public enum ConfigParser {
             table: table,
             sourceLines: sourceLines
         ) ?? false
-        let notifyOn = try parseNotificationEvents(
-            name: name,
-            value: table["notify_on"],
-            sourceLines: sourceLines
-        )
-        let notifyCooldown: TimeInterval?
-        if let notifyCooldownValue = table["notify_cooldown"] {
-            let rawValue = try stringValue(
-                name: name,
-                key: "notify_cooldown",
-                value: notifyCooldownValue,
-                sourceLines: sourceLines
-            )
-            do {
-                notifyCooldown = try parseDuration(rawValue)
-            } catch {
-                throw ConfigParseError(
-                    message: "item.\(name): invalid notify_cooldown '\(rawValue)'",
-                    line: sourceLine(item: name, key: "notify_cooldown", sourceLines: sourceLines)
-                )
-            }
-        } else {
-            notifyCooldown = nil
-        }
-
         return CommandItemConfig(
             name: name,
             run: run,
             interval: refreshInterval,
-            output: output,
             timeout: timeout,
             maxOutputBytes: maxOutputBytes,
             shell: shell,
@@ -878,8 +815,6 @@ public enum ConfigParser {
                 table: table,
                 sourceLines: sourceLines
             ),
-            triggers: triggers,
-            watch: watch,
             errorText: try optionalString(
                 name: name,
                 key: "error_text",
@@ -898,106 +833,7 @@ public enum ConfigParser {
             hidden: hidden,
             iconOnly: iconOnly,
             disabled: disabled,
-            notifyOn: notifyOn,
-            notifyCooldown: notifyCooldown
         )
-    }
-
-    private static func parseTriggers(
-        name: String,
-        value: TOMLValueConvertible?,
-        sourceLines: SourceLineMap
-    ) throws -> Set<ItemTrigger> {
-        guard let value else { return [] }
-        guard let array = value.array else {
-            throw typeError(
-                path: "item.\(name).triggers",
-                expected: "array",
-                value: value,
-                line: sourceLine(item: name, key: "triggers", sourceLines: sourceLines)
-            )
-        }
-
-        var triggers = Set<ItemTrigger>()
-        for (index, element) in array.enumerated() {
-            let rawValue = try stringValue(
-                path: "item.\(name).triggers[\(index)]",
-                value: element,
-                requireNonEmpty: true,
-                line: sourceLine(item: name, key: "triggers", index: index, sourceLines: sourceLines)
-            )
-            guard let trigger = ItemTrigger(rawValue: rawValue) else {
-                throw ConfigParseError(
-                    message: "item.\(name).triggers[\(index)]: unsupported value '\(rawValue)'",
-                    line: sourceLine(item: name, key: "triggers", index: index, sourceLines: sourceLines)
-                )
-            }
-            triggers.insert(trigger)
-        }
-        return triggers
-    }
-
-    private static func parseWatchPaths(
-        name: String,
-        value: TOMLValueConvertible?,
-        relativeTo configURL: URL?,
-        sourceLines: SourceLineMap
-    ) throws -> [String] {
-        guard let value else { return [] }
-        guard let array = value.array else {
-            throw typeError(
-                path: "item.\(name).watch",
-                expected: "array",
-                value: value,
-                line: sourceLine(item: name, key: "watch", sourceLines: sourceLines)
-            )
-        }
-
-        var paths = Set<String>()
-        for (index, element) in array.enumerated() {
-            let rawPath = try stringValue(
-                path: "item.\(name).watch[\(index)]",
-                value: element,
-                requireNonEmpty: true,
-                line: sourceLine(item: name, key: "watch", index: index, sourceLines: sourceLines)
-            )
-            paths.insert(resolvePath(rawPath, relativeTo: configURL))
-        }
-        return paths.sorted()
-    }
-
-    private static func parseNotificationEvents(
-        name: String,
-        value: TOMLValueConvertible?,
-        sourceLines: SourceLineMap
-    ) throws -> Set<ItemNotificationEvent> {
-        guard let value else { return [] }
-        guard let array = value.array else {
-            throw typeError(
-                path: "item.\(name).notify_on",
-                expected: "array",
-                value: value,
-                line: sourceLine(item: name, key: "notify_on", sourceLines: sourceLines)
-            )
-        }
-
-        var events = Set<ItemNotificationEvent>()
-        for (index, element) in array.enumerated() {
-            let rawValue = try stringValue(
-                path: "item.\(name).notify_on[\(index)]",
-                value: element,
-                requireNonEmpty: true,
-                line: sourceLine(item: name, key: "notify_on", sourceLines: sourceLines)
-            )
-            guard let event = ItemNotificationEvent(rawValue: rawValue) else {
-                throw ConfigParseError(
-                    message: "item.\(name): notify_on must contain only 'failure' or 'recovery'",
-                    line: sourceLine(item: name, key: "notify_on", sourceLines: sourceLines)
-                )
-            }
-            events.insert(event)
-        }
-        return events
     }
 
     /// Parses the mutually exclusive `symbol` / `icon` pair shared by

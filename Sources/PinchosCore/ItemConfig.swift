@@ -5,25 +5,9 @@ public enum ItemErrorPolicy: String, Equatable, Sendable {
     case keepLast = "keep_last"
 }
 
-public enum ItemNotificationEvent: String, Equatable, Hashable, Sendable {
-    case failure
-    case recovery
-}
-
 public enum RefreshInterval: Equatable, Sendable {
     case scheduled(TimeInterval)
     case manual
-}
-
-public enum CommandOutputFormat: String, Equatable, Sendable {
-    case plain
-    case jsonV1 = "json-v1"
-}
-
-public enum ItemTrigger: String, Equatable, Hashable, Sendable {
-    case startup
-    case wake
-    case networkChange = "network-change"
 }
 
 public enum ItemActionKind: Equatable, Sendable {
@@ -125,9 +109,6 @@ public struct CommandItemConfig: Equatable, Sendable {
     public let workingDirectory: String?
     public let environment: [String: String]
     public let interval: RefreshInterval
-    public let output: CommandOutputFormat
-    public let triggers: Set<ItemTrigger>
-    public let watch: [String]
     public let timeout: TimeInterval
     public let maxOutputBytes: Int
     public let format: String?
@@ -144,22 +125,17 @@ public struct CommandItemConfig: Equatable, Sendable {
     public let hidden: Bool
     public let iconOnly: Bool
     public let disabled: Bool
-    public let notifyOn: Set<ItemNotificationEvent>
-    public let notifyCooldown: TimeInterval?
 
     public init(
         name: String,
         run: String,
         interval: RefreshInterval,
-        output: CommandOutputFormat = .plain,
         timeout: TimeInterval = CommandItemConfig.defaultTimeout,
         maxOutputBytes: Int = CommandItemConfig.defaultMaxOutputBytes,
         shell: [String] = CommandItemConfig.defaultShell,
         workingDirectory: String? = nil,
         environment: [String: String] = [:],
         format: String? = nil,
-        triggers: Set<ItemTrigger> = [],
-        watch: [String] = [],
         errorText: String = "\u{2013}",
         onError: ItemErrorPolicy = .replace,
         staleAfter: TimeInterval? = nil,
@@ -173,9 +149,7 @@ public struct CommandItemConfig: Equatable, Sendable {
         hideOnError: Bool = false,
         hidden: Bool = false,
         iconOnly: Bool = false,
-        disabled: Bool = false,
-        notifyOn: Set<ItemNotificationEvent> = [],
-        notifyCooldown: TimeInterval? = nil
+        disabled: Bool = false
     ) {
         self.name = name
         self.run = run
@@ -183,9 +157,6 @@ public struct CommandItemConfig: Equatable, Sendable {
         self.workingDirectory = workingDirectory
         self.environment = environment
         self.interval = interval
-        self.output = output
-        self.triggers = triggers
-        self.watch = watch
         self.timeout = timeout
         self.maxOutputBytes = maxOutputBytes
         self.format = format
@@ -202,8 +173,6 @@ public struct CommandItemConfig: Equatable, Sendable {
         self.hidden = hidden
         self.iconOnly = iconOnly
         self.disabled = disabled
-        self.notifyOn = notifyOn
-        self.notifyCooldown = notifyCooldown
     }
 
     /// Local-file path when `iconSource` is `.file`; `nil` for a symbol or
@@ -254,15 +223,12 @@ extension ItemConfig {
         name: String,
         run: String,
         interval: RefreshInterval,
-        output: CommandOutputFormat = .plain,
         timeout: TimeInterval = CommandItemConfig.defaultTimeout,
         maxOutputBytes: Int = CommandItemConfig.defaultMaxOutputBytes,
         shell: [String] = CommandItemConfig.defaultShell,
         workingDirectory: String? = nil,
         environment: [String: String] = [:],
         format: String? = nil,
-        triggers: Set<ItemTrigger> = [],
-        watch: [String] = [],
         errorText: String = "\u{2013}",
         onError: ItemErrorPolicy = .replace,
         staleAfter: TimeInterval? = nil,
@@ -276,24 +242,19 @@ extension ItemConfig {
         hideOnError: Bool = false,
         hidden: Bool = false,
         iconOnly: Bool = false,
-        disabled: Bool = false,
-        notifyOn: Set<ItemNotificationEvent> = [],
-        notifyCooldown: TimeInterval? = nil
+        disabled: Bool = false
     ) {
         self = .command(
             CommandItemConfig(
                 name: name,
                 run: run,
                 interval: interval,
-                output: output,
                 timeout: timeout,
                 maxOutputBytes: maxOutputBytes,
                 shell: shell,
                 workingDirectory: workingDirectory,
                 environment: environment,
                 format: format,
-                triggers: triggers,
-                watch: watch,
                 errorText: errorText,
                 onError: onError,
                 staleAfter: staleAfter,
@@ -307,9 +268,7 @@ extension ItemConfig {
                 hideOnError: hideOnError,
                 hidden: hidden,
                 iconOnly: iconOnly,
-                disabled: disabled,
-                notifyOn: notifyOn,
-                notifyCooldown: notifyCooldown
+                disabled: disabled
             )
         )
     }

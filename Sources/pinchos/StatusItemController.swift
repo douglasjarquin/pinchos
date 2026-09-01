@@ -74,12 +74,7 @@ extension ManagedItemLifecycle {
 
 @MainActor
 protocol ManagedItemFactory: AnyObject {
-    /// `isTopLevel` is `false` exactly when `name` is a member of some
-    /// group (see `PinchosConfig.hiddenMemberNames`): the created instance
-    /// then gets no real backing `NSStatusItem` at all, since it must never
-    /// occupy its own menu-bar slot alongside the group(s) that reference
-    /// it. It still runs its schedule and is reachable by name from a
-    /// group's menu.
+    /// Every configured item owns its own status-item slot.
     func make(
         config: ItemConfig,
         menuDelegate: StatusItemMenuDelegate,
@@ -92,16 +87,12 @@ protocol ManagedItemFactory: AnyObject {
 private final class DefaultManagedItemFactory: ManagedItemFactory {
     private let scheduler: CommandScheduler
     private let sourceRegistry: CommandSourceRegistry
-    private let notificationSink: ItemNotificationSink
-
     init(
         scheduler: CommandScheduler,
-        sourceRegistry: CommandSourceRegistry,
-        notificationSink: ItemNotificationSink
+        sourceRegistry: CommandSourceRegistry
     ) {
         self.scheduler = scheduler
         self.sourceRegistry = sourceRegistry
-        self.notificationSink = notificationSink
     }
 
     func make(
@@ -116,8 +107,7 @@ private final class DefaultManagedItemFactory: ManagedItemFactory {
             initiallyVisible: initiallyVisible,
             isTopLevel: isTopLevel,
             scheduler: scheduler,
-            sourceRegistry: sourceRegistry,
-            notificationSink: notificationSink
+            sourceRegistry: sourceRegistry
         )
     }
 }
@@ -222,8 +212,7 @@ final class StatusItemController: StatusItemMenuDelegate {
         self.statusItemHost = statusItemHost ?? SystemStatusItemHost()
         self.itemFactory = itemFactory ?? DefaultManagedItemFactory(
             scheduler: resolvedScheduler,
-            sourceRegistry: resolvedSourceRegistry,
-            notificationSink: SystemItemNotificationSink()
+            sourceRegistry: resolvedSourceRegistry
         )
         self.configPath = configPath
         self.onReload = onReload
@@ -690,21 +679,14 @@ final class StatusItemController: StatusItemMenuDelegate {
     /// command item shows its value run through the item's `format` (so
     /// `{output}%` keeps its suffix) and, like the bar, falls back to
     /// `error_text` when there is no value -- never its config name. The icon
-    /// source follows the bar too (structured-output override, else the config's
-    /// icon; a group's static icon source). A group shows its static `title`.
+    /// source follows the bar and the config's icon.
     private func collapsedRow(for item: any ManagedItemLifecycle) async -> (title: String, iconSource: ItemIconSource?) {
         let commandConfig = item.config.command
         let snapshot = await item.runtimeSnapshot()
-        let value: String?
-        if let structuredText = snapshot.structuredOutput?.text {
-            value = DiagnosticPreviewFormatter.preview(structuredText, limits: .menuValue).text
-        } else {
-            value = snapshot.fullOutput.map { lastTrimmedLine(of: $0) }
-        }
+        let value = snapshot.fullOutput.map { lastTrimmedLine(of: $0) }
         let base = value.flatMap { $0.isEmpty ? nil : applyFormat(commandConfig.format, output: $0) }
             ?? commandConfig.errorText
-        let iconSource = snapshot.structuredOutput?.iconSource ?? commandConfig.iconSource
-        return (truncateTitle(base, maxLength: commandConfig.maxLength), iconSource)
+        return (truncateTitle(base, maxLength: commandConfig.maxLength), commandConfig.iconSource)
     }
 
     private func makePresentationMenuItem() -> NSMenuItem {
