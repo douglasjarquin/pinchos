@@ -141,7 +141,7 @@ public struct RecoveryMenu: Equatable, Sendable {
 public enum ExampleConfig {
     public static let text = """
     [item.codex]
-    run = "quota-axi --provider codex --json | jq -r '.providers[0].windows[] | select(.label==\"week\") | .percentRemaining'"
+    run = "quota-axi --provider codex --json | jq -r '.providers[0].windows[] | select(.label==\\\"week\\\") | .percentRemaining'"
     interval = "5m"
     timeout = "15s"
     format = "{output}"
@@ -149,17 +149,17 @@ public enum ExampleConfig {
 
     [[item.codex.menu]]
     label = "Usage"
-    run = "quota-axi --provider codex --json | jq -r '.providers[0].windows[] | select(.label==\"week\") | .percentRemaining'"
+    run = "quota-axi --provider codex --json | jq -r '.providers[0].windows[] | select(.label==\\\"week\\\") | .percentRemaining'"
     cache = "5m"
 
     [[item.codex.menu]]
     label = "Pace"
-    run = "quota-axi --provider codex --json | jq -r '.providers[0].windows[] | select(.label==\"week\") | .pace.status'"
+    run = "quota-axi --provider codex --json | jq -r '.providers[0].windows[] | select(.label==\\\"week\\\") | .pace.status'"
     cache = "5m"
 
     [[item.codex.menu]]
     label = "Refresh"
-    run = "quota-axi --provider codex --json | jq -r '.providers[0].windows[] | select(.label==\"week\") | .percentRemaining'"
+    run = "quota-axi --provider codex --json | jq -r '.providers[0].windows[] | select(.label==\\\"week\\\") | .percentRemaining'"
     cache = "5m"
     action = "open https://chatgpt.com/codex"
 
