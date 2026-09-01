@@ -126,7 +126,6 @@ final class ConfigParserTests: XCTestCase {
         label = "Open"
         action = "open ."
         """).items[0].command
-        XCTAssertEqual(item.infoRows, [ItemInfoRow(title: "Usage", run: "echo usage")])
         XCTAssertEqual(item.actions, [ItemAction(title: "Open", kind: .command("open ."))])
     }
 

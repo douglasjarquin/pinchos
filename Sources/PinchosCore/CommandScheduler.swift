@@ -207,12 +207,7 @@ public actor CommandScheduler {
     /// of concurrent shells, pipes, and blocking drain/wait workers at once.
     public static let defaultMaxActiveSessions = max(1, min(4, ProcessInfo.processInfo.activeProcessorCount))
 
-    /// Bounds for the optional `[scheduler].max_active_sessions` config
-    /// override. One is always required so no configuration can wedge every
-    /// command session forever; 32 is far beyond any default hardware
-    /// budget and exists to stop obvious misconfiguration, not to bless
-    /// that many concurrent sessions as reasonable.
-    public static let allowedMaxActiveSessionsRange = 1...32
+    static let allowedMaxActiveSessionsRange = 1...32
 
     /// The process-wide default instance used by production `ManagedItem`s
     /// that don't have one explicitly injected (mirrors `OutputMemoryBudget.shared`).
@@ -238,10 +233,12 @@ public actor CommandScheduler {
     private var timers: [ItemToken: TimerEntry] = [:]
     private var driverTask: Task<Void, Never>?
 
-    public init(
-        maxActiveSessions: Int = CommandScheduler.defaultMaxActiveSessions,
-        clock: any SchedulerClock = SystemSchedulerClock()
-    ) {
+    public init(clock: any SchedulerClock = SystemSchedulerClock()) {
+        self.maxActiveSessions = CommandScheduler.defaultMaxActiveSessions
+        self.clock = clock
+    }
+
+    init(maxActiveSessions: Int, clock: any SchedulerClock = SystemSchedulerClock()) {
         self.maxActiveSessions = Self.clamp(maxActiveSessions)
         self.clock = clock
     }
@@ -313,7 +310,7 @@ public actor CommandScheduler {
 
     // MARK: - Configuration
 
-    public func updateMaxActiveSessions(_ newLimit: Int) {
+    func updateMaxActiveSessions(_ newLimit: Int) {
         maxActiveSessions = Self.clamp(newLimit)
         admitWaitersIfPossible()
     }

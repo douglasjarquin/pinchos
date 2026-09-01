@@ -8,7 +8,6 @@ public enum ConfigParser {
     static let supportedActionKeys: Set<String> = ["title", "run", "refresh"]
     static let supportedInfoKeys: Set<String> = ["title", "run"]
     static let supportedRootKeys: Set<String> = ["item"]
-    static let supportedSchedulerKeys: Set<String> = ["max_active_sessions"]
     private enum ItemNamespace: Equatable { case item }
 
     private enum SourceLineKey: Hashable {
@@ -87,58 +86,6 @@ public enum ConfigParser {
             )
         }
         return itemTable
-    }
-
-    /// Parses the optional `[scheduler]` table, the sole advanced-user
-    /// override of `CommandScheduler`'s default active-session bound. Absent
-    /// entirely, `SchedulerConfig()` (no override) applies. When present,
-    /// `max_active_sessions` must be an integer within
-    /// `CommandScheduler.allowedMaxActiveSessionsRange`; anything else fails
-    /// validation rather than silently clamping, so a typo'd config cannot
-    /// silently run with a very different concurrency budget than intended.
-    private static func parseScheduler(
-        table: TOMLTable,
-        sourceLines: SourceLineMap
-    ) throws -> SchedulerConfig {
-        guard let schedulerValue = table["scheduler"] else {
-            return SchedulerConfig()
-        }
-        guard let schedulerTable = schedulerValue.table else {
-            throw typeError(
-                path: "scheduler",
-                expected: "table",
-                value: schedulerValue,
-                line: sourceLines[.rootField("scheduler")]
-            )
-        }
-        try validateUnknownKeys(
-            in: schedulerTable,
-            allowedKeys: supportedSchedulerKeys,
-            context: "scheduler",
-            lineForKey: { sourceLines[.rootField($0)] ?? sourceLines[.rootField("scheduler")] }
-        )
-
-        guard let maxActiveSessionsValue = schedulerTable["max_active_sessions"] else {
-            return SchedulerConfig()
-        }
-        let line = sourceLines[.rootField("max_active_sessions")] ?? sourceLines[.rootField("scheduler")]
-        guard let maxActiveSessions = maxActiveSessionsValue.int else {
-            throw typeError(
-                path: "scheduler.max_active_sessions",
-                expected: "integer",
-                value: maxActiveSessionsValue,
-                line: line
-            )
-        }
-        guard CommandScheduler.allowedMaxActiveSessionsRange.contains(maxActiveSessions) else {
-            throw ConfigParseError(
-                message: "scheduler.max_active_sessions must be between "
-                    + "\(CommandScheduler.allowedMaxActiveSessionsRange.lowerBound) and "
-                    + "\(CommandScheduler.allowedMaxActiveSessionsRange.upperBound)",
-                line: line
-            )
-        }
-        return SchedulerConfig(maxActiveSessions: maxActiveSessions)
     }
 
     private static func crossCheckDiscoveredNames(
@@ -688,12 +635,6 @@ public enum ConfigParser {
             sourceLines: sourceLines
         )
 
-        let infoRows = try parseInfoRows(
-            name: name,
-            value: table["info"],
-            sourceLines: sourceLines
-        )
-
         let timeoutString: String
         if let timeoutValue = table["timeout"] {
             timeoutString = try stringValue(
@@ -804,35 +745,14 @@ public enum ConfigParser {
             name: name,
             run: run,
             interval: refreshInterval,
-            timeout: timeout,
-            maxOutputBytes: maxOutputBytes,
-            shell: shell,
-            workingDirectory: workingDirectory,
-            environment: environment,
             format: try optionalString(
                 name: name,
                 key: "format",
                 table: table,
                 sourceLines: sourceLines
             ),
-            errorText: try optionalString(
-                name: name,
-                key: "error_text",
-                table: table,
-                sourceLines: sourceLines
-            ) ?? "\u{2013}",
-            onError: onError,
-            staleAfter: staleAfter,
-            actions: actions,
-            infoRows: infoRows,
             icon: iconSource?.filePath,
             symbol: iconSource?.symbolName,
-            maxLength: maxLength,
-            hideWhenEmpty: hideWhenEmpty,
-            hideOnError: hideOnError,
-            hidden: hidden,
-            iconOnly: iconOnly,
-            disabled: disabled,
         )
     }
 
@@ -994,66 +914,6 @@ public enum ConfigParser {
                 )
             }
             return ItemAction(title: title, kind: .refresh)
-        }
-    }
-
-    private static func parseInfoRows(
-        name: String,
-        value: TOMLValueConvertible?,
-        sourceLines: SourceLineMap
-    ) throws -> [ItemInfoRow] {
-        guard let value else { return [] }
-        guard let array = value.array else {
-            throw typeError(
-                path: "item.\(name).info",
-                expected: "array",
-                value: value,
-                line: sourceLine(item: name, key: "info", sourceLines: sourceLines)
-            )
-        }
-
-        return try array.enumerated().map { index, element in
-            guard let table = element.table else {
-                throw typeError(
-                    path: "item.\(name).info[\(index)]",
-                    expected: "table",
-                    value: element,
-                    line: sourceLine(item: name, key: "info", index: index, sourceLines: sourceLines)
-                )
-            }
-
-            try validateUnknownKeys(
-                in: table,
-                allowedKeys: supportedInfoKeys,
-                context: "item.\(name).info[\(index)]",
-                lineForKey: { sourceLine(item: name, key: $0, index: index, sourceLines: sourceLines) }
-            )
-
-            guard let titleValue = table["title"] else {
-                throw ConfigParseError(
-                    message: "item.\(name).info[\(index)].title: missing required field",
-                    line: sourceLine(item: name, key: "info", index: index, sourceLines: sourceLines)
-                )
-            }
-            let title = try stringValue(
-                path: "item.\(name).info[\(index)].title",
-                value: titleValue,
-                requireNonEmpty: true,
-                line: sourceLine(item: name, key: "title", index: index, sourceLines: sourceLines)
-            )
-            guard let runValue = table["run"] else {
-                throw ConfigParseError(
-                    message: "item.\(name).info[\(index)].run: missing required field",
-                    line: sourceLine(item: name, key: "info", index: index, sourceLines: sourceLines)
-                )
-            }
-            let run = try stringValue(
-                path: "item.\(name).info[\(index)].run",
-                value: runValue,
-                requireNonEmpty: true,
-                line: sourceLine(item: name, key: "run", index: index, sourceLines: sourceLines)
-            )
-            return ItemInfoRow(title: title, run: run)
         }
     }
 
@@ -1559,7 +1419,7 @@ public enum ConfigParser {
             line: source.line(item: name, key: "run")
         )
         let interval = try canonicalInterval(name: name, value: table["interval"], source: source)
-        let timeout = try canonicalDuration(name: name, key: "timeout", value: table["timeout"], defaultValue: 15, source: source)
+        _ = try canonicalDuration(name: name, key: "timeout", value: table["timeout"], defaultValue: 15, source: source)
         let format = try canonicalFormat(name: name, value: table["format"], source: source)
         let icon = try canonicalOptionalString(name: name, key: "icon", value: table["icon"], source: source)
         let symbol = try canonicalOptionalString(name: name, key: "symbol", value: table["symbol"], source: source)
@@ -1589,7 +1449,6 @@ public enum ConfigParser {
             name: name,
             run: run,
             interval: interval,
-            timeout: timeout,
             format: format,
             menu: menu,
             icon: icon.map { resolvePath($0, relativeTo: configURL) },

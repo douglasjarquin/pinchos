@@ -3,6 +3,31 @@ import XCTest
 @testable import PinchosCore
 @testable import pinchos
 
+@MainActor
+final class HeadlessManagedItemFactory: ManagedItemFactory {
+    private let scheduler: CommandScheduler
+
+    init(scheduler: CommandScheduler) {
+        self.scheduler = scheduler
+    }
+
+    func make(
+        config: ItemConfig,
+        menuDelegate: StatusItemMenuDelegate,
+        initiallyVisible: Bool,
+        isTopLevel: Bool
+    ) -> any ManagedItemLifecycle {
+        ManagedItem(
+            config: config,
+            menuDelegate: menuDelegate,
+            initiallyVisible: initiallyVisible,
+            isTopLevel: isTopLevel,
+            scheduler: scheduler,
+            statusItemFactory: { nil }
+        )
+    }
+}
+
 // Deterministic architectural invariants for issue #55/#49: these run in
 // ordinary hosted CI (no wall-clock/RSS budgets here, see
 // docs/performance.md) and prove that the number of live scheduler timer

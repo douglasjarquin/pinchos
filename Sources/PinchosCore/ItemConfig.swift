@@ -25,11 +25,6 @@ public struct ItemAction: Equatable, Sendable {
     }
 }
 
-/// A read-only status line shown in an item's menu (e.g. "Reset: Sep 7" or
-/// "Pace: ahead"). Unlike an `ItemAction`, it is never clickable: its command
-/// is run with the item's shell/environment when the menu opens and its stdout
-/// is rendered as a disabled row beside `title`. A failing or empty command
-/// renders the title with a `–` value rather than hiding the row.
 public struct ItemInfoRow: Equatable, Sendable {
     public let title: String
     public let run: String
@@ -40,6 +35,11 @@ public struct ItemInfoRow: Equatable, Sendable {
     }
 }
 
+/// A read-only status line shown in an item's menu (e.g. "Reset: Sep 7" or
+/// "Pace: ahead"). Unlike an `ItemAction`, it is never clickable: its command
+/// is run with the item's shell/environment when the menu opens and its stdout
+/// is rendered as a disabled row beside `title`. A failing or empty command
+/// renders the title with a `–` value rather than hiding the row.
 public struct MenuRowConfig: Equatable, Sendable {
     public let label: String?
     public let value: String?
@@ -105,13 +105,13 @@ public struct CommandItemConfig: Equatable, Sendable {
 
     public let name: String
     public let run: String
+    public let interval: RefreshInterval
+    public let format: String?
+    public let timeout: TimeInterval
+    public let maxOutputBytes: Int
     public let shell: [String]
     public let workingDirectory: String?
     public let environment: [String: String]
-    public let interval: RefreshInterval
-    public let timeout: TimeInterval
-    public let maxOutputBytes: Int
-    public let format: String?
     public let errorText: String
     public let onError: ItemErrorPolicy
     public let staleAfter: TimeInterval?
@@ -153,19 +153,19 @@ public struct CommandItemConfig: Equatable, Sendable {
     ) {
         self.name = name
         self.run = run
+        self.interval = interval
+        self.format = format
+        self.timeout = timeout
+        self.maxOutputBytes = maxOutputBytes
         self.shell = shell
         self.workingDirectory = workingDirectory
         self.environment = environment
-        self.interval = interval
-        self.timeout = timeout
-        self.maxOutputBytes = maxOutputBytes
-        self.format = format
         self.errorText = errorText
         self.onError = onError
         self.staleAfter = staleAfter
-        self.menu = menu
         self.actions = actions.isEmpty ? Self.legacyActions(from: menu) : actions
         self.infoRows = infoRows.isEmpty ? Self.legacyInfoRows(from: menu) : infoRows
+        self.menu = menu
         self.iconSource = ItemIconSource.make(icon: icon, symbol: symbol)
         self.maxLength = maxLength
         self.hideWhenEmpty = hideWhenEmpty
@@ -274,25 +274,11 @@ extension ItemConfig {
     }
 }
 
-/// Optional, validated override of the application-wide `CommandScheduler`
-/// policy. `maxActiveSessions` is `nil` when the user did not configure
-/// `[scheduler]` at all, in which case `CommandScheduler.defaultMaxActiveSessions`
-/// applies. See README "Command scheduler" for the full policy.
-public struct SchedulerConfig: Equatable, Sendable {
-    public let maxActiveSessions: Int?
-
-    public init(maxActiveSessions: Int? = nil) {
-        self.maxActiveSessions = maxActiveSessions
-    }
-}
-
 public struct PinchosConfig: Equatable, Sendable {
     public let items: [ItemConfig]
-    public let scheduler: SchedulerConfig
 
-    public init(items: [ItemConfig], scheduler: SchedulerConfig = SchedulerConfig()) {
+    public init(items: [ItemConfig]) {
         self.items = items
-        self.scheduler = scheduler
     }
 
 }

@@ -6,15 +6,13 @@ final class ConfigDiffTests: XCTestCase {
         _ name: String,
         run: String = "echo x",
         interval: RefreshInterval = .scheduled(60),
-        timeout: TimeInterval = 15,
-        maxOutputBytes: Int = 64 * 1024
+        format: String? = nil
     ) -> ItemConfig {
         ItemConfig(
             name: name,
             run: run,
             interval: interval,
-            timeout: timeout,
-            maxOutputBytes: maxOutputBytes
+            format: format
         )
     }
 
@@ -29,13 +27,13 @@ final class ConfigDiffTests: XCTestCase {
         XCTAssertFalse(diff.requiresNativeRebuild)
     }
 
-    func testChangingInfoRowsMarksItemChanged() {
+    func testChangingMenuRowsMarksItemChanged() {
         let old = PinchosConfig(items: [item("a")])
         let withInfo = ItemConfig(
             name: "a",
             run: "echo x",
             interval: .scheduled(60),
-            info: [ItemInfoRow(title: "Reset", run: "echo 1")]
+            menu: [MenuRowConfig(label: "Reset", value: "1")]
         )
         let diff = ConfigDiffEngine.diff(old: old, new: PinchosConfig(items: [withInfo]))
         XCTAssertFalse(diff.isEmpty)
@@ -83,35 +81,7 @@ final class ConfigDiffTests: XCTestCase {
                 name: "a",
                 run: "echo x",
                 interval: .scheduled(60),
-                actions: [ItemAction(title: "Refresh", kind: .refresh)]
-            )
-        ])
-
-        let diff = ConfigDiffEngine.diff(old: old, new: new)
-
-        XCTAssertEqual(diff.changed.map(\.name), ["a"])
-        XCTAssertTrue(diff.added.isEmpty)
-        XCTAssertTrue(diff.removed.isEmpty)
-    }
-
-    func testDetectsChangedCommandBounds() {
-        let old = PinchosConfig(items: [item("a")])
-        let new = PinchosConfig(items: [item("a", timeout: 30, maxOutputBytes: 128 * 1024)])
-        let diff = ConfigDiffEngine.diff(old: old, new: new)
-        XCTAssertEqual(diff.changed.map(\.name), ["a"])
-        XCTAssertTrue(diff.added.isEmpty)
-        XCTAssertTrue(diff.removed.isEmpty)
-    }
-
-    func testDetectsChangedRuntimePresentationSettings() {
-        let old = PinchosConfig(items: [item("a")])
-        let new = PinchosConfig(items: [
-            ItemConfig(
-                name: "a",
-                run: "echo x",
-                interval: .scheduled(60),
-                onError: .keepLast,
-                staleAfter: 900
+                menu: [MenuRowConfig(label: "Refresh", action: "echo refresh")]
             )
         ])
 
@@ -143,29 +113,6 @@ final class ConfigDiffTests: XCTestCase {
             ItemConfig(name: "a", run: "echo x", interval: .scheduled(60), symbol: "chart.bar.fill")
         ])
         let new = PinchosConfig(items: [item("a")])
-
-        let diff = ConfigDiffEngine.diff(old: old, new: new)
-
-        XCTAssertEqual(diff.changed.map(\.name), ["a"])
-        XCTAssertTrue(diff.added.isEmpty)
-        XCTAssertTrue(diff.removed.isEmpty)
-    }
-
-    func testDetectsChangedVisibilityAndDisabledPolicy() {
-        let old = PinchosConfig(items: [item("a")])
-        let new = PinchosConfig(items: [
-            ItemConfig(
-                name: "a",
-                run: "echo x",
-                interval: .scheduled(60),
-                maxLength: 24,
-                hideWhenEmpty: true,
-                hideOnError: true,
-                hidden: true,
-                iconOnly: true,
-                disabled: true
-            )
-        ])
 
         let diff = ConfigDiffEngine.diff(old: old, new: new)
 

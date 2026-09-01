@@ -226,12 +226,6 @@ final class StatusItemController: StatusItemMenuDelegate {
 
     private func applyNow(config: PinchosConfig) async {
         collapsedMenuGeneration += 1
-        // Always applied, independent of the item diff below: a config
-        // reload that only touches `[scheduler]` (no item changes) must
-        // still take effect.
-        await scheduler.updateMaxActiveSessions(
-            config.scheduler.maxActiveSessions ?? CommandScheduler.defaultMaxActiveSessions
-        )
         let old = currentConfig()
         let diff = ConfigDiffEngine.diff(old: old, new: config)
         recoveryState.apply(config: config)
