@@ -66,19 +66,31 @@ public final class CommandSourceRegistry: @unchecked Sendable {
     }
 
     public func release(_ lease: CommandSourceLease) {
+        if let source = removeLeaseIfLast(lease) {
+            Task { await source.cancel() }
+        }
+    }
+
+    public func releaseAndCancelIfLast(_ lease: CommandSourceLease) async {
+        guard let source = removeLeaseIfLast(lease) else { return }
+        await source.cancel()
+    }
+
+    private func removeLeaseIfLast(_ lease: CommandSourceLease) -> CommandSource? {
         lock.lock()
         guard var entry = entries[lease.identity], entry.consumers.remove(lease.token) != nil else {
             lock.unlock()
-            return
+            return nil
         }
-        if entry.consumers.isEmpty {
-            entries.removeValue(forKey: lease.identity)
-            lock.unlock()
-            Task { await lease.source.cancel() }
-        } else {
+        guard entry.consumers.isEmpty else {
             entries[lease.identity] = entry
             lock.unlock()
+            return nil
         }
+        let source = entry.source
+        entries.removeValue(forKey: lease.identity)
+        lock.unlock()
+        return source
     }
 
     public func consumerCount(for identity: CommandSourceIdentity) -> Int {

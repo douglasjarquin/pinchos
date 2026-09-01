@@ -32,6 +32,7 @@ final class ManagedItem: ManagedItemLifecycle {
     private var menuRowLastAttemptedAt: [Int: Date] = [:]
     private var menuRowLastSuccessfulAt: [Int: Date] = [:]
     private var menuRowRefreshTasks: [Int: Task<Void, Never>] = [:]
+    private var menuRowRefreshTokens: [Int: UUID] = [:]
     private var menuRowTimerTokens: [Int: CommandScheduler.ItemToken] = [:]
     private let sourceClock: ManagedItemSourceClock
     private let sourceRegistry: CommandSourceRegistry
@@ -283,6 +284,7 @@ final class ManagedItem: ManagedItemLifecycle {
                 task.cancel()
             }
             menuRowRefreshTasks.removeAll()
+            menuRowRefreshTokens.removeAll()
             cancelMenuRowTimers()
         }
         if menuRowsNeedCancel {
@@ -320,14 +322,10 @@ final class ManagedItem: ManagedItemLifecycle {
         self.pendingUpdate = nil
         commandConfig = pendingUpdate.commandConfig
         if let primarySource = pendingUpdate.primarySource {
-            sourceRegistry.release(primarySourceLease)
             self.primarySource = primarySource
             primarySourceLease = pendingUpdate.primarySourceLease!
         }
         if pendingUpdate.menuRowsChanged {
-            for lease in menuRowSourceLeases.values {
-                sourceRegistry.release(lease)
-            }
             menuRows = commandConfig.menu
             menuRowRunners = pendingUpdate.menuRowRunners ?? Self.makeMenuRowRunners(for: menuRows, config: commandConfig)
             menuRowSources = pendingUpdate.menuRowSources ?? Self.makeMenuRowSourceLeases(
@@ -418,9 +416,9 @@ final class ManagedItem: ManagedItemLifecycle {
         var operations: [(identity: String, run: () async -> Void)] = []
         let name = config.name
         if includingPrimary {
-            let source = self.primarySource
-            operations.append((identity: "\(name):primary", run: { [weak self] in
-                await source.cancel()
+            let lease = self.primarySourceLease
+            operations.append((identity: "\(name):primary", run: { [weak self, sourceRegistry] in
+                await sourceRegistry.releaseAndCancelIfLast(lease)
                 await self?.drainRefreshInvocations()
                 await self?.awaitCancellationSettlementDelayForTesting(role: "primary")
             }))
@@ -432,9 +430,10 @@ final class ManagedItem: ManagedItemLifecycle {
                     await self?.awaitCancellationSettlementDelayForTesting(role: "menu-row:\(index)")
                 }))
             }
-            for (index, source) in menuRowSources {
-                operations.append((identity: "\(name):source[\(index)]", run: { [weak self] in
-                    await source.cancel()
+            for index in menuRowSources.keys {
+                guard let lease = menuRowSourceLeases[index] else { continue }
+                operations.append((identity: "\(name):source[\(index)]", run: { [weak self, sourceRegistry] in
+                    await sourceRegistry.releaseAndCancelIfLast(lease)
                     await self?.awaitCancellationSettlementDelayForTesting(role: "source:\(index)")
                 }))
             }
@@ -527,20 +526,23 @@ final class ManagedItem: ManagedItemLifecycle {
               menuRowRefreshTasks[index] == nil
         else { return }
         let generation = configurationGeneration
+        let token = UUID()
         menuRowLastAttemptedAt[index] = now()
+        menuRowRefreshTokens[index] = token
         menuRowRefreshTasks[index] = Task { @MainActor [weak self, source] in
             let cached = await source.refresh()
             guard let self,
-                  self.isActive,
-                  self.configurationGeneration == generation
+                  self.menuRowRefreshTokens[index] == token
             else { return }
+            self.menuRowRefreshTokens[index] = nil
+            self.menuRowRefreshTasks[index] = nil
+            guard self.isActive, self.configurationGeneration == generation else { return }
             if let value = cached.value {
                 self.menuRowCachedValues[index] = lastTrimmedLine(of: value)
             }
             if let lastSuccessfulAt = cached.lastSuccessfulAt {
                 self.menuRowLastSuccessfulAt[index] = lastSuccessfulAt
             }
-            self.menuRowRefreshTasks[index] = nil
         }
     }
 
@@ -726,6 +728,8 @@ final class ManagedItem: ManagedItemLifecycle {
         requestMenuRowRefreshIfNeeded(at: index)
         return menuRows[index].value ?? menuRowCachedValues[index]
     }
+
+    var menuRowRefreshTaskCountForTesting: Int { menuRowRefreshTasks.count }
 
     private func requestMenuRowRefreshIfNeeded(at index: Int) {
         guard menuRows[index].run != nil,

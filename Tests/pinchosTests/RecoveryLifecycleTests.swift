@@ -562,6 +562,45 @@ final class RecoveryLifecycleTests: XCTestCase {
     }
 
     @MainActor
+    func testPrimaryReloadDoesNotPoisonMenuRowRefreshBookkeeping() async throws {
+        let marker = FileManager.default.temporaryDirectory
+            .appendingPathComponent("pinchos-menu-row-reload-\(UUID().uuidString)")
+        let rowCommand = "printf started > '\(marker.path)'; sleep 0.5; printf row"
+        let item = makeHeadlessItem(
+            config: ItemConfig(
+                name: "reload",
+                run: "printf old",
+                interval: .manual,
+                menu: [MenuRowConfig(label: "Dynamic", run: rowCommand, cache: 60)]
+            ),
+            initiallyVisible: false
+        )
+        addTeardownBlock { @MainActor in
+            await item.tearDown()
+            try? FileManager.default.removeItem(at: marker)
+        }
+
+        item.activate()
+        let firstDeadline = Date().addingTimeInterval(2)
+        while Date() < firstDeadline {
+            if (try? String(contentsOf: marker)) == "started" { break }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        XCTAssertEqual(try String(contentsOf: marker), "started")
+
+        await item.prepareUpdate(config: ItemConfig(
+            name: "reload",
+            run: "printf updated",
+            interval: .manual,
+            menu: [MenuRowConfig(label: "Dynamic", run: rowCommand, cache: 60)]
+        ))
+        item.commitPreparedUpdate()
+
+        try await Task.sleep(for: .seconds(1))
+        XCTAssertEqual(item.menuRowRefreshTaskCountForTesting, 0)
+    }
+
+    @MainActor
     func testFormatUpdateRecomputesExistingSuccessfulTitle() async throws {
         let item = makeHeadlessItem(
             config: ItemConfig(

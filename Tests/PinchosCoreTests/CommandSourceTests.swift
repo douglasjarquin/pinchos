@@ -180,4 +180,36 @@ final class CommandSourceTests: XCTestCase {
         registry.release(second)
         XCTAssertEqual(registry.sourceCount, 0)
     }
+
+    func testReleasingOneConsumerDoesNotCancelSharedSource() async {
+        let runner = FakeSourceRunner(
+            outcomes: [.completed(success)],
+            delay: .milliseconds(100)
+        )
+        let registry = CommandSourceRegistry()
+        let scheduler = CommandScheduler(maxActiveSessions: 1)
+        let configuration = CommandSourceConfiguration(
+            command: "echo shared",
+            timeout: 1,
+            maxOutputBytes: 1024
+        )
+        let first = registry.acquire(
+            configuration: configuration,
+            scheduler: scheduler,
+            runner: runner
+        )
+        let second = registry.acquire(configuration: configuration, scheduler: scheduler)
+
+        let refresh = Task { await first.source.refresh() }
+        try? await Task.sleep(for: .milliseconds(10))
+        await registry.releaseAndCancelIfLast(first)
+
+        let activeRuns = await runner.activeRuns
+        XCTAssertEqual(activeRuns, 1)
+        _ = await refresh.value
+        let cachedValue = await first.source.snapshot()
+        XCTAssertEqual(cachedValue.state, .fresh)
+
+        await registry.releaseAndCancelIfLast(second)
+    }
 }
