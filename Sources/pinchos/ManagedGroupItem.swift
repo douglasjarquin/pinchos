@@ -19,6 +19,7 @@ final class ManagedGroupItem: ManagedItemLifecycle {
     let statusItem: NSStatusItem?
     private(set) var groupConfig: GroupItemConfig
     var config: ItemConfig { .group(groupConfig) }
+    var menuRows: [MenuRowConfig] { [] }
     var actions: [ItemAction] { [] }
     private(set) var iconDiagnosticNote: String?
     private(set) var isVisible = true
@@ -136,6 +137,9 @@ final class ManagedGroupItem: ManagedItemLifecycle {
 
     func actionSnapshot(at index: Int) async -> CommandRunnerSnapshot? { nil }
     func invokeAction(at index: Int) {}
+    func menuRowValue(at index: Int) -> String? { nil }
+    func menuRowSnapshot(at index: Int) async -> CommandRunnerSnapshot? { nil }
+    func invokeMenuRow(at index: Int) {}
     func refreshNow() {}
 
     private func applyTitle() {

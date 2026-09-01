@@ -33,6 +33,7 @@ private final class SystemStatusItemHost: StatusItemHost {
 @MainActor
 protocol ManagedItemLifecycle: AnyObject {
     var config: ItemConfig { get }
+    var menuRows: [MenuRowConfig] { get }
     var actions: [ItemAction] { get }
     var iconDiagnosticNote: String? { get }
     var isVisible: Bool { get }
@@ -46,9 +47,29 @@ protocol ManagedItemLifecycle: AnyObject {
     func tearDown(deadline: ContinuousClock.Instant) async
     func runnerSnapshot() async -> CommandRunnerSnapshot
     func runtimeSnapshot() async -> ItemRuntimeSnapshot
+    func menuRowValue(at index: Int) -> String?
+    func menuRowSnapshot(at index: Int) async -> CommandRunnerSnapshot?
+    func invokeMenuRow(at index: Int)
     func actionSnapshot(at index: Int) async -> CommandRunnerSnapshot?
     func invokeAction(at index: Int)
     func refreshNow()
+}
+
+extension ManagedItemLifecycle {
+    var menuRows: [MenuRowConfig] { config.commandConfig?.menu ?? [] }
+
+    func menuRowValue(at index: Int) -> String? {
+        guard menuRows.indices.contains(index) else { return nil }
+        return menuRows[index].value
+    }
+
+    func menuRowSnapshot(at index: Int) async -> CommandRunnerSnapshot? {
+        await actionSnapshot(at: index)
+    }
+
+    func invokeMenuRow(at index: Int) {
+        invokeAction(at: index)
+    }
 }
 
 @MainActor
@@ -142,6 +163,17 @@ private final class ItemActionTarget: NSObject {
 }
 
 @MainActor
+private final class MenuRowTarget: NSObject {
+    let item: any ManagedItemLifecycle
+    let index: Int
+
+    init(item: any ManagedItemLifecycle, index: Int) {
+        self.item = item
+        self.index = index
+    }
+}
+
+@MainActor
 private final class CopyTextTarget: NSObject {
     let text: String
 
@@ -177,8 +209,6 @@ final class StatusItemController: StatusItemMenuDelegate {
     private let onReload: () -> Void
     private var lifecycleTail: Task<Void, Never>?
     private var lifecycleGeneration = 0
-    private var infoRowCache: [String: [String: String]] = [:]
-    private var infoRowRefreshTasks: [String: Task<Void, Never>] = [:]
 
     init(
         configPath: String,
@@ -224,7 +254,6 @@ final class StatusItemController: StatusItemMenuDelegate {
             await apply(diff: diff, config: config)
         }
         synchronizeCollapsedVisibility()
-        refreshInfoRowCache(for: config)
     }
 
     func showParseError(_ description: String) async {
@@ -373,9 +402,6 @@ final class StatusItemController: StatusItemMenuDelegate {
         }
         items.removeAll()
         order.removeAll()
-        for task in infoRowRefreshTasks.values { task.cancel() }
-        infoRowRefreshTasks.removeAll()
-        infoRowCache.removeAll()
         clearWarningItem()
         removeCollapsedStatusItem()
         barPresentation = .expanded
@@ -562,29 +588,13 @@ final class StatusItemController: StatusItemMenuDelegate {
     }
 
     private func addCommandContentImmediately(item: any ManagedItemLifecycle, commandConfig: CommandItemConfig, to menu: NSMenu) {
-        let hasRefresh = item.actions.contains { if case .refresh = $0.kind { return true }; return false }
-        if !hasRefresh {
-            let refresh = NSMenuItem(title: "Refresh Now", action: #selector(refreshAction(_:)), keyEquivalent: "")
-            refresh.target = self
-            refresh.representedObject = RefreshActionTarget(item: item)
-            refresh.isEnabled = !commandConfig.disabled
-            menu.addItem(refresh)
-        }
-        for (index, action) in item.actions.enumerated() {
-            let row = NSMenuItem(title: action.title, action: #selector(itemAction(_:)), keyEquivalent: "")
-            row.target = self
-            row.representedObject = ItemActionTarget(item: item, index: index)
-            row.isEnabled = !commandConfig.disabled
-            menu.addItem(row)
-        }
-        if !commandConfig.infoRows.isEmpty {
-            menu.addItem(NSMenuItem.separator())
-            for info in commandConfig.infoRows {
-                let value = infoRowCache[item.config.name]?[info.title] ?? "Loading…"
-                menu.addItem(disabledItem(title: "\(info.title): \(value.isEmpty ? "–" : truncateTitle(value, maxLength: 60))"))
-            }
-            scheduleInfoRowRefresh(for: item, config: commandConfig)
-        }
+        addMenuRows(for: item, to: menu, disabled: commandConfig.disabled)
+        addSeparatorIfNeeded(to: menu)
+        let refresh = NSMenuItem(title: "Refresh Now", action: #selector(refreshAction(_:)), keyEquivalent: "")
+        refresh.target = self
+        refresh.representedObject = RefreshActionTarget(item: item)
+        refresh.isEnabled = !commandConfig.disabled
+        menu.addItem(refresh)
     }
 
     private func addGroupContentImmediately(_ item: any ManagedItemLifecycle, to menu: NSMenu) {
@@ -594,8 +604,8 @@ final class StatusItemController: StatusItemMenuDelegate {
             let value: String
             switch member.config {
             case .command(let memberConfig):
-                let cached = infoRowCache[member.config.name]?[memberConfig.infoRows.first?.title ?? ""]
-                value = cached?.isEmpty == false ? cached! : "Loading…"
+                let row = memberConfig.menu.first(where: { $0.run != nil || $0.value != nil })
+                value = row?.value ?? "Loading…"
             case .group(let nested):
                 value = nested.title
             }
@@ -615,8 +625,7 @@ final class StatusItemController: StatusItemMenuDelegate {
             let title: String
             switch item.config {
             case .command(let config):
-                let cached = infoRowCache[item.config.name]?.values.first
-                title = cached?.isEmpty == false ? cached! : config.errorText
+                title = config.errorText
             case .group(let config):
                 title = config.title
             }
@@ -787,49 +796,13 @@ final class StatusItemController: StatusItemMenuDelegate {
         to menu: NSMenu,
         revealsDiagnostics: Bool
     ) async {
-        // Refresh Now is the first row. It is omitted only when the item
-        // declares a `refresh = true` action, which already covers manual
-        // refresh under its own title.
-        var hasConfiguredRefresh = false
-        for action in item.actions {
-            if case .refresh = action.kind {
-                hasConfiguredRefresh = true
-            }
-        }
-        if !hasConfiguredRefresh {
-            let refresh = NSMenuItem(title: "Refresh Now", action: #selector(refreshAction(_:)), keyEquivalent: "")
-            refresh.target = self
-            refresh.representedObject = RefreshActionTarget(item: item)
-            refresh.isEnabled = !commandConfig.disabled
-            menu.addItem(refresh)
-        }
-        for (index, action) in item.actions.enumerated() {
-            let menuItem = NSMenuItem(title: action.title, action: #selector(itemAction(_:)), keyEquivalent: "")
-            menuItem.target = self
-            menuItem.representedObject = ItemActionTarget(item: item, index: index)
-            menuItem.isEnabled = !commandConfig.disabled
-            menu.addItem(menuItem)
-        }
-        // Configured informational rows ([[item.<name>.info]]): read-only lines
-        // whose command runs at menu-open and whose output is shown as a
-        // disabled label. Shown in both the compact and Option-click menus.
-        if !commandConfig.infoRows.isEmpty {
-            menu.addItem(NSMenuItem.separator())
-            for info in commandConfig.infoRows {
-                let cacheKey = item.config.name
-                let cached = infoRowCache[cacheKey]?[info.title]
-                let valueLabel: String
-                if let cached {
-                    valueLabel = cached.isEmpty ? "\u{2013}" : truncateTitle(cached, maxLength: 60)
-                } else {
-                    valueLabel = "Loading…"
-                }
-                menu.addItem(disabledItem(title: "\(info.title): \(valueLabel)"))
-            }
-            scheduleInfoRowRefresh(for: item, config: commandConfig)
-        }
-        // The compact (non-Option) menu ends here: refresh, actions, then the
-        // shared bottom group. No runtime state or diagnostics appear.
+        addMenuRows(for: item, to: menu, disabled: commandConfig.disabled)
+        addSeparatorIfNeeded(to: menu)
+        let refresh = NSMenuItem(title: "Refresh Now", action: #selector(refreshAction(_:)), keyEquivalent: "")
+        refresh.target = self
+        refresh.representedObject = RefreshActionTarget(item: item)
+        refresh.isEnabled = !commandConfig.disabled
+        menu.addItem(refresh)
         guard revealsDiagnostics else { return }
         menu.addItem(NSMenuItem.separator())
         let runtime = await item.runtimeSnapshot()
@@ -840,17 +813,60 @@ final class StatusItemController: StatusItemMenuDelegate {
         menu.addItem(NSMenuItem.separator())
         addDiagnostics(from: runtime.runnerSnapshot, to: menu)
         var actionSnapshots: [(index: Int, snapshot: CommandRunnerSnapshot?)] = []
-        for index in item.actions.indices {
-            actionSnapshots.append((index: index, snapshot: await item.actionSnapshot(at: index)))
+        for index in item.menuRows.indices where item.menuRows[index].action != nil {
+            actionSnapshots.append((index: index, snapshot: await item.menuRowSnapshot(at: index)))
         }
         if actionSnapshots.contains(where: { $0.snapshot != nil }) {
             menu.addItem(NSMenuItem.separator())
-            addActionDiagnostics(actions: item.actions, snapshots: actionSnapshots, to: menu)
+            addMenuRowDiagnostics(rows: item.menuRows, snapshots: actionSnapshots, to: menu)
         }
         if commandConfig.disabled {
             menu.addItem(NSMenuItem.separator())
             menu.addItem(disabledItem(title: "Disabled: yes"))
         }
+    }
+
+    private func addMenuRows(
+        for item: any ManagedItemLifecycle,
+        to menu: NSMenu,
+        disabled: Bool
+    ) {
+        for (index, row) in item.menuRows.enumerated() {
+            if row.separator {
+                addSeparatorIfNeeded(to: menu)
+                continue
+            }
+            let title = menuRowTitle(row, value: item.menuRowValue(at: index))
+            if row.action != nil {
+                let menuItem = NSMenuItem(title: title, action: #selector(menuRowAction(_:)), keyEquivalent: "")
+                menuItem.target = self
+                menuItem.representedObject = MenuRowTarget(item: item, index: index)
+                menuItem.isEnabled = !disabled
+                menu.addItem(menuItem)
+            } else {
+                menu.addItem(disabledItem(title: title))
+            }
+        }
+    }
+
+    private func addSeparatorIfNeeded(to menu: NSMenu) {
+        guard !menu.items.isEmpty, menu.items.last?.isSeparatorItem != true else { return }
+        menu.addItem(NSMenuItem.separator())
+    }
+
+    private func menuRowTitle(_ row: MenuRowConfig, value: String?) -> String {
+        let label = row.label ?? ""
+        guard !row.separator else { return "" }
+        let resolvedValue: String?
+        if let value = row.value {
+            resolvedValue = value
+        } else if row.run != nil {
+            resolvedValue = value ?? "Loading…"
+        } else {
+            resolvedValue = nil
+        }
+        guard let resolvedValue else { return label }
+        return "\(label): \(resolvedValue.isEmpty ? "–" : truncateTitle(resolvedValue, maxLength: 60))"
     }
 
     /// A group's own status item shows only the static, config-declared
@@ -954,6 +970,49 @@ final class StatusItemController: StatusItemMenuDelegate {
         for entry in snapshots {
             guard let snapshot = entry.snapshot else { continue }
             let title = actions[entry.index].title
+            let actionPrefix = "Action \"\(title)\": "
+            menu.addItem(disabledItem(title: actionPrefix + (snapshot.isRunning ? "running" : "waiting")))
+            if let execution = snapshot.lastExecution {
+                switch execution.terminalReason {
+                case .exited(let code):
+                    menu.addItem(disabledItem(title: actionPrefix + "last exit code: \(code)"))
+                case .signaled(let signal):
+                    menu.addItem(disabledItem(title: actionPrefix + "last signal: \(signal)"))
+                case .timedOut:
+                    menu.addItem(disabledItem(title: actionPrefix + "last result: timed out"))
+                case .cancelled:
+                    menu.addItem(disabledItem(title: actionPrefix + "last result: cancelled"))
+                case .launchFailed(let message):
+                    menu.addItem(disabledItem(title: actionPrefix + "launch failed"))
+                    if !message.isEmpty {
+                        menu.addItem(launchFailurePreviewItem(prefix: actionPrefix + "launch: ", fullText: message))
+                    }
+                }
+                let stderrLine = lastTrimmedLine(of: execution.stderr)
+                if !stderrLine.isEmpty {
+                    menu.addItem(stderrPreviewItem(prefix: actionPrefix + "stderr: ", fullText: stderrLine))
+                }
+                if !execution.stdout.isEmpty {
+                    menu.addItem(copyItem(title: "Copy \"\(title)\" Output", text: execution.stdout))
+                }
+                if !execution.stderr.isEmpty {
+                    menu.addItem(copyItem(title: "Copy \"\(title)\" Error", text: execution.stderr))
+                }
+            }
+            if snapshot.skippedRefreshes > 0 {
+                menu.addItem(disabledItem(title: actionPrefix + "skipped invocations: \(snapshot.skippedRefreshes)"))
+            }
+        }
+    }
+
+    private func addMenuRowDiagnostics(
+        rows: [MenuRowConfig],
+        snapshots: [(index: Int, snapshot: CommandRunnerSnapshot?)],
+        to menu: NSMenu
+    ) {
+        for entry in snapshots {
+            guard let snapshot = entry.snapshot, rows.indices.contains(entry.index) else { continue }
+            let title = rows[entry.index].label ?? ""
             let actionPrefix = "Action \"\(title)\": "
             menu.addItem(disabledItem(title: actionPrefix + (snapshot.isRunning ? "running" : "waiting")))
             if let execution = snapshot.lastExecution {
@@ -1103,66 +1162,6 @@ final class StatusItemController: StatusItemMenuDelegate {
         statusItemHost.present(menu: menu, on: statusItem)
     }
 
-    /// Runs one configured informational row's command with the item's own
-    /// shell/environment and returns its trimmed stdout; empty on failure so the
-    /// row renders a `–` value (matching the item's error fallback).
-    private func refreshInfoRowCache(for config: PinchosConfig) {
-        let liveNames = Set(config.items.map(\.name))
-        infoRowRefreshTasks = infoRowRefreshTasks.filter { liveNames.contains($0.key) }
-        infoRowCache = infoRowCache.filter { liveNames.contains($0.key) }
-        for itemConfig in config.items {
-            guard case .command(let commandConfig) = itemConfig,
-                  !commandConfig.infoRows.isEmpty else { continue }
-            scheduleInfoRowRefresh(for: items[itemConfig.name], config: commandConfig)
-        }
-    }
-
-    private func scheduleInfoRowRefresh(
-        for item: (any ManagedItemLifecycle)?,
-        config: CommandItemConfig
-    ) {
-        guard let item else { return }
-        infoRowRefreshTasks[item.config.name]?.cancel()
-        let name = item.config.name
-        infoRowRefreshTasks[name] = Task { @MainActor [weak self, weak item] in
-            guard let self, let item else { return }
-            var values: [String: String] = [:]
-            await withTaskGroup(of: (String, String).self) { group in
-                for info in config.infoRows {
-                    group.addTask { [weak self] in
-                        guard let self else { return (info.title, "") }
-                        return (info.title, await self.runInfoCommand(info, config: config))
-                    }
-                }
-                for await (title, value) in group {
-                    if Task.isCancelled { return }
-                    values[title] = value
-                }
-            }
-            guard self.items[name] === item else { return }
-            self.infoRowCache[name] = values
-            self.infoRowRefreshTasks[name] = nil
-        }
-    }
-
-    private func runInfoCommand(_ info: ItemInfoRow, config: CommandItemConfig) async -> String {
-        let runner = CommandRunner(
-            command: info.run,
-            timeout: config.timeout,
-            maxOutputBytes: config.maxOutputBytes,
-            shell: config.shell,
-            workingDirectory: config.workingDirectory,
-            environment: config.environment
-        )
-        let outcome = await runner.runIfIdle()
-        if case .skipped = outcome { return "" }
-        guard let execution = await runner.awaitSettledExecution(),
-              case .exited(0) = execution.terminalReason else {
-            return ""
-        }
-        return lastTrimmedLine(of: execution.stdout)
-    }
-
     @objc private func refreshAction(_ sender: NSMenuItem) {
         guard let target = sender.representedObject as? RefreshActionTarget else { return }
         target.item.refreshNow()
@@ -1171,6 +1170,11 @@ final class StatusItemController: StatusItemMenuDelegate {
     @objc private func itemAction(_ sender: NSMenuItem) {
         guard let target = sender.representedObject as? ItemActionTarget else { return }
         target.item.invokeAction(at: target.index)
+    }
+
+    @objc private func menuRowAction(_ sender: NSMenuItem) {
+        guard let target = sender.representedObject as? MenuRowTarget else { return }
+        target.item.invokeMenuRow(at: target.index)
     }
 
     @objc private func reloadConfigAction() {

@@ -168,7 +168,7 @@ final class StatusItemControllerTests: XCTestCase {
         )
     }
 
-    func testLifecycleMenuRendersConfiguredInfoRows() async throws {
+    func testLifecycleMenuRendersGenericRowsWithoutExecutingCommands() async throws {
         let factory = FakeManagedItemFactory()
         let controller = makeController(factory: factory)
         addTeardownBlock { @MainActor in await controller.shutdown() }
@@ -177,10 +177,9 @@ final class StatusItemControllerTests: XCTestCase {
             name: "alpha",
             run: "echo alpha",
             interval: .manual,
-            info: [
-                ItemInfoRow(title: "Reset", run: "echo 2026-09-07"),
-                // A failing info command must fall back to the `–` value.
-                ItemInfoRow(title: "Pace", run: "exit 3")
+            menu: [
+                MenuRowConfig(label: "Reset", value: "2026-09-07"),
+                MenuRowConfig(label: "Pace", run: "touch /tmp/pinchos-menu-must-not-run")
             ]
         )
         await controller.apply(config: PinchosConfig(items: [config]))
@@ -188,12 +187,55 @@ final class StatusItemControllerTests: XCTestCase {
         let menu = await controller.makeLifecycleMenu(forManagedItem: factory.created[0], revealsDiagnostics: false)
         let titles = menu.items.map(\.title)
 
-        XCTAssertTrue(titles.contains("Reset: Loading…") || titles.contains("Reset: 2026-09-07"))
-        XCTAssertTrue(titles.contains("Pace: Loading…") || titles.contains("Pace: –"))
-        // Info rows are read-only: the row rendering must not be a clickable action.
-        let infoTitle = try XCTUnwrap(menu.items.first(where: { $0.title.hasPrefix("Reset:") }))
-        XCTAssertFalse(infoTitle.isEnabled)
-        XCTAssertNil(infoTitle.action)
+        XCTAssertTrue(titles.contains("Reset: 2026-09-07"))
+        XCTAssertTrue(titles.contains("Pace: Loading…"))
+        let staticRow = try XCTUnwrap(menu.items.first(where: { $0.title == "Reset: 2026-09-07" }))
+        let dynamicRow = try XCTUnwrap(menu.items.first(where: { $0.title == "Pace: Loading…" }))
+        XCTAssertFalse(staticRow.isEnabled)
+        XCTAssertNil(staticRow.action)
+        XCTAssertFalse(dynamicRow.isEnabled)
+        XCTAssertNil(dynamicRow.action)
+    }
+
+    func testLifecycleMenuRendersEveryGenericRowShapeInDeclarationOrder() async throws {
+        let factory = FakeManagedItemFactory()
+        let controller = makeController(factory: factory)
+        addTeardownBlock { @MainActor in await controller.shutdown() }
+
+        let config = ItemConfig(
+            name: "alpha",
+            run: "echo alpha",
+            interval: .manual,
+            menu: [
+                MenuRowConfig(label: "Static", value: "ready"),
+                MenuRowConfig(label: "Dynamic", run: "echo dynamic"),
+                MenuRowConfig(label: "Action", action: "echo action"),
+                MenuRowConfig(label: "Dynamic action", run: "echo dynamic", action: "echo action"),
+                .separator,
+            ]
+        )
+        await controller.apply(config: PinchosConfig(items: [config]))
+
+        let menu = await controller.makeLifecycleMenu(forManagedItem: factory.created[0], revealsDiagnostics: false)
+        let rows = Array(menu.items.prefix(6))
+
+        XCTAssertEqual(rows.map(\.title), [
+            "Static: ready",
+            "Dynamic: Loading…",
+            "Action",
+            "Dynamic action: Loading…",
+            "",
+            "Refresh Now",
+        ])
+        XCTAssertFalse(rows[0].isEnabled)
+        XCTAssertFalse(rows[1].isEnabled)
+        XCTAssertTrue(rows[2].isEnabled)
+        XCTAssertTrue(rows[3].isEnabled)
+        XCTAssertTrue(rows[2].action != nil)
+        XCTAssertTrue(rows[3].action != nil)
+        XCTAssertNil(rows[0].action)
+        XCTAssertNil(rows[1].action)
+        XCTAssertNil(rows[4].action)
     }
 
     func testLifecycleMenuOffersRefreshNowAndDelegatesToItem() async throws {
@@ -361,7 +403,7 @@ final class StatusItemControllerTests: XCTestCase {
         let menu = await controller.makeLifecycleMenu(forManagedItem: factory.created[0])
         let titles = menu.items.map(\.title)
 
-        XCTAssertEqual(Array(titles.prefix(2)), ["Refresh Now", "Open usage"])
+        XCTAssertEqual(Array(titles.prefix(3)), ["Open usage", "", "Refresh Now"])
         XCTAssertTrue(titles.contains("Open usage"))
         XCTAssertTrue(titles.contains("Refresh Now"))
         XCTAssertEqual(Array(titles.suffix(3)), ["Open Config", "Reload Config", "Quit Pinchos"])
@@ -377,9 +419,8 @@ final class StatusItemControllerTests: XCTestCase {
             name: "codex",
             run: "echo value",
             interval: .manual,
-            actions: [
-                ItemAction(title: "Open usage", kind: .command("echo usage")),
-                ItemAction(title: "Refresh now", kind: .refresh)
+            menu: [
+                MenuRowConfig(label: "Open usage", action: "echo usage")
             ]
         )
 
@@ -387,12 +428,14 @@ final class StatusItemControllerTests: XCTestCase {
         let menu = await controller.makeLifecycleMenu(forManagedItem: factory.created[0])
         factory.eventLog.clear()
 
-        for title in ["Open usage", "Refresh now"] {
+        for title in ["Open usage"] {
             let action = try XCTUnwrap(menu.items.first(where: { $0.title == title }))
             XCTAssertTrue(NSApplication.shared.sendAction(action.action!, to: action.target, from: action))
         }
 
-        XCTAssertEqual(factory.eventLog.events, ["action:0", "action:1"])
+        let refresh = try XCTUnwrap(menu.items.first(where: { $0.title == "Refresh Now" }))
+        XCTAssertTrue(NSApplication.shared.sendAction(refresh.action!, to: refresh.target, from: refresh))
+        XCTAssertEqual(factory.eventLog.events, ["action:0", "refresh-now:codex"])
     }
 
     func testLifecycleMenuShowsDeclarativeActionDiagnostics() async throws {
@@ -405,7 +448,7 @@ final class StatusItemControllerTests: XCTestCase {
             name: "codex",
             run: "echo value",
             interval: .manual,
-            actions: [ItemAction(title: "Fail action", kind: .command("exit 7"))]
+            menu: [MenuRowConfig(label: "Fail action", action: "exit 7")]
         )
         await controller.apply(config: PinchosConfig(items: [config]))
         let execution = CommandExecution(
@@ -441,9 +484,8 @@ final class StatusItemControllerTests: XCTestCase {
             name: "codex",
             run: "echo value",
             interval: .manual,
-            actions: [
-                ItemAction(title: "Open usage", kind: .command("echo usage")),
-                ItemAction(title: "Refresh now", kind: .refresh)
+            menu: [
+                MenuRowConfig(label: "Open usage", action: "echo usage")
             ],
             disabled: true
         )
@@ -453,7 +495,7 @@ final class StatusItemControllerTests: XCTestCase {
         let titles = menu.items.map(\.title)
 
         let openUsage = try XCTUnwrap(menu.items.first(where: { $0.title == "Open usage" }))
-        let refreshNow = try XCTUnwrap(menu.items.first(where: { $0.title == "Refresh now" }))
+        let refreshNow = try XCTUnwrap(menu.items.first(where: { $0.title == "Refresh Now" }))
         XCTAssertFalse(openUsage.isEnabled)
         XCTAssertFalse(refreshNow.isEnabled)
         XCTAssertTrue(titles.contains("Disabled: yes"))
@@ -916,7 +958,7 @@ final class StatusItemControllerTests: XCTestCase {
             name: "codex",
             run: "echo value",
             interval: .manual,
-            actions: [ItemAction(title: "Fail action", kind: .command("exit 7"))]
+            menu: [MenuRowConfig(label: "Fail action", action: "exit 7")]
         )
         await controller.apply(config: PinchosConfig(items: [config]))
         let execution = CommandExecution(
@@ -967,7 +1009,7 @@ final class StatusItemControllerTests: XCTestCase {
             name: "codex",
             run: "echo value",
             interval: .manual,
-            actions: [ItemAction(title: "Noisy action", kind: .command("false"))]
+            menu: [MenuRowConfig(label: "Noisy action", action: "false")]
         )
         await controller.apply(config: PinchosConfig(items: [config]))
 

@@ -9,12 +9,14 @@ final class ManagedItem: ManagedItemLifecycle {
     private(set) var isVisible = true
     private(set) var commandConfig: CommandItemConfig
     var config: ItemConfig { .command(commandConfig) }
+    private(set) var menuRows: [MenuRowConfig]
     private(set) var actions: [ItemAction]
     private(set) var iconIsLoaded = false
     private(set) var iconDiagnosticNote: String?
     private let iconRenderer: StatusItemIconRenderer
     private var runner: CommandRunner
     private var actionRunners: [Int: CommandRunner]
+    private var menuRowRunners: [Int: CommandRunner]
     /// The one application-scoped `CommandScheduler` bounding this item's
     /// scheduled refreshes, manual refreshes, and command actions alongside
     /// every other item's, replacing the per-item `DispatchQueue`/
@@ -87,7 +89,9 @@ final class ManagedItem: ManagedItemLifecycle {
         let commandConfig: CommandItemConfig
         let runner: CommandRunner?
         let actionRunners: [Int: CommandRunner]?
+        let menuRowRunners: [Int: CommandRunner]?
         let actionRunnersConfigurationChanged: Bool
+        let menuRowsChanged: Bool
         let timerNeedsRestart: Bool
         let presentationNeedsUpdate: Bool
         let staleAfterChanged: Bool
@@ -110,6 +114,7 @@ final class ManagedItem: ManagedItemLifecycle {
     ) {
         let commandConfig = config.command
         self.commandConfig = commandConfig
+        self.menuRows = commandConfig.menu
         self.actions = commandConfig.actions
         self.menuDelegate = menuDelegate
         self.scheduler = scheduler
@@ -127,6 +132,7 @@ final class ManagedItem: ManagedItemLifecycle {
             environment: commandConfig.environment
         )
         self.actionRunners = Self.makeActionRunners(for: commandConfig.actions, config: commandConfig)
+        self.menuRowRunners = Self.makeMenuRowRunners(for: commandConfig.menu, config: commandConfig)
         // A hidden group member gets no real backing `NSStatusItem` at
         // all: there is no visible status-bar slot to ever reveal for it,
         // so every `statusItem?.` access in this class simply no-ops.
@@ -243,6 +249,11 @@ final class ManagedItem: ManagedItemLifecycle {
         let replacementActionRunners = actionRunnersConfigurationChanged
             ? Self.makeActionRunners(for: newCommandConfig.actions, config: newCommandConfig)
             : nil
+        let menuRowsChanged = previousConfig.menu != newCommandConfig.menu
+        let replacementMenuRowRunners = menuRowsChanged
+            ? Self.makeMenuRowRunners(for: newCommandConfig.menu, config: newCommandConfig)
+            : nil
+        let menuRowsNeedCancel = menuRowsChanged || becameDisabled
 
         // A permit request only queued (not yet running) for a runner whose
         // configuration is changing belongs to the outgoing generation, so it
@@ -263,7 +274,8 @@ final class ManagedItem: ManagedItemLifecycle {
         await settleConcurrently(
             cancellationOperations(
                 includingPrimary: runnerNeedsCancel,
-                includingActions: actionsNeedCancel
+                includingActions: actionsNeedCancel,
+                includingMenuRows: menuRowsNeedCancel
             ),
             deadline: deadline,
             onTimeout: { [weak self] timeouts in
@@ -275,7 +287,9 @@ final class ManagedItem: ManagedItemLifecycle {
             commandConfig: newCommandConfig,
             runner: replacementRunner,
             actionRunners: replacementActionRunners,
+            menuRowRunners: replacementMenuRowRunners,
             actionRunnersConfigurationChanged: actionRunnersConfigurationChanged,
+            menuRowsChanged: menuRowsChanged,
             timerNeedsRestart: timerNeedsRestart,
             presentationNeedsUpdate: presentationNeedsUpdate,
             staleAfterChanged: staleAfterChanged,
@@ -287,6 +301,10 @@ final class ManagedItem: ManagedItemLifecycle {
         guard isActive, let pendingUpdate else { return }
         self.pendingUpdate = nil
         commandConfig = pendingUpdate.commandConfig
+        if pendingUpdate.menuRowsChanged {
+            menuRows = commandConfig.menu
+            menuRowRunners = pendingUpdate.menuRowRunners ?? Self.makeMenuRowRunners(for: menuRows, config: commandConfig)
+        }
         if pendingUpdate.outputChanged || commandConfig.output == .plain {
             lastStructuredOutput = nil
             structuredOutputDiagnostic = nil
@@ -343,7 +361,8 @@ final class ManagedItem: ManagedItemLifecycle {
         let name = config.name
         var operations = cancellationOperations(
             includingPrimary: true,
-            includingActions: true
+            includingActions: true,
+            includingMenuRows: true
         )
         if pendingActionInvocations > 0 {
             operations.append((identity: "\(name):action-drain", run: { [weak self] in
@@ -383,7 +402,8 @@ final class ManagedItem: ManagedItemLifecycle {
     /// `settleConcurrently` fires them.
     private func cancellationOperations(
         includingPrimary: Bool,
-        includingActions: Bool
+        includingActions: Bool,
+        includingMenuRows: Bool
     ) -> [(identity: String, run: () async -> Void)] {
         var operations: [(identity: String, run: () async -> Void)] = []
         let name = config.name
@@ -400,6 +420,14 @@ final class ManagedItem: ManagedItemLifecycle {
                 operations.append((identity: "\(name):action[\(index)]", run: { [weak self] in
                     await actionRunner.cancelActive()
                     await self?.awaitCancellationSettlementDelayForTesting(role: "action:\(index)")
+                }))
+            }
+        }
+        if includingMenuRows {
+            for (index, menuRowRunner) in menuRowRunners {
+                operations.append((identity: "\(name):menu-row[\(index)]", run: { [weak self] in
+                    await menuRowRunner.cancelActive()
+                    await self?.awaitCancellationSettlementDelayForTesting(role: "menu-row:\(index)")
                 }))
             }
         }
@@ -771,6 +799,53 @@ final class ManagedItem: ManagedItemLifecycle {
         return await actionRunner.snapshot()
     }
 
+    func menuRowValue(at index: Int) -> String? {
+        guard menuRows.indices.contains(index) else { return nil }
+        return menuRows[index].value
+    }
+
+    func menuRowSnapshot(at index: Int) async -> CommandRunnerSnapshot? {
+        guard menuRows.indices.contains(index),
+            menuRows[index].action != nil,
+            let menuRowRunner = menuRowRunners[index]
+        else {
+            return nil
+        }
+        return await menuRowRunner.snapshot()
+    }
+
+    func invokeMenuRow(at index: Int) {
+        guard isActive, !isPreparingUpdate, !isPreparingRemoval, !commandConfig.disabled,
+            menuRows.indices.contains(index),
+            menuRows[index].action != nil,
+            let menuRowRunner = menuRowRunners[index]
+        else {
+            return
+        }
+        guard pendingActionPermitTasks[index] == nil else {
+            recordCoalesced()
+            return
+        }
+        pendingActionInvocations += 1
+        pendingActionPermitTasks[index] = Task { @MainActor [self] in
+            do {
+                try await scheduler.acquirePermit()
+            } catch {
+                pendingActionPermitTasks[index] = nil
+                finishActionInvocation()
+                return
+            }
+            pendingActionPermitTasks[index] = nil
+            await invokeGuarded(
+                runner: menuRowRunner,
+                testGate: actionInvocationTestGate,
+                currentRunner: { $0.menuRowRunners[index] }
+            )
+            await scheduler.releasePermit()
+            finishActionInvocation()
+        }
+    }
+
     /// Test-only visibility into the accept/start bookkeeping used to gate
     /// updates, removal, and shutdown on outstanding interaction-triggered work.
     var pendingActionInvocationCountForTesting: Int { pendingActionInvocations }
@@ -874,6 +949,25 @@ final class ManagedItem: ManagedItemLifecycle {
         var runners: [Int: CommandRunner] = [:]
         for (index, action) in actions.enumerated() {
             guard case .command(let command) = action.kind else { continue }
+            runners[index] = CommandRunner(
+                command: command,
+                timeout: config.timeout,
+                maxOutputBytes: config.maxOutputBytes,
+                shell: config.shell,
+                workingDirectory: config.workingDirectory,
+                environment: config.environment
+            )
+        }
+        return runners
+    }
+
+    private static func makeMenuRowRunners(
+        for rows: [MenuRowConfig],
+        config: CommandItemConfig
+    ) -> [Int: CommandRunner] {
+        var runners: [Int: CommandRunner] = [:]
+        for (index, row) in rows.enumerated() {
+            guard let command = row.action else { continue }
             runners[index] = CommandRunner(
                 command: command,
                 timeout: config.timeout,
