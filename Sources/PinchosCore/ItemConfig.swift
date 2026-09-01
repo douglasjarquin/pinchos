@@ -113,11 +113,7 @@ public enum ItemIconSource: Equatable, Sendable {
 
 /// A single `[item.<name>]` command module: everything needed to run a
 /// shell command on a schedule (or manually) and project its result onto a
-/// menu-bar title and diagnostics menu. This is the only item
-/// kind in v1; `GroupItemConfig` (see below) is the second kind added by
-/// the grouped-status-items feature, and `ItemConfig` is the sum type that
-/// lets `PinchosConfig.items` hold either without accumulating one kind's
-/// fields onto the other's model.
+/// menu-bar title and diagnostics menu. This is the only item kind in v1.
 public struct CommandItemConfig: Equatable, Sendable {
     public static let defaultShell = ["/bin/sh", "-c"]
     public static let defaultTimeout: TimeInterval = 15
@@ -233,110 +229,21 @@ public struct CommandItemConfig: Equatable, Sendable {
     }
 }
 
-/// A `[group.<name>]` module: one native status item that stands in for a
-/// list of member items (referenced by stable name, see README "Groups").
-/// Icon sources reuse `ItemIconSource`: a local `icon` file or a native
-/// `symbol` name, never both.
-public struct GroupItemConfig: Equatable, Sendable {
-    public let name: String
-    public let title: String
-    public let members: [String]
-    public let iconSource: ItemIconSource?
-    public let hidden: Bool
-
-    public init(
-        name: String,
-        title: String,
-        members: [String],
-        icon: String? = nil,
-        symbol: String? = nil,
-        hidden: Bool = false
-    ) {
-        self.name = name
-        self.title = title
-        self.members = members
-        self.iconSource = ItemIconSource.make(icon: icon, symbol: symbol)
-        self.hidden = hidden
-    }
-
-    public var icon: String? { iconSource?.filePath }
-    public var symbol: String? { iconSource?.symbolName }
-}
-
-public enum ItemKind: Equatable, Sendable {
-    case command
-    case group
-}
-
-/// The typed, extensible sum of every configured module kind. Adding a
-/// third kind in the future means adding a case here, not widening
-/// `CommandItemConfig` with fields that only make sense for the new kind.
+/// A configured Pincho item.
 public enum ItemConfig: Equatable, Sendable {
     case command(CommandItemConfig)
-    case group(GroupItemConfig)
 
-    public var name: String {
-        switch self {
-        case .command(let config): return config.name
-        case .group(let config): return config.name
-        }
-    }
+    public var name: String { command.name }
+    public var commandConfig: CommandItemConfig { command }
 
-    public var kind: ItemKind {
-        switch self {
-        case .command: return .command
-        case .group: return .group
-        }
-    }
-
-    /// `nil` when `self` is `.group`; use this (rather than `command`) at
-    /// any call site that already handles a group gracefully, e.g. by
-    /// skipping it.
-    public var commandConfig: CommandItemConfig? {
-        guard case .command(let config) = self else { return nil }
-        return config
-    }
-
-    /// `nil` when `self` is `.command`.
-    public var groupConfig: GroupItemConfig? {
-        guard case .group(let config) = self else { return nil }
-        return config
-    }
-
-    /// Non-optional unwrap for call sites that have already established
-    /// (by construction or by switching on `kind`) that this is a command
-    /// item. Traps on a group, exactly like force-unwrapping an `Optional`
-    /// known to be non-nil -- this is not a place that should ever
-    /// fabricate a placeholder `CommandItemConfig` for a group.
     public var command: CommandItemConfig {
-        guard case .command(let config) = self else {
-            preconditionFailure("ItemConfig.command accessed on a group item ('\(name)')")
-        }
-        return config
-    }
-
-    /// Non-optional unwrap symmetric with `command`, for call sites that have
-    /// already established this is a group item. Traps on a command item.
-    public var group: GroupItemConfig {
-        guard case .group(let config) = self else {
-            preconditionFailure("ItemConfig.group accessed on a command item ('\(name)')")
-        }
-        return config
-    }
-
-    public var iconSource: ItemIconSource? {
         switch self {
-        case .command(let config): return config.iconSource
-        case .group(let config): return config.iconSource
+        case .command(let config): return config
         }
     }
 
-    public var hidden: Bool {
-        switch self {
-        case .command(let config): return config.hidden
-        case .group(let config): return config.hidden
-        }
-    }
+    public var iconSource: ItemIconSource? { command.iconSource }
+    public var hidden: Bool { command.hidden }
 }
 
 extension ItemConfig {
@@ -429,25 +336,6 @@ public struct PinchosConfig: Equatable, Sendable {
         self.scheduler = scheduler
     }
 
-    /// Every name that appears in some group's `members` list, at any
-    /// nesting depth. Policy: a name used as a group member never gets its
-    /// own top-level `NSStatusItem` -- it still runs on its own schedule
-    /// and appears (with its live value/state and actions) only inside the
-    /// menu of the group(s) that reference it. See README "Groups".
-    public var hiddenMemberNames: Set<String> {
-        Set(items.flatMap { item -> [String] in
-            guard case .group(let group) = item else { return [] }
-            return group.members
-        })
-    }
-
-    /// `items` filtered to the entries that get their own native status
-    /// item: everything except names hidden by `hiddenMemberNames`.
-    /// Declaration order is preserved.
-    public var topLevelItems: [ItemConfig] {
-        let hidden = hiddenMemberNames
-        return items.filter { !hidden.contains($0.name) }
-    }
 }
 
 public enum RecoveryMenuAction: String, CaseIterable, Equatable, Sendable {

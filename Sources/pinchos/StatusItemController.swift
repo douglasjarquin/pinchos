@@ -56,7 +56,7 @@ protocol ManagedItemLifecycle: AnyObject {
 }
 
 extension ManagedItemLifecycle {
-    var menuRows: [MenuRowConfig] { config.commandConfig?.menu ?? [] }
+    var menuRows: [MenuRowConfig] { config.commandConfig.menu }
 
     func menuRowValue(at index: Int) -> String? {
         guard menuRows.indices.contains(index) else { return nil }
@@ -110,25 +110,15 @@ private final class DefaultManagedItemFactory: ManagedItemFactory {
         initiallyVisible: Bool,
         isTopLevel: Bool
     ) -> any ManagedItemLifecycle {
-        switch config {
-        case .command:
-            return ManagedItem(
-                config: config,
-                menuDelegate: menuDelegate,
-                initiallyVisible: initiallyVisible,
-                isTopLevel: isTopLevel,
-                scheduler: scheduler,
-                sourceRegistry: sourceRegistry,
-                notificationSink: notificationSink
-            )
-        case .group:
-            return ManagedGroupItem(
-                config: config,
-                menuDelegate: menuDelegate,
-                initiallyVisible: initiallyVisible,
-                isTopLevel: isTopLevel
-            )
-        }
+        return ManagedItem(
+            config: config,
+            menuDelegate: menuDelegate,
+            initiallyVisible: initiallyVisible,
+            isTopLevel: isTopLevel,
+            scheduler: scheduler,
+            sourceRegistry: sourceRegistry,
+            notificationSink: notificationSink
+        )
     }
 }
 
@@ -331,12 +321,11 @@ final class StatusItemController: StatusItemMenuDelegate {
                 group.addTask { @MainActor in await item.prepareRemoval(deadline: deadline) }
             }
         }
-        let hidden = config.hiddenMemberNames
         // NSStatusBar grows its collection from the right-side anchor toward
         // the left, so creating items in reverse declaration order makes the
         // rendered menu bar read left-to-right like the TOML file.
         let newItems = config.items.reversed().map {
-            itemFactory.make(config: $0, menuDelegate: self, initiallyVisible: false, isTopLevel: !hidden.contains($0.name))
+            itemFactory.make(config: $0, menuDelegate: self, initiallyVisible: false, isTopLevel: true)
         }
 
         for item in oldItems {
@@ -355,12 +344,11 @@ final class StatusItemController: StatusItemMenuDelegate {
             return
         }
 
-        let hidden = config.hiddenMemberNames
         // Newly-created status items appear at the visual left edge. Reverse
         // the desired added sequence so multiple prefix additions retain
         // declaration order after AppKit inserts each one.
         let addedItems = diff.added.reversed().map {
-            itemFactory.make(config: $0, menuDelegate: self, initiallyVisible: false, isTopLevel: !hidden.contains($0.name))
+            itemFactory.make(config: $0, menuDelegate: self, initiallyVisible: false, isTopLevel: true)
         }
 
         // Quiescing and cancellation for every changed and removed item is
@@ -578,12 +566,7 @@ final class StatusItemController: StatusItemMenuDelegate {
     private func makeLifecycleMenuImmediately(forManagedItem item: (any ManagedItemLifecycle)?, revealsDiagnostics: Bool) -> NSMenu {
         let menu = NSMenu()
         if let item {
-            switch item.config {
-            case .command(let config):
-                addCommandContentImmediately(item: item, commandConfig: config, to: menu)
-            case .group:
-                addGroupContentImmediately(item, to: menu)
-            }
+            addCommandContentImmediately(item: item, commandConfig: item.config.command, to: menu)
         }
         addGlobalMenuContentImmediately(to: menu)
         return menu
@@ -608,38 +591,13 @@ final class StatusItemController: StatusItemMenuDelegate {
         menu.addItem(refresh)
     }
 
-    private func addGroupContentImmediately(_ item: any ManagedItemLifecycle, to menu: NSMenu) {
-        guard case .group(let group) = item.config else { return }
-        let entries = group.members.compactMap { name -> (String, any ManagedItemLifecycle, String)? in
-            guard let member = items[name], !member.config.hidden else { return nil }
-            let value: String
-            switch member.config {
-            case .command(let memberConfig):
-                let row = memberConfig.menu.first(where: { $0.run != nil || $0.value != nil })
-                value = row?.value ?? "Loading…"
-            case .group(let nested):
-                value = nested.title
-            }
-            return (name, member, value)
-        }
-        menu.addItem(disabledItem(title: groupSummaryTitle(group, entries: entries.map { (name: $0.0, item: $0.1, valuePreview: $0.2) })))
-        for (name, member, value) in entries {
-            let row = NSMenuItem(title: "\(name): \(value)", action: nil, keyEquivalent: "")
-            row.submenu = makeLifecycleMenuImmediately(forManagedItem: member, revealsDiagnostics: false)
-            menu.addItem(row)
-        }
-    }
-
     private func makeCollapsedMenuImmediately(revealsDiagnostics: Bool) -> NSMenu {
         let menu = NSMenu()
+        if recoveryState.isVisible {
+            menu.addItem(makeCollapsedRecoveryItem())
+        }
         for item in topLevelManagedItems() {
-            let title: String
-            switch item.config {
-            case .command(let config):
-                title = config.errorText
-            case .group(let config):
-                title = config.title
-            }
+            let title = item.config.command.errorText
             let row = NSMenuItem(title: title, action: nil, keyEquivalent: "")
             row.submenu = makeLifecycleMenuImmediately(forManagedItem: item, revealsDiagnostics: revealsDiagnostics)
             menu.addItem(row)
@@ -687,6 +645,9 @@ final class StatusItemController: StatusItemMenuDelegate {
 
     func makeCollapsedMenu(revealsDiagnostics: Bool = true) async -> NSMenu {
         let menu = NSMenu()
+        if recoveryState.isVisible {
+            menu.addItem(makeCollapsedRecoveryItem())
+        }
         let topLevelItems = topLevelManagedItems()
         for item in topLevelItems {
             let submenu = await makeLifecycleMenu(forManagedItem: item, revealsDiagnostics: revealsDiagnostics, includesGlobalFooter: false)
@@ -706,10 +667,20 @@ final class StatusItemController: StatusItemMenuDelegate {
         return menu
     }
 
+    private func makeCollapsedRecoveryItem() -> NSMenuItem {
+        let title = recoveryState.errorDescription == nil
+            ? "pinchos"
+            : "pinchos \u{26A0}\u{FE0E}"
+        let item = NSMenuItem(title: title, action: nil, keyEquivalent: "")
+        item.submenu = buildRecoveryMenu()
+        item.setAccessibilityLabel("Pinchos recovery")
+        item.setAccessibilityHelp("Open recovery actions for the Pinchos configuration.")
+        return item
+    }
+
     private func topLevelManagedItems() -> [any ManagedItemLifecycle] {
-        let topLevelNames = Set(currentConfig().topLevelItems.map(\.name))
         return order.compactMap { name in
-            guard topLevelNames.contains(name), let item = items[name], item.isVisible else { return nil }
+            guard let item = items[name], item.isVisible else { return nil }
             return item
         }
     }
@@ -722,22 +693,18 @@ final class StatusItemController: StatusItemMenuDelegate {
     /// source follows the bar too (structured-output override, else the config's
     /// icon; a group's static icon source). A group shows its static `title`.
     private func collapsedRow(for item: any ManagedItemLifecycle) async -> (title: String, iconSource: ItemIconSource?) {
-        switch item.config {
-        case .command(let commandConfig):
-            let snapshot = await item.runtimeSnapshot()
-            let value: String?
-            if let structuredText = snapshot.structuredOutput?.text {
-                value = DiagnosticPreviewFormatter.preview(structuredText, limits: .menuValue).text
-            } else {
-                value = snapshot.fullOutput.map { lastTrimmedLine(of: $0) }
-            }
-            let base = value.flatMap { $0.isEmpty ? nil : applyFormat(commandConfig.format, output: $0) }
-                ?? commandConfig.errorText
-            let iconSource = snapshot.structuredOutput?.iconSource ?? commandConfig.iconSource
-            return (truncateTitle(base, maxLength: commandConfig.maxLength), iconSource)
-        case .group(let group):
-            return (group.title, group.iconSource)
+        let commandConfig = item.config.command
+        let snapshot = await item.runtimeSnapshot()
+        let value: String?
+        if let structuredText = snapshot.structuredOutput?.text {
+            value = DiagnosticPreviewFormatter.preview(structuredText, limits: .menuValue).text
+        } else {
+            value = snapshot.fullOutput.map { lastTrimmedLine(of: $0) }
         }
+        let base = value.flatMap { $0.isEmpty ? nil : applyFormat(commandConfig.format, output: $0) }
+            ?? commandConfig.errorText
+        let iconSource = snapshot.structuredOutput?.iconSource ?? commandConfig.iconSource
+        return (truncateTitle(base, maxLength: commandConfig.maxLength), iconSource)
     }
 
     private func makePresentationMenuItem() -> NSMenuItem {
@@ -774,28 +741,19 @@ final class StatusItemController: StatusItemMenuDelegate {
         menu.addItem(quit)
     }
 
-    /// Dispatches on `item.config`'s kind so a command item's own status-item
-    /// menu and a group's per-member submenu (see `addGroupContent`) share
-    /// exactly one implementation of "what a command item's menu contains" --
-    /// nesting falls out for free, since a group member that is itself a
-    /// group recurses back into `addGroupContent`.
+    /// Builds the command item's content before the shared global footer.
     private func addMenuContent(
         for item: any ManagedItemLifecycle,
         to menu: NSMenu,
         revealsDiagnostics: Bool,
         includesGlobalFooter: Bool
     ) async {
-        switch item.config {
-        case .command(let commandConfig):
-            await addCommandContent(item: item, commandConfig: commandConfig, to: menu, revealsDiagnostics: revealsDiagnostics)
-        case .group:
-            await addGroupContent(
-                item,
-                to: menu,
-                revealsDiagnostics: revealsDiagnostics,
-                includesGlobalFooter: includesGlobalFooter
-            )
-        }
+        await addCommandContent(
+            item: item,
+            commandConfig: item.config.command,
+            to: menu,
+            revealsDiagnostics: revealsDiagnostics
+        )
         if includesGlobalFooter {
             menu.addItem(NSMenuItem.separator())
         }
@@ -878,78 +836,6 @@ final class StatusItemController: StatusItemMenuDelegate {
         }
         guard let resolvedValue else { return label }
         return "\(label): \(resolvedValue.isEmpty ? "–" : truncateTitle(resolvedValue, maxLength: 60))"
-    }
-
-    /// A group's own status item shows only the static, config-declared
-    /// `title` (see `ManagedGroupItem`) -- this menu is where its live
-    /// content lives instead. The header line is the one place the compact
-    /// join of member values (the "group summary title" from the grouped
-    /// status items design) appears; it is recomputed fresh every time this
-    /// menu is opened, so it never needs its own change-notification path
-    /// from a member back to its group(s). Each member then gets one row
-    /// with a submenu holding exactly what that member's own status-item
-    /// menu would show (actions, current value/state, diagnostics, manual
-    /// refresh) -- nothing about a member's presentation changes because it
-    /// is being shown inside a group instead of at the top level.
-    private func addGroupContent(
-        _ item: any ManagedItemLifecycle,
-        to menu: NSMenu,
-        revealsDiagnostics: Bool,
-        includesGlobalFooter: Bool
-    ) async {
-        guard case .group(let group) = item.config else { return }
-        var memberEntries: [(name: String, item: any ManagedItemLifecycle, valuePreview: String)] = []
-        for memberName in group.members {
-            guard let member = items[memberName], !member.config.hidden else { continue }
-            let preview: String
-            switch member.config {
-            case .command:
-                let snapshot = await member.runtimeSnapshot()
-                let value = if let structuredText = snapshot.structuredOutput?.text {
-                    DiagnosticPreviewFormatter.preview(structuredText, limits: .menuValue).text
-                } else {
-                    snapshot.fullOutput.map { lastTrimmedLine(of: $0) } ?? ""
-                }
-                preview = value.isEmpty ? "\u{2013}" : value
-            case .group(let nested):
-                preview = nested.title
-            }
-            memberEntries.append((memberName, member, preview))
-        }
-
-        menu.addItem(disabledItem(title: groupSummaryTitle(group, entries: memberEntries)))
-        if revealsDiagnostics, let note = item.iconDiagnosticNote {
-            menu.addItem(disabledItem(title: "Icon: \(note)"))
-        }
-        menu.addItem(NSMenuItem.separator())
-        for entry in memberEntries {
-            let submenu = NSMenu()
-            await addMenuContent(
-                for: entry.item,
-                to: submenu,
-                revealsDiagnostics: revealsDiagnostics,
-                includesGlobalFooter: includesGlobalFooter
-            )
-            if includesGlobalFooter {
-                submenu.addItem(makePresentationMenuItem())
-            }
-            let memberItem = NSMenuItem(
-                title: "\(entry.name): \(truncateTitle(entry.valuePreview, maxLength: 40))",
-                action: nil,
-                keyEquivalent: ""
-            )
-            memberItem.submenu = submenu
-            menu.addItem(memberItem)
-        }
-    }
-
-    private func groupSummaryTitle(
-        _ group: GroupItemConfig,
-        entries: [(name: String, item: any ManagedItemLifecycle, valuePreview: String)]
-    ) -> String {
-        guard !entries.isEmpty else { return group.title }
-        let joined = entries.map { truncateTitle($0.valuePreview, maxLength: 20) }.joined(separator: " \u{b7} ")
-        return "\(group.title): \(truncateTitle(joined, maxLength: 80))"
     }
 
     /// A light-touch, always-present line surfacing the one application-scoped

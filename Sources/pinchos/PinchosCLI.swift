@@ -485,15 +485,7 @@ struct PinchosCLI {
                 problemCount += 1
             }
             for entry in config.items {
-                switch entry {
-                case .group(let group):
-                    reportSuccess("group.\(group.name).members", "\(group.members.count) member\(group.members.count == 1 ? "" : "s")")
-                    problemCount += reportIconSource(
-                        path: "group.\(group.name)",
-                        source: group.iconSource,
-                        reportAbsentAsIconNotConfigured: false
-                    )
-                case .command(let item):
+                let item = entry.command
                     if fileManager.isExecutableFile(atPath: item.shell[0]) {
                         reportSuccess("item.\(item.name).shell", item.shell[0])
                     } else {
@@ -540,7 +532,6 @@ struct PinchosCLI {
                         reportFailure("item.\(item.name).run", "could not identify a single command to check safely")
                         problemCount += 1
                     }
-                }
             }
         }
 

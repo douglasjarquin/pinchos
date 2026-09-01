@@ -57,17 +57,9 @@ enum ConfigFileEditor {
             throw ConfigFileEditError.unableToRead(path: url.path, reason: String(describing: error))
         }
 
-        let namespace: String
-        switch item {
-        case .command:
-            namespace = "item"
-        case .group:
-            namespace = "group"
-        }
-
         let updated = try update(
             source: source,
-            namespace: namespace,
+            namespace: "item",
             name: item.name,
             hidden: hidden
         )

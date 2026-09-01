@@ -9,7 +9,7 @@ private final class FakeManagedItem: ManagedItemLifecycle {
     private var pendingConfig: ItemConfig?
     private(set) var config: ItemConfig
     var actions: [ItemAction] {
-        config.commandConfig?.actions ?? []
+        config.commandConfig.actions
     }
     var iconDiagnosticNote: String?
     private(set) var isVisible: Bool
@@ -567,7 +567,7 @@ final class StatusItemControllerTests: XCTestCase {
             "prepare-update:beta",
             "commit-update:beta"
         ])
-        XCTAssertEqual(beta.config.commandConfig?.run, "echo changed")
+        XCTAssertEqual(beta.config.commandConfig.run, "echo changed")
     }
 
     func testIconSourceChangeUpdatesExistingItemInPlace() async {

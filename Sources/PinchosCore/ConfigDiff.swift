@@ -36,9 +36,6 @@ public enum ConfigDiffEngine {
     public static func diff(old: PinchosConfig, new: PinchosConfig) -> ConfigDiff {
         let oldByName = Dictionary(uniqueKeysWithValues: old.items.map { ($0.name, $0) })
         let newByName = Dictionary(uniqueKeysWithValues: new.items.map { ($0.name, $0) })
-        let oldHidden = old.hiddenMemberNames
-        let newHidden = new.hiddenMemberNames
-
         var added: [ItemConfig] = []
         var removed: [String] = []
         var changed: [ItemConfig] = []
@@ -49,12 +46,7 @@ public enum ConfigDiffEngine {
                 added.append(item)
                 continue
             }
-            let kindChanged = oldItem.kind != item.kind
-            let visibilityChanged = oldHidden.contains(item.name) != newHidden.contains(item.name)
-            if kindChanged || visibilityChanged {
-                removed.append(item.name)
-                added.append(item)
-            } else if oldItem == item {
+            if oldItem == item {
                 unchanged.append(item.name)
             } else {
                 changed.append(item)
@@ -68,10 +60,8 @@ public enum ConfigDiffEngine {
         let recreatedOrRemovedNames = Set(removed)
 
         let oldVisibleSharedOrder = old.items.map(\.name)
-            .filter { !oldHidden.contains($0) }
             .filter { newByName[$0] != nil && !recreatedOrRemovedNames.contains($0) }
         let newVisibleSharedOrder = new.items.map(\.name)
-            .filter { !newHidden.contains($0) }
             .filter { oldByName[$0] != nil && !addedNames.contains($0) }
         let orderChanged = oldVisibleSharedOrder != newVisibleSharedOrder
 
@@ -84,7 +74,7 @@ public enum ConfigDiffEngine {
         // If it does not equal the desired new order, only a full rebuild
         // (tear down and recreate every native item in the new order) can
         // realize it.
-        let newVisibleOrder = new.items.map(\.name).filter { !newHidden.contains($0) }
+        let newVisibleOrder = new.items.map(\.name)
         let addedVisibleOrder = newVisibleOrder.filter { addedNames.contains($0) }
         let incrementalVisibleOrder = addedVisibleOrder + oldVisibleSharedOrder
         let requiresNativeRebuild = incrementalVisibleOrder != newVisibleOrder

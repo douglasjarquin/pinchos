@@ -363,7 +363,7 @@ final class PinchosCLITests: XCTestCase {
         run = "'\(executableURL.path)'"
         """.write(to: configURL, atomically: true, encoding: .utf8)
         let parsed = try ConfigParser.parse(String(contentsOf: configURL), relativeTo: configURL)
-        XCTAssertEqual(parsed.items.first?.commandConfig?.run, "'\(executableURL.path)'")
+        XCTAssertEqual(parsed.items.first?.commandConfig.run, "'\(executableURL.path)'")
         let capture = CLIOutputCapture()
         let cli = PinchosCLI(configPath: configURL.path, output: capture.output)
 
