@@ -2,7 +2,7 @@
 # Category: Network
 #
 # Purpose: show the HTTP status code of a health/uptime endpoint, so a
-# non-2xx response (or curl failure) is visible from the menu bar.
+# non-2xx response is visible from the menu bar.
 # Dependencies: `curl`, which ships with macOS at /usr/bin/curl.
 #
 # Network recipe: `https://example.com` below is a placeholder. IANA
@@ -11,17 +11,13 @@
 # replace it with an endpoint you own or operate before relying on this
 # for anything.
 #
-# Expected output: "200" on success. On failure, `curl` exits non-zero
-#   (e.g. "6" for DNS resolution failure, "28" for a timeout) and prints
-#   "000" for the status code because no response was received; with
-#   `on_error = "keep_last"` below, the item keeps showing the last known
-#   code instead of immediately flashing `error_text`.
+# Expected output: "200" on success. When no response is received, curl
+#   prints "000" and exits with a network-specific status.
 #   Network-, endpoint-, and route-dependent by design.
 # Limitations: `--max-time 5` bounds curl itself; the item's own
 #   `timeout = "8s"` is a second, independent bound. This recipe is not
 #   exercised in CI (no network there); it is syntax-checked only.
-#   This is a single command (no shell pipeline), so `pinchos doctor` can
-#   check that `curl` is on PATH.
+#   This is a single command (no shell pipeline), so it is easy to review.
 #
 # Copy this file's [item.*] table(s) into your pinchos.toml, replace the
 # URL, then:
@@ -30,10 +26,8 @@
 #   .build/release/pinchos run http_health
 
 [item.http_health]
-type = "command"
+
 run = "curl -s -o /dev/null -w '%{http_code}' --max-time 5 https://example.com"
 interval = "5m"
 timeout = "8s"
 format = "HTTP {output}"
-on_error = "keep_last"
-stale_after = "15m"

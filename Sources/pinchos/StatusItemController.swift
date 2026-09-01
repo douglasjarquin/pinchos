@@ -33,7 +33,7 @@ private final class SystemStatusItemHost: StatusItemHost {
 @MainActor
 protocol ManagedItemLifecycle: AnyObject {
     var config: ItemConfig { get }
-    var actions: [ItemAction] { get }
+    var menuRows: [MenuRowConfig] { get }
     var iconDiagnosticNote: String? { get }
     var isVisible: Bool { get }
     func owns(statusItem: NSStatusItem) -> Bool
@@ -46,61 +46,56 @@ protocol ManagedItemLifecycle: AnyObject {
     func tearDown(deadline: ContinuousClock.Instant) async
     func runnerSnapshot() async -> CommandRunnerSnapshot
     func runtimeSnapshot() async -> ItemRuntimeSnapshot
-    func actionSnapshot(at index: Int) async -> CommandRunnerSnapshot?
-    func invokeAction(at index: Int)
+    func menuRowValue(at index: Int) -> String?
+    func menuRowSnapshot(at index: Int) async -> CommandRunnerSnapshot?
+    func invokeMenuRow(at index: Int)
     func refreshNow()
+}
+
+extension ManagedItemLifecycle {
+    var menuRows: [MenuRowConfig] { config.menu }
+
+    func menuRowValue(at index: Int) -> String? {
+        guard menuRows.indices.contains(index) else { return nil }
+        return menuRows[index].value
+    }
+
 }
 
 @MainActor
 protocol ManagedItemFactory: AnyObject {
-    /// `isTopLevel` is `false` exactly when `name` is a member of some
-    /// group (see `PinchosConfig.hiddenMemberNames`): the created instance
-    /// then gets no real backing `NSStatusItem` at all, since it must never
-    /// occupy its own menu-bar slot alongside the group(s) that reference
-    /// it. It still runs its schedule and is reachable by name from a
-    /// group's menu.
+    /// Every configured item owns its own status-item slot.
     func make(
         config: ItemConfig,
         menuDelegate: StatusItemMenuDelegate,
-        initiallyVisible: Bool,
-        isTopLevel: Bool
+        initiallyVisible: Bool
     ) -> any ManagedItemLifecycle
 }
 
 @MainActor
 private final class DefaultManagedItemFactory: ManagedItemFactory {
     private let scheduler: CommandScheduler
-    private let notificationSink: ItemNotificationSink
-
-    init(scheduler: CommandScheduler, notificationSink: ItemNotificationSink) {
+    private let sourceRegistry: CommandSourceRegistry
+    init(
+        scheduler: CommandScheduler,
+        sourceRegistry: CommandSourceRegistry
+    ) {
         self.scheduler = scheduler
-        self.notificationSink = notificationSink
+        self.sourceRegistry = sourceRegistry
     }
 
     func make(
         config: ItemConfig,
         menuDelegate: StatusItemMenuDelegate,
-        initiallyVisible: Bool,
-        isTopLevel: Bool
+        initiallyVisible: Bool
     ) -> any ManagedItemLifecycle {
-        switch config {
-        case .command:
-            return ManagedItem(
-                config: config,
-                menuDelegate: menuDelegate,
-                initiallyVisible: initiallyVisible,
-                isTopLevel: isTopLevel,
-                scheduler: scheduler,
-                notificationSink: notificationSink
-            )
-        case .group:
-            return ManagedGroupItem(
-                config: config,
-                menuDelegate: menuDelegate,
-                initiallyVisible: initiallyVisible,
-                isTopLevel: isTopLevel
-            )
-        }
+        return ManagedItem(
+            config: config,
+            menuDelegate: menuDelegate,
+            initiallyVisible: initiallyVisible,
+            scheduler: scheduler,
+            sourceRegistry: sourceRegistry
+        )
     }
 }
 
@@ -131,16 +126,7 @@ private final class RefreshActionTarget: NSObject {
 }
 
 @MainActor
-private final class HideActionTarget: NSObject {
-    let item: any ManagedItemLifecycle
-
-    init(item: any ManagedItemLifecycle) {
-        self.item = item
-    }
-}
-
-@MainActor
-private final class ItemActionTarget: NSObject {
+private final class MenuRowTarget: NSObject {
     let item: any ManagedItemLifecycle
     let index: Int
 
@@ -175,6 +161,7 @@ final class StatusItemController: StatusItemMenuDelegate {
     /// module; a custom `itemFactory` injected for testing (e.g. a fake)
     /// may simply not route work through it, in which case it sits idle.
     let scheduler: CommandScheduler
+    let sourceRegistry: CommandSourceRegistry
     private var items: [String: any ManagedItemLifecycle] = [:]
     private var order: [String] = []
     private var warningItem: NSStatusItem?
@@ -186,8 +173,6 @@ final class StatusItemController: StatusItemMenuDelegate {
     private let onReload: () -> Void
     private var lifecycleTail: Task<Void, Never>?
     private var lifecycleGeneration = 0
-    private var infoRowCache: [String: [String: String]] = [:]
-    private var infoRowRefreshTasks: [String: Task<Void, Never>] = [:]
 
     init(
         configPath: String,
@@ -198,10 +183,12 @@ final class StatusItemController: StatusItemMenuDelegate {
     ) {
         let resolvedScheduler = scheduler ?? CommandScheduler()
         self.scheduler = resolvedScheduler
+        let resolvedSourceRegistry = CommandSourceRegistry()
+        self.sourceRegistry = resolvedSourceRegistry
         self.statusItemHost = statusItemHost ?? SystemStatusItemHost()
         self.itemFactory = itemFactory ?? DefaultManagedItemFactory(
             scheduler: resolvedScheduler,
-            notificationSink: SystemItemNotificationSink()
+            sourceRegistry: resolvedSourceRegistry
         )
         self.configPath = configPath
         self.onReload = onReload
@@ -215,12 +202,6 @@ final class StatusItemController: StatusItemMenuDelegate {
 
     private func applyNow(config: PinchosConfig) async {
         collapsedMenuGeneration += 1
-        // Always applied, independent of the item diff below: a config
-        // reload that only touches `[scheduler]` (no item changes) must
-        // still take effect.
-        await scheduler.updateMaxActiveSessions(
-            config.scheduler.maxActiveSessions ?? CommandScheduler.defaultMaxActiveSessions
-        )
         let old = currentConfig()
         let diff = ConfigDiffEngine.diff(old: old, new: config)
         recoveryState.apply(config: config)
@@ -233,7 +214,6 @@ final class StatusItemController: StatusItemMenuDelegate {
             await apply(diff: diff, config: config)
         }
         synchronizeCollapsedVisibility()
-        refreshInfoRowCache(for: config)
     }
 
     func showParseError(_ description: String) async {
@@ -271,8 +251,8 @@ final class StatusItemController: StatusItemMenuDelegate {
             : "pinchos \u{26A0}\u{FE0E}"
     }
 
-    /// A plain left/right click shows the compact menu (Refresh Now, configured
-    /// actions, Hide, and the global items -- no runtime state or diagnostics).
+    /// A plain left/right click shows the compact menu (cached rows, actions,
+    /// Refresh Now, and global items without runtime diagnostics).
     /// Holding Option while clicking reveals the full diagnostics menu instead
     /// -- the same way Option-clicking the system WiFi item shows signal details.
     func showLifecycleMenu(for statusItem: NSStatusItem) {
@@ -300,12 +280,11 @@ final class StatusItemController: StatusItemMenuDelegate {
                 group.addTask { @MainActor in await item.prepareRemoval(deadline: deadline) }
             }
         }
-        let hidden = config.hiddenMemberNames
         // NSStatusBar grows its collection from the right-side anchor toward
         // the left, so creating items in reverse declaration order makes the
         // rendered menu bar read left-to-right like the TOML file.
         let newItems = config.items.reversed().map {
-            itemFactory.make(config: $0, menuDelegate: self, initiallyVisible: false, isTopLevel: !hidden.contains($0.name))
+            itemFactory.make(config: $0, menuDelegate: self, initiallyVisible: false)
         }
 
         for item in oldItems {
@@ -324,12 +303,11 @@ final class StatusItemController: StatusItemMenuDelegate {
             return
         }
 
-        let hidden = config.hiddenMemberNames
         // Newly-created status items appear at the visual left edge. Reverse
         // the desired added sequence so multiple prefix additions retain
         // declaration order after AppKit inserts each one.
         let addedItems = diff.added.reversed().map {
-            itemFactory.make(config: $0, menuDelegate: self, initiallyVisible: false, isTopLevel: !hidden.contains($0.name))
+            itemFactory.make(config: $0, menuDelegate: self, initiallyVisible: false)
         }
 
         // Quiescing and cancellation for every changed and removed item is
@@ -382,9 +360,6 @@ final class StatusItemController: StatusItemMenuDelegate {
         }
         items.removeAll()
         order.removeAll()
-        for task in infoRowRefreshTasks.values { task.cancel() }
-        infoRowRefreshTasks.removeAll()
-        infoRowCache.removeAll()
         clearWarningItem()
         removeCollapsedStatusItem()
         barPresentation = .expanded
@@ -550,12 +525,7 @@ final class StatusItemController: StatusItemMenuDelegate {
     private func makeLifecycleMenuImmediately(forManagedItem item: (any ManagedItemLifecycle)?, revealsDiagnostics: Bool) -> NSMenu {
         let menu = NSMenu()
         if let item {
-            switch item.config {
-            case .command(let config):
-                addCommandContentImmediately(item: item, commandConfig: config, to: menu)
-            case .group:
-                addGroupContentImmediately(item, to: menu)
-            }
+            addCommandContentImmediately(item: item, commandConfig: item.config, to: menu)
         }
         addGlobalMenuContentImmediately(to: menu)
         return menu
@@ -571,70 +541,21 @@ final class StatusItemController: StatusItemMenuDelegate {
     }
 
     private func addCommandContentImmediately(item: any ManagedItemLifecycle, commandConfig: CommandItemConfig, to menu: NSMenu) {
-        let hasRefresh = item.actions.contains { if case .refresh = $0.kind { return true }; return false }
-        if !hasRefresh {
-            let refresh = NSMenuItem(title: "Refresh Now", action: #selector(refreshAction(_:)), keyEquivalent: "")
-            refresh.target = self
-            refresh.representedObject = RefreshActionTarget(item: item)
-            refresh.isEnabled = !commandConfig.disabled
-            menu.addItem(refresh)
-        }
-        for (index, action) in item.actions.enumerated() {
-            let row = NSMenuItem(title: action.title, action: #selector(itemAction(_:)), keyEquivalent: "")
-            row.target = self
-            row.representedObject = ItemActionTarget(item: item, index: index)
-            row.isEnabled = !commandConfig.disabled
-            menu.addItem(row)
-        }
-        if !commandConfig.infoRows.isEmpty {
-            menu.addItem(NSMenuItem.separator())
-            for info in commandConfig.infoRows {
-                let value = infoRowCache[item.config.name]?[info.title] ?? "Loading…"
-                menu.addItem(disabledItem(title: "\(info.title): \(value.isEmpty ? "–" : truncateTitle(value, maxLength: 60))"))
-            }
-            scheduleInfoRowRefresh(for: item, config: commandConfig)
-        }
-        if !item.config.hidden {
-            let hide = NSMenuItem(title: "Hide", action: #selector(hideAction(_:)), keyEquivalent: "")
-            hide.target = self
-            hide.representedObject = HideActionTarget(item: item)
-            menu.addItem(hide)
-        }
-    }
-
-    private func addGroupContentImmediately(_ item: any ManagedItemLifecycle, to menu: NSMenu) {
-        guard case .group(let group) = item.config else { return }
-        let entries = group.members.compactMap { name -> (String, any ManagedItemLifecycle, String)? in
-            guard let member = items[name], !member.config.hidden else { return nil }
-            let value: String
-            switch member.config {
-            case .command(let memberConfig):
-                let cached = infoRowCache[member.config.name]?[memberConfig.infoRows.first?.title ?? ""]
-                value = cached?.isEmpty == false ? cached! : "Loading…"
-            case .group(let nested):
-                value = nested.title
-            }
-            return (name, member, value)
-        }
-        menu.addItem(disabledItem(title: groupSummaryTitle(group, entries: entries.map { (name: $0.0, item: $0.1, valuePreview: $0.2) })))
-        for (name, member, value) in entries {
-            let row = NSMenuItem(title: "\(name): \(value)", action: nil, keyEquivalent: "")
-            row.submenu = makeLifecycleMenuImmediately(forManagedItem: member, revealsDiagnostics: false)
-            menu.addItem(row)
-        }
+        addMenuRows(for: item, to: menu)
+        addSeparatorIfNeeded(to: menu)
+        let refresh = NSMenuItem(title: "Refresh Now", action: #selector(refreshAction(_:)), keyEquivalent: "")
+        refresh.target = self
+        refresh.representedObject = RefreshActionTarget(item: item)
+        menu.addItem(refresh)
     }
 
     private func makeCollapsedMenuImmediately(revealsDiagnostics: Bool) -> NSMenu {
         let menu = NSMenu()
+        if recoveryState.isVisible {
+            menu.addItem(makeCollapsedRecoveryItem())
+        }
         for item in topLevelManagedItems() {
-            let title: String
-            switch item.config {
-            case .command(let config):
-                let cached = infoRowCache[item.config.name]?.values.first
-                title = cached?.isEmpty == false ? cached! : config.errorText
-            case .group(let config):
-                title = config.title
-            }
+            let title = "–"
             let row = NSMenuItem(title: title, action: nil, keyEquivalent: "")
             row.submenu = makeLifecycleMenuImmediately(forManagedItem: item, revealsDiagnostics: revealsDiagnostics)
             menu.addItem(row)
@@ -682,6 +603,9 @@ final class StatusItemController: StatusItemMenuDelegate {
 
     func makeCollapsedMenu(revealsDiagnostics: Bool = true) async -> NSMenu {
         let menu = NSMenu()
+        if recoveryState.isVisible {
+            menu.addItem(makeCollapsedRecoveryItem())
+        }
         let topLevelItems = topLevelManagedItems()
         for item in topLevelItems {
             let submenu = await makeLifecycleMenu(forManagedItem: item, revealsDiagnostics: revealsDiagnostics, includesGlobalFooter: false)
@@ -701,10 +625,20 @@ final class StatusItemController: StatusItemMenuDelegate {
         return menu
     }
 
+    private func makeCollapsedRecoveryItem() -> NSMenuItem {
+        let title = recoveryState.errorDescription == nil
+            ? "pinchos"
+            : "pinchos \u{26A0}\u{FE0E}"
+        let item = NSMenuItem(title: title, action: nil, keyEquivalent: "")
+        item.submenu = buildRecoveryMenu()
+        item.setAccessibilityLabel("Pinchos recovery")
+        item.setAccessibilityHelp("Open recovery actions for the Pinchos configuration.")
+        return item
+    }
+
     private func topLevelManagedItems() -> [any ManagedItemLifecycle] {
-        let topLevelNames = Set(currentConfig().topLevelItems.map(\.name))
         return order.compactMap { name in
-            guard topLevelNames.contains(name), let item = items[name], item.isVisible else { return nil }
+            guard let item = items[name], item.isVisible else { return nil }
             return item
         }
     }
@@ -714,25 +648,14 @@ final class StatusItemController: StatusItemMenuDelegate {
     /// command item shows its value run through the item's `format` (so
     /// `{output}%` keeps its suffix) and, like the bar, falls back to
     /// `error_text` when there is no value -- never its config name. The icon
-    /// source follows the bar too (structured-output override, else the config's
-    /// icon; a group's static icon source). A group shows its static `title`.
+    /// source follows the bar and the config's icon.
     private func collapsedRow(for item: any ManagedItemLifecycle) async -> (title: String, iconSource: ItemIconSource?) {
-        switch item.config {
-        case .command(let commandConfig):
-            let snapshot = await item.runtimeSnapshot()
-            let value: String?
-            if let structuredText = snapshot.structuredOutput?.text {
-                value = DiagnosticPreviewFormatter.preview(structuredText, limits: .menuValue).text
-            } else {
-                value = snapshot.fullOutput.map { lastTrimmedLine(of: $0) }
-            }
-            let base = value.flatMap { $0.isEmpty ? nil : applyFormat(commandConfig.format, output: $0) }
-                ?? commandConfig.errorText
-            let iconSource = snapshot.structuredOutput?.iconSource ?? commandConfig.iconSource
-            return (truncateTitle(base, maxLength: commandConfig.maxLength), iconSource)
-        case .group(let group):
-            return (group.title, group.iconSource)
-        }
+        let commandConfig = item.config
+        let snapshot = await item.runtimeSnapshot()
+        let value = snapshot.fullOutput.map { lastTrimmedLine(of: $0) }
+        let base = value.flatMap { $0.isEmpty ? nil : applyFormat(commandConfig.format, output: $0) }
+            ?? "–"
+        return (truncateTitle(base, maxLength: 60), commandConfig.iconSource)
     }
 
     private func makePresentationMenuItem() -> NSMenuItem {
@@ -769,28 +692,19 @@ final class StatusItemController: StatusItemMenuDelegate {
         menu.addItem(quit)
     }
 
-    /// Dispatches on `item.config`'s kind so a command item's own status-item
-    /// menu and a group's per-member submenu (see `addGroupContent`) share
-    /// exactly one implementation of "what a command item's menu contains" --
-    /// nesting falls out for free, since a group member that is itself a
-    /// group recurses back into `addGroupContent`.
+    /// Builds the command item's content before the shared global footer.
     private func addMenuContent(
         for item: any ManagedItemLifecycle,
         to menu: NSMenu,
         revealsDiagnostics: Bool,
         includesGlobalFooter: Bool
     ) async {
-        switch item.config {
-        case .command(let commandConfig):
-            await addCommandContent(item: item, commandConfig: commandConfig, to: menu, revealsDiagnostics: revealsDiagnostics)
-        case .group:
-            await addGroupContent(
-                item,
-                to: menu,
-                revealsDiagnostics: revealsDiagnostics,
-                includesGlobalFooter: includesGlobalFooter
-            )
-        }
+        await addCommandContent(
+            item: item,
+            commandConfig: item.config,
+            to: menu,
+            revealsDiagnostics: revealsDiagnostics
+        )
         if includesGlobalFooter {
             menu.addItem(NSMenuItem.separator())
         }
@@ -802,57 +716,12 @@ final class StatusItemController: StatusItemMenuDelegate {
         to menu: NSMenu,
         revealsDiagnostics: Bool
     ) async {
-        // Refresh Now is the first row. It is omitted only when the item
-        // declares a `refresh = true` action, which already covers manual
-        // refresh under its own title.
-        var hasConfiguredRefresh = false
-        for action in item.actions {
-            if case .refresh = action.kind {
-                hasConfiguredRefresh = true
-            }
-        }
-        if !hasConfiguredRefresh {
-            let refresh = NSMenuItem(title: "Refresh Now", action: #selector(refreshAction(_:)), keyEquivalent: "")
-            refresh.target = self
-            refresh.representedObject = RefreshActionTarget(item: item)
-            refresh.isEnabled = !commandConfig.disabled
-            menu.addItem(refresh)
-        }
-        for (index, action) in item.actions.enumerated() {
-            let menuItem = NSMenuItem(title: action.title, action: #selector(itemAction(_:)), keyEquivalent: "")
-            menuItem.target = self
-            menuItem.representedObject = ItemActionTarget(item: item, index: index)
-            menuItem.isEnabled = !commandConfig.disabled
-            menu.addItem(menuItem)
-        }
-        // Configured informational rows ([[item.<name>.info]]): read-only lines
-        // whose command runs at menu-open and whose output is shown as a
-        // disabled label. Shown in both the compact and Option-click menus.
-        if !commandConfig.infoRows.isEmpty {
-            menu.addItem(NSMenuItem.separator())
-            for info in commandConfig.infoRows {
-                let cacheKey = item.config.name
-                let cached = infoRowCache[cacheKey]?[info.title]
-                let valueLabel: String
-                if let cached {
-                    valueLabel = cached.isEmpty ? "\u{2013}" : truncateTitle(cached, maxLength: 60)
-                } else {
-                    valueLabel = "Loading…"
-                }
-                menu.addItem(disabledItem(title: "\(info.title): \(valueLabel)"))
-            }
-            scheduleInfoRowRefresh(for: item, config: commandConfig)
-        }
-        // Hide lives in the same top group as the refresh/actions, so a plain
-        // click on an item shows one tight action cluster and nothing else.
-        if !item.config.hidden {
-            let hide = NSMenuItem(title: "Hide", action: #selector(hideAction(_:)), keyEquivalent: "")
-            hide.target = self
-            hide.representedObject = HideActionTarget(item: item)
-            menu.addItem(hide)
-        }
-        // The compact (non-Option) menu ends here: refresh, actions, Hide, then
-        // the shared bottom group. No runtime state or diagnostics appear.
+        addMenuRows(for: item, to: menu)
+        addSeparatorIfNeeded(to: menu)
+        let refresh = NSMenuItem(title: "Refresh Now", action: #selector(refreshAction(_:)), keyEquivalent: "")
+        refresh.target = self
+        refresh.representedObject = RefreshActionTarget(item: item)
+        menu.addItem(refresh)
         guard revealsDiagnostics else { return }
         menu.addItem(NSMenuItem.separator())
         let runtime = await item.runtimeSnapshot()
@@ -862,97 +731,55 @@ final class StatusItemController: StatusItemMenuDelegate {
         }
         menu.addItem(NSMenuItem.separator())
         addDiagnostics(from: runtime.runnerSnapshot, to: menu)
-        var actionSnapshots: [(index: Int, snapshot: CommandRunnerSnapshot?)] = []
-        for index in item.actions.indices {
-            actionSnapshots.append((index: index, snapshot: await item.actionSnapshot(at: index)))
+        var menuRowSnapshots: [(index: Int, snapshot: CommandRunnerSnapshot?)] = []
+        for index in item.menuRows.indices where item.menuRows[index].action != nil {
+            menuRowSnapshots.append((index: index, snapshot: await item.menuRowSnapshot(at: index)))
         }
-        if actionSnapshots.contains(where: { $0.snapshot != nil }) {
+        if menuRowSnapshots.contains(where: { $0.snapshot != nil }) {
             menu.addItem(NSMenuItem.separator())
-            addActionDiagnostics(actions: item.actions, snapshots: actionSnapshots, to: menu)
-        }
-        if commandConfig.disabled {
-            menu.addItem(NSMenuItem.separator())
-            menu.addItem(disabledItem(title: "Disabled: yes"))
+            addMenuRowDiagnostics(rows: item.menuRows, snapshots: menuRowSnapshots, to: menu)
         }
     }
 
-    /// A group's own status item shows only the static, config-declared
-    /// `title` (see `ManagedGroupItem`) -- this menu is where its live
-    /// content lives instead. The header line is the one place the compact
-    /// join of member values (the "group summary title" from the grouped
-    /// status items design) appears; it is recomputed fresh every time this
-    /// menu is opened, so it never needs its own change-notification path
-    /// from a member back to its group(s). Each member then gets one row
-    /// with a submenu holding exactly what that member's own status-item
-    /// menu would show (actions, current value/state, diagnostics, manual
-    /// refresh) -- nothing about a member's presentation changes because it
-    /// is being shown inside a group instead of at the top level.
-    private func addGroupContent(
-        _ item: any ManagedItemLifecycle,
-        to menu: NSMenu,
-        revealsDiagnostics: Bool,
-        includesGlobalFooter: Bool
-    ) async {
-        guard case .group(let group) = item.config else { return }
-        var memberEntries: [(name: String, item: any ManagedItemLifecycle, valuePreview: String)] = []
-        for memberName in group.members {
-            guard let member = items[memberName], !member.config.hidden else { continue }
-            let preview: String
-            switch member.config {
-            case .command:
-                let snapshot = await member.runtimeSnapshot()
-                let value = if let structuredText = snapshot.structuredOutput?.text {
-                    DiagnosticPreviewFormatter.preview(structuredText, limits: .menuValue).text
-                } else {
-                    snapshot.fullOutput.map { lastTrimmedLine(of: $0) } ?? ""
-                }
-                preview = value.isEmpty ? "\u{2013}" : value
-            case .group(let nested):
-                preview = nested.title
+    private func addMenuRows(
+        for item: any ManagedItemLifecycle,
+        to menu: NSMenu
+    ) {
+        for (index, row) in item.menuRows.enumerated() {
+            if row.separator {
+                addSeparatorIfNeeded(to: menu)
+                continue
             }
-            memberEntries.append((memberName, member, preview))
+            let title = menuRowTitle(row, value: item.menuRowValue(at: index))
+            if row.action != nil {
+                let menuItem = NSMenuItem(title: title, action: #selector(menuRowAction(_:)), keyEquivalent: "")
+                menuItem.target = self
+                menuItem.representedObject = MenuRowTarget(item: item, index: index)
+                menu.addItem(menuItem)
+            } else {
+                menu.addItem(disabledItem(title: title))
+            }
         }
+    }
 
-        menu.addItem(disabledItem(title: groupSummaryTitle(group, entries: memberEntries)))
-        if revealsDiagnostics, let note = item.iconDiagnosticNote {
-            menu.addItem(disabledItem(title: "Icon: \(note)"))
-        }
+    private func addSeparatorIfNeeded(to menu: NSMenu) {
+        guard !menu.items.isEmpty, menu.items.last?.isSeparatorItem != true else { return }
         menu.addItem(NSMenuItem.separator())
-        for entry in memberEntries {
-            let submenu = NSMenu()
-            await addMenuContent(
-                for: entry.item,
-                to: submenu,
-                revealsDiagnostics: revealsDiagnostics,
-                includesGlobalFooter: includesGlobalFooter
-            )
-            if includesGlobalFooter {
-                submenu.addItem(makePresentationMenuItem())
-            }
-            let memberItem = NSMenuItem(
-                title: "\(entry.name): \(truncateTitle(entry.valuePreview, maxLength: 40))",
-                action: nil,
-                keyEquivalent: ""
-            )
-            memberItem.submenu = submenu
-            menu.addItem(memberItem)
-        }
-        if !group.hidden {
-            menu.addItem(NSMenuItem.separator())
-            let hide = NSMenuItem(title: "Hide", action: #selector(hideAction(_:)), keyEquivalent: "")
-            hide.target = self
-            hide.representedObject = HideActionTarget(item: item)
-            menu.addItem(hide)
-        }
     }
 
-    private func groupSummaryTitle(
-        _ group: GroupItemConfig,
-        entries: [(name: String, item: any ManagedItemLifecycle, valuePreview: String)]
-    ) -> String {
-        guard !entries.isEmpty else { return group.title }
-        let joined = entries.map { truncateTitle($0.valuePreview, maxLength: 20) }.joined(separator: " \u{b7} ")
-        return "\(group.title): \(truncateTitle(joined, maxLength: 80))"
+    private func menuRowTitle(_ row: MenuRowConfig, value: String?) -> String {
+        let label = row.label ?? ""
+        guard !row.separator else { return "" }
+        let resolvedValue: String?
+        if let value = row.value {
+            resolvedValue = value
+        } else if row.run != nil {
+            resolvedValue = value ?? "Loading…"
+        } else {
+            resolvedValue = nil
+        }
+        guard let resolvedValue else { return label }
+        return "\(label): \(resolvedValue.isEmpty ? "–" : truncateTitle(resolvedValue, maxLength: 60))"
     }
 
     /// A light-touch, always-present line surfacing the one application-scoped
@@ -976,14 +803,14 @@ final class StatusItemController: StatusItemMenuDelegate {
         menu.addItem(NSMenuItem.separator())
     }
 
-    private func addActionDiagnostics(
-        actions: [ItemAction],
+    private func addMenuRowDiagnostics(
+        rows: [MenuRowConfig],
         snapshots: [(index: Int, snapshot: CommandRunnerSnapshot?)],
         to menu: NSMenu
     ) {
         for entry in snapshots {
-            guard let snapshot = entry.snapshot else { continue }
-            let title = actions[entry.index].title
+            guard let snapshot = entry.snapshot, rows.indices.contains(entry.index) else { continue }
+            let title = rows[entry.index].label ?? ""
             let actionPrefix = "Action \"\(title)\": "
             menu.addItem(disabledItem(title: actionPrefix + (snapshot.isRunning ? "running" : "waiting")))
             if let execution = snapshot.lastExecution {
@@ -1133,89 +960,14 @@ final class StatusItemController: StatusItemMenuDelegate {
         statusItemHost.present(menu: menu, on: statusItem)
     }
 
-    /// Runs one configured informational row's command with the item's own
-    /// shell/environment and returns its trimmed stdout; empty on failure so the
-    /// row renders a `–` value (matching the item's error fallback).
-    private func refreshInfoRowCache(for config: PinchosConfig) {
-        let liveNames = Set(config.items.map(\.name))
-        infoRowRefreshTasks = infoRowRefreshTasks.filter { liveNames.contains($0.key) }
-        infoRowCache = infoRowCache.filter { liveNames.contains($0.key) }
-        for itemConfig in config.items {
-            guard case .command(let commandConfig) = itemConfig,
-                  !commandConfig.infoRows.isEmpty else { continue }
-            scheduleInfoRowRefresh(for: items[itemConfig.name], config: commandConfig)
-        }
-    }
-
-    private func scheduleInfoRowRefresh(
-        for item: (any ManagedItemLifecycle)?,
-        config: CommandItemConfig
-    ) {
-        guard let item else { return }
-        infoRowRefreshTasks[item.config.name]?.cancel()
-        let name = item.config.name
-        infoRowRefreshTasks[name] = Task { @MainActor [weak self, weak item] in
-            guard let self, let item else { return }
-            var values: [String: String] = [:]
-            await withTaskGroup(of: (String, String).self) { group in
-                for info in config.infoRows {
-                    group.addTask { [weak self] in
-                        guard let self else { return (info.title, "") }
-                        return (info.title, await self.runInfoCommand(info, config: config))
-                    }
-                }
-                for await (title, value) in group {
-                    if Task.isCancelled { return }
-                    values[title] = value
-                }
-            }
-            guard self.items[name] === item else { return }
-            self.infoRowCache[name] = values
-            self.infoRowRefreshTasks[name] = nil
-        }
-    }
-
-    private func runInfoCommand(_ info: ItemInfoRow, config: CommandItemConfig) async -> String {
-        let runner = CommandRunner(
-            command: info.run,
-            timeout: config.timeout,
-            maxOutputBytes: config.maxOutputBytes,
-            shell: config.shell,
-            workingDirectory: config.workingDirectory,
-            environment: config.environment
-        )
-        let outcome = await runner.runIfIdle()
-        if case .skipped = outcome { return "" }
-        guard let execution = await runner.awaitSettledExecution(),
-              case .exited(0) = execution.terminalReason else {
-            return ""
-        }
-        return lastTrimmedLine(of: execution.stdout)
-    }
-
     @objc private func refreshAction(_ sender: NSMenuItem) {
         guard let target = sender.representedObject as? RefreshActionTarget else { return }
         target.item.refreshNow()
     }
 
-    @objc private func hideAction(_ sender: NSMenuItem) {
-        guard let target = sender.representedObject as? HideActionTarget,
-              !target.item.config.hidden else { return }
-        do {
-            try ConfigFileEditor.setHidden(
-                true,
-                for: target.item.config,
-                at: URL(fileURLWithPath: configPath)
-            )
-            onReload()
-        } catch {
-            showRecoveryError(error)
-        }
-    }
-
-    @objc private func itemAction(_ sender: NSMenuItem) {
-        guard let target = sender.representedObject as? ItemActionTarget else { return }
-        target.item.invokeAction(at: target.index)
+    @objc private func menuRowAction(_ sender: NSMenuItem) {
+        guard let target = sender.representedObject as? MenuRowTarget else { return }
+        target.item.invokeMenuRow(at: target.index)
     }
 
     @objc private func reloadConfigAction() {

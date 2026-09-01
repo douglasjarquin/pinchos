@@ -1,0 +1,20 @@
+{
+  "profile": "P1-flagship-steady-state",
+  "config": {
+    "items": 3,
+    "interval_seconds": 60
+  },
+  "settle_seconds": 15,
+  "phys_footprint_bytes_samples": [
+    13779640,
+    13812408,
+    13812408
+  ],
+  "commit_sha": "44bb2b3d3fd8bc90ae52e4d2da2dd7b4b0e7aeb6",
+  "dirty": false,
+  "macos_version": "26.6.2",
+  "hardware_model": "Mac15,11",
+  "architecture": "arm64",
+  "memory_bytes": 38654705664,
+  "swift_version": "Apple Swift version 6.3.3 (swiftlang-6.3.3.1.3 clang-2100.1.1.101)"
+}

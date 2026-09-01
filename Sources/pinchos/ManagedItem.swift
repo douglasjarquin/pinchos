@@ -1,6 +1,16 @@
 import AppKit
 import PinchosCore
 
+private final class ManagedItemSourceClock: CommandSourceClock, @unchecked Sendable {
+    private let read: () -> Date
+
+    init(read: @escaping () -> Date) {
+        self.read = read
+    }
+
+    func now() -> Date { read() }
+}
+
 @MainActor
 final class ManagedItem: ManagedItemLifecycle {
     let statusItem: NSStatusItem?
@@ -8,13 +18,24 @@ final class ManagedItem: ManagedItemLifecycle {
     private(set) var renderedButtonTitle: String = ""
     private(set) var isVisible = true
     private(set) var commandConfig: CommandItemConfig
-    var config: ItemConfig { .command(commandConfig) }
-    private(set) var actions: [ItemAction]
+    var config: ItemConfig { commandConfig }
+    private(set) var menuRows: [MenuRowConfig]
     private(set) var iconIsLoaded = false
     private(set) var iconDiagnosticNote: String?
     private let iconRenderer: StatusItemIconRenderer
-    private var runner: CommandRunner
-    private var actionRunners: [Int: CommandRunner]
+    private var primarySource: CommandSource
+    private var menuRowRunners: [Int: CommandRunner]
+    private var menuRowSources: [Int: CommandSource]
+    private var primarySourceLease: CommandSourceLease
+    private var menuRowSourceLeases: [Int: CommandSourceLease]
+    private var menuRowCachedValues: [Int: String] = [:]
+    private var menuRowLastAttemptedAt: [Int: Date] = [:]
+    private var menuRowLastSuccessfulAt: [Int: Date] = [:]
+    private var menuRowRefreshTasks: [Int: Task<Void, Never>] = [:]
+    private var menuRowRefreshTokens: [Int: UUID] = [:]
+    private var menuRowTimerTokens: [Int: CommandScheduler.ItemToken] = [:]
+    private let sourceClock: ManagedItemSourceClock
+    private let sourceRegistry: CommandSourceRegistry
     /// The one application-scoped `CommandScheduler` bounding this item's
     /// scheduled refreshes, manual refreshes, and command actions alongside
     /// every other item's, replacing the per-item `DispatchQueue`/
@@ -32,16 +53,8 @@ final class ManagedItem: ManagedItemLifecycle {
     /// check and increments `skippedRefreshes` exactly as before.
     private var pendingRefreshPermitTask: Task<Void, Never>?
     private var pendingActionPermitTasks: [Int: Task<Void, Never>] = [:]
-    private let triggerObserverFactory: (any ItemTriggerObserverFactory)?
-    private lazy var triggerCoordinator = ItemTriggerCoordinator(
-        config: commandConfig,
-        observerFactory: triggerObserverFactory,
-        onRefresh: { [weak self] in self?.requestRefresh() }
-    )
     private weak var menuDelegate: StatusItemMenuDelegate?
     private let now: () -> Date
-    private let notificationSink: ItemNotificationSink
-    private var notificationTracker = NotificationTransitionTracker()
     private var isActive = true
     private var configurationGeneration = 0
     private var isPreparingUpdate = false
@@ -52,12 +65,9 @@ final class ManagedItem: ManagedItemLifecycle {
     private var pendingActionInvocations = 0
     private var actionInvocationsDrained: CheckedContinuation<Void, Never>?
     private var lastSuccessfulOutput: String?
-    private var lastStructuredOutput: StructuredCommandOutput?
-    private var structuredOutputDiagnostic: String?
     private var lastAttemptedAt: Date?
     private var lastUpdatedAt: Date?
     private var lastSuccessfulTitle: String?
-    private var stalePresentationTask: Task<Void, Never>?
     private var statusItemSuppressed = false
 
     /// Test-only seam that pauses a queued action invocation after it has been
@@ -85,68 +95,80 @@ final class ManagedItem: ManagedItemLifecycle {
 
     private struct PendingUpdate {
         let commandConfig: CommandItemConfig
-        let runner: CommandRunner?
-        let actionRunners: [Int: CommandRunner]?
-        let actionRunnersConfigurationChanged: Bool
+        let primarySource: CommandSource?
+        let menuRowRunners: [Int: CommandRunner]?
+        let menuRowSources: [Int: CommandSource]?
+        let primarySourceLease: CommandSourceLease?
+        let menuRowSourceLeases: [Int: CommandSourceLease]?
+        let menuRowsChanged: Bool
         let timerNeedsRestart: Bool
         let presentationNeedsUpdate: Bool
-        let staleAfterChanged: Bool
-        let outputChanged: Bool
     }
 
     init(
         config: ItemConfig,
         menuDelegate: StatusItemMenuDelegate,
         initiallyVisible: Bool = true,
-        isTopLevel: Bool = true,
         scheduler: CommandScheduler = .shared,
+        sourceRegistry: CommandSourceRegistry = CommandSourceRegistry(),
         now: @escaping () -> Date = Date.init,
         iconRenderer: StatusItemIconRenderer = .system,
-        triggerObserverFactory: (any ItemTriggerObserverFactory)? = nil,
-        notificationSink: ItemNotificationSink? = nil,
         statusItemFactory: @escaping () -> NSStatusItem? = {
             NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         }
     ) {
-        let commandConfig = config.command
+        let commandConfig = config
         self.commandConfig = commandConfig
-        self.actions = commandConfig.actions
+        self.menuRows = commandConfig.menu
         self.menuDelegate = menuDelegate
         self.scheduler = scheduler
+        self.sourceRegistry = sourceRegistry
         self.now = now
+        let sourceClock = ManagedItemSourceClock(read: now)
+        self.sourceClock = sourceClock
         self.iconRenderer = iconRenderer
-        self.triggerObserverFactory = triggerObserverFactory
-        self.notificationSink = notificationSink ?? SystemItemNotificationSink()
-        self.renderedTitle = commandConfig.errorText
-        self.runner = CommandRunner(
+        self.renderedTitle = "–"
+        let primaryRunner = CommandRunner(
             command: commandConfig.run,
-            timeout: commandConfig.timeout,
-            maxOutputBytes: commandConfig.maxOutputBytes,
-            shell: commandConfig.shell,
-            workingDirectory: commandConfig.workingDirectory,
-            environment: commandConfig.environment
+            timeout: commandConfig.timeout
         )
-        self.actionRunners = Self.makeActionRunners(for: commandConfig.actions, config: commandConfig)
-        // A hidden group member gets no real backing `NSStatusItem` at
-        // all: there is no visible status-bar slot to ever reveal for it,
-        // so every `statusItem?.` access in this class simply no-ops.
-        let statusItem = isTopLevel ? statusItemFactory() : nil
+        let primaryLease = sourceRegistry.acquire(
+            configuration: Self.sourceConfiguration(for: commandConfig),
+            scheduler: scheduler,
+            clock: self.sourceClock,
+            runner: primaryRunner
+        )
+        self.primarySource = primaryLease.source
+        self.primarySourceLease = primaryLease
+        self.menuRowRunners = Self.makeMenuRowRunners(for: commandConfig.menu, config: commandConfig)
+        let rowLeases = Self.makeMenuRowSourceLeases(
+            for: commandConfig.menu,
+            config: commandConfig,
+            scheduler: scheduler,
+            registry: sourceRegistry,
+            clock: sourceClock
+        )
+        self.menuRowSourceLeases = rowLeases
+        self.menuRowSources = rowLeases.mapValues(\.source)
+        let statusItem = statusItemFactory()
         self.statusItem = statusItem
         statusItem?.button?.target = self
         statusItem?.button?.action = #selector(handleClick)
         statusItem?.button?.sendAction(on: [.leftMouseUp, .rightMouseUp])
         applyIcon()
         applyDisplayedTitle()
-        setVisibility(initiallyVisible && !commandConfig.hidden)
+        setVisibility(initiallyVisible)
         if initiallyVisible {
             startTimer()
+            startMenuRowSources()
         }
     }
 
     func activate() {
         guard isActive else { return }
-        setVisibility(!commandConfig.hidden)
+        setVisibility(true)
         startTimer()
+        startMenuRowSources()
     }
 
     func setStatusItemVisible(_ visible: Bool) {
@@ -176,35 +198,17 @@ final class ManagedItem: ManagedItemLifecycle {
         deadline: ContinuousClock.Instant = LifecycleDeadline.makeInstant()
     ) async {
         guard isActive, !isPreparingRemoval, pendingUpdate == nil else { return }
-        guard case .command(let newCommandConfig) = config else { return }
+        let newCommandConfig = config
 
         let previousConfig = self.commandConfig
         isPreparingUpdate = true
 
         let runnerConfigurationChanged = previousConfig.run != newCommandConfig.run
             || previousConfig.timeout != newCommandConfig.timeout
-            || previousConfig.maxOutputBytes != newCommandConfig.maxOutputBytes
-            || previousConfig.shell != newCommandConfig.shell
-            || previousConfig.workingDirectory != newCommandConfig.workingDirectory
-            || previousConfig.environment != newCommandConfig.environment
         let timerNeedsRestart = runnerConfigurationChanged
             || previousConfig.interval != newCommandConfig.interval
-            || previousConfig.disabled != newCommandConfig.disabled
-        let staleAfterChanged = previousConfig.staleAfter != newCommandConfig.staleAfter || runnerConfigurationChanged
-        let outputChanged = previousConfig.output != newCommandConfig.output
-        let presentationNeedsUpdate = outputChanged
-            || previousConfig.format != newCommandConfig.format
-            || previousConfig.errorText != newCommandConfig.errorText
-            || previousConfig.onError != newCommandConfig.onError
-            || previousConfig.staleAfter != newCommandConfig.staleAfter
-            || previousConfig.maxLength != newCommandConfig.maxLength
-            || previousConfig.hideWhenEmpty != newCommandConfig.hideWhenEmpty
-            || previousConfig.hideOnError != newCommandConfig.hideOnError
-            || previousConfig.hidden != newCommandConfig.hidden
-            || previousConfig.iconOnly != newCommandConfig.iconOnly
-            || previousConfig.disabled != newCommandConfig.disabled
+        let presentationNeedsUpdate = previousConfig.format != newCommandConfig.format
             || previousConfig.iconSource != newCommandConfig.iconSource
-        let becameDisabled = !previousConfig.disabled && newCommandConfig.disabled
         if timerNeedsRestart {
             cancelRefreshTimer()
         }
@@ -216,33 +220,54 @@ final class ManagedItem: ManagedItemLifecycle {
         // against the old runners from this point on. Cancellation requests
         // for all of them are then fired and awaited concurrently under one
         // shared deadline instead of one after another.
-        var replacementRunner: CommandRunner?
-        let runnerNeedsCancel = runnerConfigurationChanged || becameDisabled
+        var replacementPrimarySource: CommandSource?
+        var replacementPrimarySourceLease: CommandSourceLease?
+        let sourceConfigurationChanged = runnerConfigurationChanged
+            || previousConfig.interval != newCommandConfig.interval
+        let runnerNeedsCancel = sourceConfigurationChanged
         if runnerNeedsCancel {
             configurationGeneration &+= 1
             if runnerConfigurationChanged {
-                replacementRunner = CommandRunner(
+                let newRunner = CommandRunner(
                     command: newCommandConfig.run,
-                    timeout: newCommandConfig.timeout,
-                    maxOutputBytes: newCommandConfig.maxOutputBytes,
-                    shell: newCommandConfig.shell,
-                    workingDirectory: newCommandConfig.workingDirectory,
-                    environment: newCommandConfig.environment
+                    timeout: newCommandConfig.timeout
                 )
+                let lease = sourceRegistry.acquire(
+                    configuration: Self.sourceConfiguration(for: newCommandConfig),
+                    scheduler: scheduler,
+                    clock: sourceClock,
+                    runner: newRunner
+                )
+                replacementPrimarySource = lease.source
+                replacementPrimarySourceLease = lease
+            } else if sourceConfigurationChanged {
+                let lease = sourceRegistry.acquire(
+                    configuration: Self.sourceConfiguration(for: newCommandConfig),
+                    scheduler: scheduler,
+                    clock: sourceClock,
+                    runner: nil
+                )
+                replacementPrimarySource = lease.source
+                replacementPrimarySourceLease = lease
             }
         }
 
-        let actionRunnersConfigurationChanged = previousConfig.actions != newCommandConfig.actions
-            || previousConfig.output != newCommandConfig.output
+        let menuRowsChanged = previousConfig.menu != newCommandConfig.menu
             || previousConfig.timeout != newCommandConfig.timeout
-            || previousConfig.maxOutputBytes != newCommandConfig.maxOutputBytes
-            || previousConfig.shell != newCommandConfig.shell
-            || previousConfig.workingDirectory != newCommandConfig.workingDirectory
-            || previousConfig.environment != newCommandConfig.environment
-        let actionsNeedCancel = actionRunnersConfigurationChanged || becameDisabled
-        let replacementActionRunners = actionRunnersConfigurationChanged
-            ? Self.makeActionRunners(for: newCommandConfig.actions, config: newCommandConfig)
+        let replacementMenuRowRunners = menuRowsChanged
+            ? Self.makeMenuRowRunners(for: newCommandConfig.menu, config: newCommandConfig)
             : nil
+        let replacementMenuRowLeases = menuRowsChanged
+            ? Self.makeMenuRowSourceLeases(
+                for: newCommandConfig.menu,
+                config: newCommandConfig,
+                scheduler: scheduler,
+                registry: sourceRegistry,
+                clock: sourceClock
+            )
+            : nil
+        let replacementMenuRowSources = replacementMenuRowLeases?.mapValues(\.source)
+        let menuRowsNeedCancel = menuRowsChanged
 
         // A permit request only queued (not yet running) for a runner whose
         // configuration is changing belongs to the outgoing generation, so it
@@ -254,7 +279,15 @@ final class ManagedItem: ManagedItemLifecycle {
         if runnerNeedsCancel {
             pendingRefreshPermitTask?.cancel()
         }
-        if actionsNeedCancel {
+        if menuRowsChanged {
+            for task in menuRowRefreshTasks.values {
+                task.cancel()
+            }
+            menuRowRefreshTasks.removeAll()
+            menuRowRefreshTokens.removeAll()
+            cancelMenuRowTimers()
+        }
+        if menuRowsNeedCancel {
             for task in pendingActionPermitTasks.values {
                 task.cancel()
             }
@@ -263,7 +296,7 @@ final class ManagedItem: ManagedItemLifecycle {
         await settleConcurrently(
             cancellationOperations(
                 includingPrimary: runnerNeedsCancel,
-                includingActions: actionsNeedCancel
+                includingMenuRows: menuRowsNeedCancel
             ),
             deadline: deadline,
             onTimeout: { [weak self] timeouts in
@@ -273,13 +306,14 @@ final class ManagedItem: ManagedItemLifecycle {
 
         pendingUpdate = PendingUpdate(
             commandConfig: newCommandConfig,
-            runner: replacementRunner,
-            actionRunners: replacementActionRunners,
-            actionRunnersConfigurationChanged: actionRunnersConfigurationChanged,
+            primarySource: replacementPrimarySource,
+            menuRowRunners: replacementMenuRowRunners,
+            menuRowSources: replacementMenuRowSources,
+            primarySourceLease: replacementPrimarySourceLease,
+            menuRowSourceLeases: replacementMenuRowLeases,
+            menuRowsChanged: menuRowsChanged,
             timerNeedsRestart: timerNeedsRestart,
-            presentationNeedsUpdate: presentationNeedsUpdate,
-            staleAfterChanged: staleAfterChanged,
-            outputChanged: outputChanged
+            presentationNeedsUpdate: presentationNeedsUpdate
         )
     }
 
@@ -287,36 +321,30 @@ final class ManagedItem: ManagedItemLifecycle {
         guard isActive, let pendingUpdate else { return }
         self.pendingUpdate = nil
         commandConfig = pendingUpdate.commandConfig
-        if pendingUpdate.outputChanged || commandConfig.output == .plain {
-            lastStructuredOutput = nil
-            structuredOutputDiagnostic = nil
+        if let primarySource = pendingUpdate.primarySource {
+            self.primarySource = primarySource
+            primarySourceLease = pendingUpdate.primarySourceLease!
         }
-        actions = lastStructuredOutput?.actions ?? commandConfig.actions
-        if let runner = pendingUpdate.runner {
-            self.runner = runner
-        }
-        if pendingUpdate.actionRunnersConfigurationChanged {
-            actionRunners = Self.makeActionRunners(for: actions, config: commandConfig)
+        if pendingUpdate.menuRowsChanged {
+            menuRows = commandConfig.menu
+            menuRowRunners = pendingUpdate.menuRowRunners ?? Self.makeMenuRowRunners(for: menuRows, config: commandConfig)
+            menuRowSources = pendingUpdate.menuRowSources ?? Self.makeMenuRowSourceLeases(
+                for: menuRows,
+                config: commandConfig,
+                scheduler: scheduler,
+                registry: sourceRegistry,
+                clock: sourceClock
+            ).mapValues(\.source)
+            menuRowSourceLeases = pendingUpdate.menuRowSourceLeases ?? [:]
+            menuRowCachedValues.removeAll()
+            startMenuRowSources()
         }
         applyIcon()
-        if commandConfig.disabled {
-            triggerCoordinator.stop()
-        } else {
-            triggerCoordinator.update(config: commandConfig)
-            if pendingUpdate.timerNeedsRestart {
-                startTimer(runInitialRefresh: false)
-            }
-        }
-        if pendingUpdate.staleAfterChanged {
-            scheduleStalePresentation()
+        if pendingUpdate.timerNeedsRestart {
+            startTimer(runInitialRefresh: false)
         }
         if pendingUpdate.presentationNeedsUpdate {
-            lastSuccessfulTitle = lastSuccessfulOutput.map {
-                let output = lastStructuredOutput.map {
-                    DiagnosticPreviewFormatter.preview($0.text ?? "", limits: .menuValue).text
-                } ?? lastTrimmedLine(of: $0)
-                return applyFormat(commandConfig.format, output: output)
-            }
+            lastSuccessfulTitle = lastSuccessfulOutput.map { applyFormat(commandConfig.format, output: lastTrimmedLine(of: $0)) }
             requestPresentationUpdate()
         }
         isPreparingUpdate = false
@@ -326,10 +354,7 @@ final class ManagedItem: ManagedItemLifecycle {
         guard isActive, !isPreparingRemoval else { return }
         isPreparingRemoval = true
         configurationGeneration &+= 1
-        stalePresentationTask?.cancel()
-        stalePresentationTask = nil
         cancelRefreshTimer()
-        triggerCoordinator.stop()
         pendingRefreshPermitTask?.cancel()
         for task in pendingActionPermitTasks.values {
             task.cancel()
@@ -343,7 +368,7 @@ final class ManagedItem: ManagedItemLifecycle {
         let name = config.name
         var operations = cancellationOperations(
             includingPrimary: true,
-            includingActions: true
+            includingMenuRows: true
         )
         if pendingActionInvocations > 0 {
             operations.append((identity: "\(name):action-drain", run: { [weak self] in
@@ -362,11 +387,14 @@ final class ManagedItem: ManagedItemLifecycle {
 
     func commitRemoval() {
         guard isActive else { return }
-        triggerCoordinator.stop()
         isActive = false
         isPreparingRemoval = false
         if let statusItem {
             NSStatusBar.system.removeStatusItem(statusItem)
+        }
+        sourceRegistry.release(primarySourceLease)
+        for lease in menuRowSourceLeases.values {
+            sourceRegistry.release(lease)
         }
     }
 
@@ -383,23 +411,30 @@ final class ManagedItem: ManagedItemLifecycle {
     /// `settleConcurrently` fires them.
     private func cancellationOperations(
         includingPrimary: Bool,
-        includingActions: Bool
+        includingMenuRows: Bool
     ) -> [(identity: String, run: () async -> Void)] {
         var operations: [(identity: String, run: () async -> Void)] = []
         let name = config.name
         if includingPrimary {
-            let runner = self.runner
-            operations.append((identity: "\(name):primary", run: { [weak self] in
-                await runner.cancelActive()
+            let lease = self.primarySourceLease
+            operations.append((identity: "\(name):primary", run: { [weak self, sourceRegistry] in
+                await sourceRegistry.releaseAndCancelIfLast(lease)
                 await self?.drainRefreshInvocations()
                 await self?.awaitCancellationSettlementDelayForTesting(role: "primary")
             }))
         }
-        if includingActions {
-            for (index, actionRunner) in actionRunners {
-                operations.append((identity: "\(name):action[\(index)]", run: { [weak self] in
-                    await actionRunner.cancelActive()
-                    await self?.awaitCancellationSettlementDelayForTesting(role: "action:\(index)")
+        if includingMenuRows {
+            for (index, menuRowRunner) in menuRowRunners {
+                operations.append((identity: "\(name):menu-row[\(index)]", run: { [weak self] in
+                    await menuRowRunner.cancelActive()
+                    await self?.awaitCancellationSettlementDelayForTesting(role: "menu-row:\(index)")
+                }))
+            }
+            for index in menuRowSources.keys {
+                guard let lease = menuRowSourceLeases[index] else { continue }
+                operations.append((identity: "\(name):source[\(index)]", run: { [weak self, sourceRegistry] in
+                    await sourceRegistry.releaseAndCancelIfLast(lease)
+                    await self?.awaitCancellationSettlementDelayForTesting(role: "source:\(index)")
                 }))
             }
         }
@@ -409,6 +444,106 @@ final class ManagedItem: ManagedItemLifecycle {
     private func awaitCancellationSettlementDelayForTesting(role: String) async {
         guard let hook = cancellationSettlementDelayForTesting else { return }
         await hook(role)
+    }
+
+    private static func sourceConfiguration(for config: CommandItemConfig) -> CommandSourceConfiguration {
+        let refreshPolicy: CommandSourceRefreshPolicy
+        switch config.interval {
+        case .manual:
+            refreshPolicy = .manual
+        case .scheduled(let interval):
+            refreshPolicy = .scheduled(interval)
+        }
+        return CommandSourceConfiguration(
+            command: config.run,
+            timeout: config.timeout,
+            refreshPolicy: refreshPolicy
+        )
+    }
+
+    private static func makeMenuRowSourceLeases(
+        for rows: [MenuRowConfig],
+        config: CommandItemConfig,
+        scheduler: CommandScheduler,
+        registry: CommandSourceRegistry,
+        clock: any CommandSourceClock
+    ) -> [Int: CommandSourceLease] {
+        var leases: [Int: CommandSourceLease] = [:]
+        for (index, row) in rows.enumerated() {
+            guard let command = row.run else { continue }
+            let policy: CommandSourceRefreshPolicy
+            if let cache = row.cache {
+                policy = .scheduled(cache)
+            } else {
+                policy = .manual
+            }
+            let configuration = CommandSourceConfiguration(
+                command: command,
+                timeout: config.timeout,
+                refreshPolicy: policy,
+                staleAfter: row.cache
+            )
+            leases[index] = registry.acquire(
+                configuration: configuration,
+                scheduler: scheduler,
+                clock: clock
+            )
+        }
+        return leases
+    }
+
+    private func startMenuRowSources() {
+        cancelMenuRowTimers()
+        for (index, source) in menuRowSources {
+            requestMenuRowRefresh(at: index, source: source)
+            guard let interval = menuRows[index].cache else { continue }
+            let token = CommandScheduler.ItemToken()
+            menuRowTimerTokens[index] = token
+            let scheduler = self.scheduler
+            Task {
+                await scheduler.registerRecurring(token: token, interval: interval) { [weak self] in
+                    Task { @MainActor [weak self] in
+                        self?.requestMenuRowRefresh(at: index)
+                    }
+                }
+            }
+        }
+    }
+
+    private func cancelMenuRowTimers() {
+        let tokens = Array(menuRowTimerTokens.values)
+        menuRowTimerTokens.removeAll()
+        let scheduler = self.scheduler
+        for token in tokens {
+            Task { await scheduler.cancelTimer(token) }
+        }
+    }
+
+    private func requestMenuRowRefresh(at index: Int, source: CommandSource? = nil) {
+        guard isActive, !isPreparingUpdate, !isPreparingRemoval,
+              menuRows.indices.contains(index),
+              let source = source ?? menuRowSources[index],
+              menuRowRefreshTasks[index] == nil
+        else { return }
+        let generation = configurationGeneration
+        let token = UUID()
+        menuRowLastAttemptedAt[index] = now()
+        menuRowRefreshTokens[index] = token
+        menuRowRefreshTasks[index] = Task { @MainActor [weak self, source] in
+            let cached = await source.refresh()
+            guard let self,
+                  self.menuRowRefreshTokens[index] == token
+            else { return }
+            self.menuRowRefreshTokens[index] = nil
+            self.menuRowRefreshTasks[index] = nil
+            guard self.isActive, self.configurationGeneration == generation else { return }
+            if let value = cached.value {
+                self.menuRowCachedValues[index] = lastTrimmedLine(of: value)
+            }
+            if let lastSuccessfulAt = cached.lastSuccessfulAt {
+                self.menuRowLastSuccessfulAt[index] = lastSuccessfulAt
+            }
+        }
     }
 
     private func handleLifecycleSettlementTimeout(
@@ -432,8 +567,6 @@ final class ManagedItem: ManagedItemLifecycle {
 
     private func startTimer(runInitialRefresh: Bool = true) {
         cancelRefreshTimer()
-        guard !commandConfig.disabled else { return }
-        triggerCoordinator.start()
         guard case .scheduled(let interval) = commandConfig.interval else {
             if runInitialRefresh {
                 requestRefresh()
@@ -474,28 +607,20 @@ final class ManagedItem: ManagedItemLifecycle {
         requestRefresh()
     }
 
-    /// Requests a refresh, coalescing with any refresh already queued for a
-    /// global permit. Once granted, the permit is held for the whole
-    /// primary-runner session (`refresh()`, which itself owns the runner's
-    /// no-overlap check) and released exactly once when it settles.
+    /// Requests a refresh, coalescing with any refresh already queued for the
+    /// primary source. The source owns scheduler admission and holds its
+    /// permit until the complete process session settles.
     private func requestRefresh() {
-        guard isActive, !isPreparingUpdate, !isPreparingRemoval, !commandConfig.disabled else { return }
+        guard isActive, !isPreparingUpdate, !isPreparingRemoval else { return }
         guard pendingRefreshPermitTask == nil else {
             recordCoalesced()
+            Task { await primarySource.recordSkippedRefresh() }
             return
         }
         pendingRefreshInvocations += 1
         pendingRefreshPermitTask = Task { @MainActor [self] in
-            do {
-                try await scheduler.acquirePermit()
-            } catch {
-                pendingRefreshPermitTask = nil
-                finishRefreshInvocation()
-                return
-            }
-            pendingRefreshPermitTask = nil
             await refresh()
-            await scheduler.releasePermit()
+            pendingRefreshPermitTask = nil
             finishRefreshInvocation()
         }
     }
@@ -512,113 +637,24 @@ final class ManagedItem: ManagedItemLifecycle {
     private func refresh() async {
         guard isActive, !isPreparingUpdate, !isPreparingRemoval else { return }
         let generation = configurationGeneration
-        let attemptedAt = now()
-        guard await runner.beginIfIdle() else { return }
-        lastAttemptedAt = attemptedAt
-        let runningRunnerSnapshot = await runner.snapshot()
-        guard isActive, generation == configurationGeneration else {
-            _ = await runner.finishActiveRun()
-            return
-        }
-        renderPresentation(makeRuntimeSnapshot(runningRunnerSnapshot))
-        let preliminaryOutcome = await runner.finishActiveRun()
+        lastAttemptedAt = now()
+        let cached = await primarySource.refresh()
         guard isActive, generation == configurationGeneration else { return }
-        guard case .completed = preliminaryOutcome else { return }
-
-        // The shell may have exited while same-group descendants and output
-        // pipes are still settling. Do not commit success, output, or
-        // timestamps from that preliminary shell-exit result: wait for the
-        // definitive session result so late stdout/stderr and a late
-        // timeout/cancellation are reflected instead of a stale `.exited(0)`.
-        guard let execution = await runner.awaitSettledExecution() else { return }
+        guard let execution = cached.lastExecution else { return }
         guard isActive, generation == configurationGeneration else { return }
-        let currentConfig = commandConfig
+        lastSuccessfulOutput = cached.value
+        lastAttemptedAt = cached.lastAttemptedAt
+        lastUpdatedAt = cached.lastSuccessfulAt
         if execution.terminalReason == .exited(code: 0) {
-            if currentConfig.output == .jsonV1 {
-                do {
-                    guard !execution.stdoutTruncated else {
-                        throw StructuredOutputParseError.invalidField(
-                            "output",
-                            "complete JSON within max_output; stdout was truncated"
-                        )
-                    }
-                    let structured = try StructuredOutputParser.parse(execution.stdout)
-                    lastStructuredOutput = structured
-                    structuredOutputDiagnostic = nil
-                    lastSuccessfulOutput = execution.stdout
-                    lastUpdatedAt = now()
-                    let structuredText = DiagnosticPreviewFormatter.preview(
-                        structured.text ?? "",
-                        limits: .menuValue
-                    ).text
-                    lastSuccessfulTitle = applyFormat(currentConfig.format, output: structuredText)
-                    await replaceActions(structured.actions ?? currentConfig.actions, config: currentConfig)
-                    scheduleStalePresentation()
-                } catch let error as StructuredOutputParseError {
-                    structuredOutputDiagnostic = error.description
-                    if currentConfig.onError == .replace {
-                        lastStructuredOutput = nil
-                        lastSuccessfulOutput = nil
-                        lastUpdatedAt = nil
-                        lastSuccessfulTitle = nil
-                        await replaceActions(currentConfig.actions, config: currentConfig)
-                        stalePresentationTask?.cancel()
-                        stalePresentationTask = nil
-                    }
-                } catch {
-                    structuredOutputDiagnostic = "structured output could not be decoded: \(error)"
-                }
-            } else {
-                lastStructuredOutput = nil
-                structuredOutputDiagnostic = nil
-                actions = currentConfig.actions
-                lastSuccessfulOutput = execution.stdout
-                lastUpdatedAt = now()
-                lastSuccessfulTitle = applyFormat(
-                    currentConfig.format,
-                    output: lastTrimmedLine(of: execution.stdout)
-                )
-                scheduleStalePresentation()
-            }
-        } else if currentConfig.onError == .replace {
-            lastStructuredOutput = nil
-            structuredOutputDiagnostic = nil
-            await replaceActions(currentConfig.actions, config: currentConfig)
-            lastSuccessfulOutput = nil
-            lastUpdatedAt = nil
-            lastSuccessfulTitle = nil
-            stalePresentationTask?.cancel()
-            stalePresentationTask = nil
+            lastSuccessfulTitle = applyFormat(
+                commandConfig.format,
+                output: lastTrimmedLine(of: execution.stdout)
+            )
         }
-        let runnerSnapshot = await runner.snapshot()
+        let runnerSnapshot = await primarySource.runnerSnapshot()
         guard isActive, generation == configurationGeneration else { return }
         let snapshot = makeRuntimeSnapshot(runnerSnapshot)
         renderPresentation(snapshot)
-        sendNotificationIfNeeded(snapshot)
-    }
-
-    private func sendNotificationIfNeeded(_ snapshot: ItemRuntimeSnapshot) {
-        let isFailure = snapshot.outputDiagnostic != nil
-            || snapshot.lastExecution?.terminalReason != .exited(code: 0)
-        let policy = ItemNotificationConfig(
-            events: commandConfig.notifyOn,
-            cooldown: commandConfig.notifyCooldown
-        )
-        guard let event = notificationTracker.record(isFailure: isFailure, at: now(), policy: policy) else {
-            return
-        }
-
-        let body: String
-        switch event {
-        case .failure:
-            let detail = snapshot.errorSummary.map {
-                DiagnosticPreviewFormatter.preview($0, limits: .menuStderr).text
-            } ?? "command failed"
-            body = "Failure: \(detail)"
-        case .recovery:
-            body = "Recovered successfully"
-        }
-        notificationSink.send(ItemNotification(event: event, itemName: commandConfig.name, body: body))
     }
 
     private func requestPresentationUpdate() {
@@ -628,57 +664,25 @@ final class ManagedItem: ManagedItemLifecycle {
     }
 
     private func updatePresentation() async {
-        let runnerSnapshot = await runner.snapshot()
+        let runnerSnapshot = await primarySource.runnerSnapshot()
         guard isActive else { return }
         let snapshot = makeRuntimeSnapshot(runnerSnapshot)
         renderPresentation(snapshot)
-    }
-
-    private func scheduleStalePresentation() {
-        stalePresentationTask?.cancel()
-        stalePresentationTask = nil
-        guard let staleAfter = commandConfig.staleAfter, let lastUpdatedAt else { return }
-        let generation = configurationGeneration
-        let remaining = lastUpdatedAt.addingTimeInterval(staleAfter).timeIntervalSince(now())
-        guard remaining > 0 else {
-            requestPresentationUpdate()
-            return
-        }
-        let nanoseconds = stalePresentationNanoseconds(for: remaining)
-        stalePresentationTask = Task { @MainActor [weak self] in
-            do {
-                try await Task.sleep(nanoseconds: nanoseconds)
-            } catch {
-                return
-            }
-            guard let self, self.isActive, self.configurationGeneration == generation else { return }
-            await self.updatePresentation()
-        }
-    }
-
-    private func stalePresentationNanoseconds(for remaining: TimeInterval) -> UInt64 {
-        let value = remaining * 1_000_000_000
-        guard value.isFinite, value < Double(UInt64.max) else { return .max }
-        return UInt64(max(1, value))
     }
 
     private func renderPresentation(_ snapshot: ItemRuntimeSnapshot) {
         let baseTitle: String
         switch snapshot.status {
         case .fresh, .stale:
-            baseTitle = lastSuccessfulTitle ?? commandConfig.errorText
+            baseTitle = lastSuccessfulTitle ?? "–"
         case .warning:
-            baseTitle = lastSuccessfulTitle ?? commandConfig.errorText
+            baseTitle = lastSuccessfulTitle ?? "–"
         case .error:
-            let isGenuineFailure = snapshot.outputDiagnostic != nil
-                || snapshot.lastExecution?.terminalReason != .exited(code: 0)
-            baseTitle = (!isGenuineFailure || commandConfig.onError == .keepLast)
-                ? (lastSuccessfulTitle ?? commandConfig.errorText)
-                : commandConfig.errorText
+            baseTitle = lastSuccessfulTitle ?? "–"
         case .running:
             baseTitle = lastSuccessfulTitle ?? renderedTitle
         case .unavailable:
-            baseTitle = commandConfig.errorText
+            baseTitle = "–"
         }
 
         let marker: String
@@ -690,34 +694,9 @@ final class ManagedItem: ManagedItemLifecycle {
         case .running, .fresh:
             marker = ""
         }
-        setTitle(truncateTitle(baseTitle, maxLength: commandConfig.maxLength) + marker)
-        applyIcon(source: snapshot.structuredOutput?.iconSource ?? commandConfig.iconSource)
-        setVisibility(
-            computeVisibility(
-                lastExecution: snapshot.lastExecution,
-                fullOutput: snapshot.fullOutput,
-                hidden: snapshot.structuredOutput?.hidden
-            )
-        )
-    }
-
-    /// `hide_when_empty` and `hide_on_error` only take effect after a completed
-    /// attempt (`lastExecution` becomes non-nil), so an item never disappears before
-    /// its first result lands. `disabled` overrides both policies to keep a disabled
-    /// item visible and inspectable via its diagnostics menu unless the
-    /// persistent `hidden` policy is also enabled.
-    private func computeVisibility(lastExecution: CommandExecution?, fullOutput: String?, hidden: Bool? = nil) -> Bool {
-        guard !commandConfig.hidden else { return false }
-        guard !commandConfig.disabled else { return true }
-        guard let lastExecution else { return true }
-        if lastExecution.terminalReason != .exited(code: 0) {
-            return !commandConfig.hideOnError
-        }
-        if let hidden { return !hidden }
-        if commandConfig.hideWhenEmpty {
-            return !lastTrimmedLine(of: fullOutput ?? "").isEmpty
-        }
-        return true
+        setTitle(truncateTitle(baseTitle, maxLength: 60) + marker)
+        applyIcon(source: commandConfig.iconSource)
+        setVisibility(true)
     }
 
     private func makeRuntimeSnapshot(_ runnerSnapshot: CommandRunnerSnapshot) -> ItemRuntimeSnapshot {
@@ -727,89 +706,95 @@ final class ManagedItem: ManagedItemLifecycle {
             lastAttemptedAt: lastAttemptedAt,
             lastUpdatedAt: lastUpdatedAt,
             lastExecution: runnerSnapshot.lastExecution,
-            staleAfter: commandConfig.staleAfter,
+            staleAfter: nil,
             skippedRefreshes: runnerSnapshot.skippedRefreshes,
-            now: now(),
-            structuredOutput: lastStructuredOutput,
-            outputDiagnostic: structuredOutputDiagnostic
+            now: now()
         )
     }
 
-    private func replaceActions(_ newActions: [ItemAction], config: CommandItemConfig) async {
-        guard actions != newActions else { return }
-        for task in pendingActionPermitTasks.values {
-            task.cancel()
-        }
-        let runners = Array(actionRunners.values)
-        await withTaskGroup(of: Void.self) { group in
-            for runner in runners {
-                group.addTask { await runner.cancelActive() }
-            }
-        }
-        actions = newActions
-        actionRunners = Self.makeActionRunners(for: newActions, config: config)
-    }
-
     func runtimeSnapshot() async -> ItemRuntimeSnapshot {
-        let runnerSnapshot = await runner.snapshot()
+        let runnerSnapshot = await primarySource.runnerSnapshot()
         let snapshot = makeRuntimeSnapshot(runnerSnapshot)
         renderPresentation(snapshot)
         return snapshot
     }
 
     func runnerSnapshot() async -> CommandRunnerSnapshot {
-        await runner.snapshot()
+        await primarySource.runnerSnapshot()
     }
 
-    func actionSnapshot(at index: Int) async -> CommandRunnerSnapshot? {
-        guard actions.indices.contains(index),
-            case .command = actions[index].kind,
-            let actionRunner = actionRunners[index]
+    func menuRowValue(at index: Int) -> String? {
+        guard menuRows.indices.contains(index) else { return nil }
+        requestMenuRowRefreshIfNeeded(at: index)
+        return menuRows[index].value ?? menuRowCachedValues[index]
+    }
+
+    var menuRowRefreshTaskCountForTesting: Int { menuRowRefreshTasks.count }
+
+    private func requestMenuRowRefreshIfNeeded(at index: Int) {
+        guard menuRows[index].run != nil,
+              menuRowRefreshTasks[index] == nil
+        else { return }
+        let now = now()
+        if menuRowCachedValues[index] == nil {
+            guard menuRowLastAttemptedAt[index] == nil
+                || menuRows[index].cache.map({ now.timeIntervalSince(menuRowLastAttemptedAt[index]!) >= $0 }) == true
+            else { return }
+            requestMenuRowRefresh(at: index)
+            return
+        }
+        guard let cache = menuRows[index].cache,
+              let lastSuccessfulAt = menuRowLastSuccessfulAt[index],
+              now.timeIntervalSince(lastSuccessfulAt) >= cache
+        else { return }
+        requestMenuRowRefresh(at: index)
+    }
+
+    func menuRowSnapshot(at index: Int) async -> CommandRunnerSnapshot? {
+        guard menuRows.indices.contains(index),
+            menuRows[index].action != nil,
+            let menuRowRunner = menuRowRunners[index]
         else {
             return nil
         }
-        return await actionRunner.snapshot()
+        return await menuRowRunner.snapshot()
+    }
+
+    func invokeMenuRow(at index: Int) {
+        guard isActive, !isPreparingUpdate, !isPreparingRemoval,
+            menuRows.indices.contains(index),
+            menuRows[index].action != nil,
+            let menuRowRunner = menuRowRunners[index]
+        else {
+            return
+        }
+        guard pendingActionPermitTasks[index] == nil else {
+            recordCoalesced()
+            return
+        }
+        pendingActionInvocations += 1
+        pendingActionPermitTasks[index] = Task { @MainActor [self] in
+            do {
+                try await scheduler.acquirePermit()
+            } catch {
+                pendingActionPermitTasks[index] = nil
+                finishActionInvocation()
+                return
+            }
+            pendingActionPermitTasks[index] = nil
+            await invokeGuarded(
+                runner: menuRowRunner,
+                testGate: actionInvocationTestGate,
+                currentRunner: { $0.menuRowRunners[index] }
+            )
+            await scheduler.releasePermit()
+            finishActionInvocation()
+        }
     }
 
     /// Test-only visibility into the accept/start bookkeeping used to gate
     /// updates, removal, and shutdown on outstanding interaction-triggered work.
     var pendingActionInvocationCountForTesting: Int { pendingActionInvocations }
-
-    func invokeAction(at index: Int) {
-        guard isActive, !isPreparingUpdate, !isPreparingRemoval, !commandConfig.disabled,
-            actions.indices.contains(index)
-        else {
-            return
-        }
-        switch actions[index].kind {
-        case .refresh:
-            refreshNow()
-        case .command:
-            guard let actionRunner = actionRunners[index] else { return }
-            guard pendingActionPermitTasks[index] == nil else {
-                recordCoalesced()
-                return
-            }
-            pendingActionInvocations += 1
-            pendingActionPermitTasks[index] = Task { @MainActor [self] in
-                do {
-                    try await scheduler.acquirePermit()
-                } catch {
-                    pendingActionPermitTasks[index] = nil
-                    finishActionInvocation()
-                    return
-                }
-                pendingActionPermitTasks[index] = nil
-                await invokeGuarded(
-                    runner: actionRunner,
-                    testGate: actionInvocationTestGate,
-                    currentRunner: { $0.actionRunners[index] }
-                )
-                await scheduler.releasePermit()
-                finishActionInvocation()
-            }
-        }
-    }
 
     /// Shared "accept now, re-validate immediately before starting" contract for
     /// interaction-triggered declarative command actions. A runner
@@ -838,8 +823,7 @@ final class ManagedItem: ManagedItemLifecycle {
     }
 
     /// Both left- and right-click reveal the lifecycle menu, matching how
-    /// other menu bar items behave (and `ManagedGroupItem`). The menu stays
-    /// reachable even for a `disabled` item, which remains inspectable.
+    /// other menu bar items behave.
     @objc private func handleClick() {
         guard isActive, !isPreparingUpdate, !isPreparingRemoval else { return }
         guard let statusItem else { return }
@@ -867,20 +851,16 @@ final class ManagedItem: ManagedItemLifecycle {
         continuation.resume()
     }
 
-    private static func makeActionRunners(
-        for actions: [ItemAction],
+    private static func makeMenuRowRunners(
+        for rows: [MenuRowConfig],
         config: CommandItemConfig
     ) -> [Int: CommandRunner] {
         var runners: [Int: CommandRunner] = [:]
-        for (index, action) in actions.enumerated() {
-            guard case .command(let command) = action.kind else { continue }
+        for (index, row) in rows.enumerated() {
+            guard let command = row.action else { continue }
             runners[index] = CommandRunner(
                 command: command,
-                timeout: config.timeout,
-                maxOutputBytes: config.maxOutputBytes,
-                shell: config.shell,
-                workingDirectory: config.workingDirectory,
-                environment: config.environment
+                timeout: config.timeout
             )
         }
         return runners
@@ -891,17 +871,9 @@ final class ManagedItem: ManagedItemLifecycle {
         applyDisplayedTitle()
     }
 
-    /// `icon_only` clears the status-bar button's text once an icon has actually
-    /// loaded, so a missing/unreadable file or an unavailable SF Symbol quietly
-    /// falls back to showing the text title instead of leaving the item blank.
-    /// title instead of leaving the item blank. `renderedTitle` itself (already
-    /// `max_length`-truncated and marker-suffixed) is unaffected either way; only
-    /// the button-facing `renderedButtonTitle` is blanked. The diagnostics
-    /// menu reads the untruncated full output separately, not this title.
     private func applyDisplayedTitle() {
-        let displayed = (commandConfig.iconOnly && iconIsLoaded) ? "" : renderedTitle
-        renderedButtonTitle = displayed
-        statusItem?.button?.title = displayed
+        renderedButtonTitle = renderedTitle
+        statusItem?.button?.title = renderedTitle
     }
 
     private func setVisibility(_ visible: Bool) {

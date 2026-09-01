@@ -9,7 +9,6 @@ private final class CollapseFakeItem: ManagedItemLifecycle {
     private var runtimeSnapshotStartWaiter: CheckedContinuation<Void, Never>?
     private var runtimeSnapshotRelease: CheckedContinuation<Void, Never>?
     private(set) var config: ItemConfig
-    let isTopLevel: Bool
     private(set) var isVisible: Bool
     private(set) var statusItemVisible = false
     var blocksRuntimeSnapshot = false
@@ -19,24 +18,22 @@ private final class CollapseFakeItem: ManagedItemLifecycle {
     var runtimeValue: String?
     private(set) var runtimeSnapshotStarted = false
 
-    init(config: ItemConfig, isTopLevel: Bool) {
+    init(config: ItemConfig) {
         self.config = config
-        self.isTopLevel = isTopLevel
-        self.isVisible = !config.hidden
+        self.isVisible = true
     }
 
-    var actions: [ItemAction] { config.commandConfig?.actions ?? [] }
     var iconDiagnosticNote: String?
 
     func owns(statusItem: NSStatusItem) -> Bool { false }
 
     func activate() {
-        isVisible = !config.hidden
-        statusItemVisible = isTopLevel && isVisible
+        isVisible = true
+        statusItemVisible = isVisible
     }
 
     func setStatusItemVisible(_ visible: Bool) {
-        statusItemVisible = visible && isTopLevel && isVisible
+        statusItemVisible = visible && isVisible
     }
 
     func prepareUpdate(config: ItemConfig, deadline: ContinuousClock.Instant) async {
@@ -46,7 +43,7 @@ private final class CollapseFakeItem: ManagedItemLifecycle {
     func commitPreparedUpdate() {
         config = pendingConfig!
         pendingConfig = nil
-        isVisible = !config.hidden
+        isVisible = true
     }
 
     func prepareRemoval(deadline: ContinuousClock.Instant) async {}
@@ -91,8 +88,8 @@ private final class CollapseFakeItem: ManagedItemLifecycle {
         runtimeSnapshotRelease = nil
     }
 
-    func actionSnapshot(at index: Int) async -> CommandRunnerSnapshot? { nil }
-    func invokeAction(at index: Int) {}
+    func menuRowSnapshot(at index: Int) async -> CommandRunnerSnapshot? { nil }
+    func invokeMenuRow(at index: Int) {}
     func refreshNow() {}
 }
 
@@ -103,10 +100,9 @@ private final class CollapseFakeFactory: ManagedItemFactory {
     func make(
         config: ItemConfig,
         menuDelegate: StatusItemMenuDelegate,
-        initiallyVisible: Bool,
-        isTopLevel: Bool
+        initiallyVisible: Bool
     ) -> any ManagedItemLifecycle {
-        let item = CollapseFakeItem(config: config, isTopLevel: isTopLevel)
+        let item = CollapseFakeItem(config: config)
         created.append(item)
         return item
     }
@@ -135,12 +131,8 @@ private final class CollapseFakeStatusItemHost: StatusItemHost {
 
 @MainActor
 final class CollapseMenuTests: XCTestCase {
-    private func command(_ name: String, hidden: Bool = false) -> ItemConfig {
-        ItemConfig(name: name, run: "echo \(name)", interval: .manual, hidden: hidden)
-    }
-
-    private func group(_ name: String, title: String, members: [String]) -> ItemConfig {
-        .group(GroupItemConfig(name: name, title: title, members: members))
+    private func command(_ name: String) -> ItemConfig {
+        ItemConfig(name: name, run: "echo \(name)", interval: .manual)
     }
 
     private func makeController(
@@ -174,7 +166,7 @@ final class CollapseMenuTests: XCTestCase {
         XCTAssertTrue(factory.created.allSatisfy { !$0.statusItemVisible })
     }
 
-    func testCollapsedRootUsesTopLevelRowsWithOriginalNestedMenus() async throws {
+    func testCollapsedRootUsesTopLevelRowsInDeclarationOrder() async throws {
         let factory = CollapseFakeFactory()
         let host = CollapseFakeStatusItemHost()
         let controller = makeController(factory: factory, host: host)
@@ -183,33 +175,24 @@ final class CollapseMenuTests: XCTestCase {
         await controller.apply(config: PinchosConfig(items: [
             command("alpha"),
             command("beta"),
-            group("team", title: "Team", members: ["alpha", "beta"]),
             command("standalone")
         ]))
-        let menu = await controller.makeLifecycleMenu(forManagedItem: try createdItem("standalone", in: factory))
+        let menu = await controller.makeLifecycleMenu(forManagedItem: try createdItem("alpha", in: factory))
         let collapse = try XCTUnwrap(menu.items.first(where: { $0.title == "Collapse Pinchos" }))
         XCTAssertTrue(NSApplication.shared.sendAction(collapse.action!, to: collapse.target, from: collapse))
 
         let collapsed = await controller.makeCollapsedMenu()
         let firstLevelTitles = collapsed.items.filter { !$0.isSeparatorItem }.map(\.title)
-        XCTAssertEqual(firstLevelTitles.prefix(2), ["Team", "–"])
-        XCTAssertFalse(firstLevelTitles.contains("alpha"))
-        XCTAssertFalse(firstLevelTitles.contains("beta"))
-
-        let team = try XCTUnwrap(collapsed.items.first(where: { $0.title == "Team" }))
-        let nested = try XCTUnwrap(team.submenu)
-        let alphaMember = try XCTUnwrap(nested.items.first(where: { $0.title == "alpha: –" }))
-        let betaMember = try XCTUnwrap(nested.items.first(where: { $0.title == "beta: –" }))
-        XCTAssertNotNil(alphaMember.submenu)
-        XCTAssertNotNil(betaMember.submenu)
+        let schedulerTitle = "Scheduler: 0/\(CommandScheduler.defaultMaxActiveSessions) active"
+        XCTAssertEqual(firstLevelTitles, ["–", "–", "–", schedulerTitle, "Expand Pinchos", "Open Config", "Reload Config", "Quit Pinchos"])
 
         let standalone = try XCTUnwrap(collapsed.items.first(where: { $0.title == "–" && $0.submenu != nil }))
         let standaloneMenu = try XCTUnwrap(standalone.submenu)
         XCTAssertNotNil(standaloneMenu.items.first(where: { $0.title == "Refresh Now" }))
 
-        // Collapsed submenus (top-level or group-nested) carry no global
+        // Collapsed submenus carry no global
         // footer; it appears exactly once, at the collapsed tray's top level.
-        for submenu in [standaloneMenu, try XCTUnwrap(alphaMember.submenu)] {
+        for submenu in [standaloneMenu] {
             XCTAssertNil(submenu.items.first(where: { $0.title == "Collapse Pinchos" || $0.title == "Expand Pinchos" }))
             XCTAssertNil(submenu.items.first(where: { $0.title == "Open Config" }))
             XCTAssertNil(submenu.items.first(where: { $0.title == "Reload Config" }))
@@ -266,36 +249,15 @@ final class CollapseMenuTests: XCTestCase {
         XCTAssertNotNil(row.image, "the collapsed row should show the item's menu-bar icon alongside its value")
     }
 
-    func testGroupMemberMenuCanCollapseTheWholeBar() async throws {
-        let factory = CollapseFakeFactory()
-        let host = CollapseFakeStatusItemHost()
-        let controller = makeController(factory: factory, host: host)
-        addTeardownBlock { @MainActor in await controller.shutdown() }
-
-        await controller.apply(config: PinchosConfig(items: [
-            command("alpha"),
-            group("team", title: "Team", members: ["alpha"])
-        ]))
-
-        let groupItem = try XCTUnwrap(factory.created.first(where: { $0.config.name == "team" }))
-        let groupMenu = await controller.makeLifecycleMenu(forManagedItem: groupItem)
-        let memberMenu = try XCTUnwrap(groupMenu.items.first(where: { $0.title == "alpha: –" })?.submenu)
-        let collapse = try XCTUnwrap(memberMenu.items.first(where: { $0.title == "Collapse Pinchos" }))
-
-        XCTAssertTrue(NSApplication.shared.sendAction(collapse.action!, to: collapse.target, from: collapse))
-        XCTAssertEqual(host.created, 1)
-        XCTAssertTrue(factory.created.allSatisfy { !$0.statusItemVisible })
-    }
-
     func testExpandRestoresTopLevelVisibilityAndRemovesCollapsedIcon() async throws {
         let factory = CollapseFakeFactory()
         let host = CollapseFakeStatusItemHost()
         let controller = makeController(factory: factory, host: host)
         addTeardownBlock { @MainActor in await controller.shutdown() }
 
-        await controller.apply(config: PinchosConfig(items: [command("alpha"), command("hidden", hidden: true)]))
+        await controller.apply(config: PinchosConfig(items: [command("alpha"), command("beta")]))
         let visibleItem = try createdItem("alpha", in: factory)
-        let hiddenItem = try createdItem("hidden", in: factory)
+        let secondItem = try createdItem("beta", in: factory)
         let menu = await controller.makeLifecycleMenu(forManagedItem: visibleItem)
         let collapse = try XCTUnwrap(menu.items.first(where: { $0.title == "Collapse Pinchos" }))
         XCTAssertTrue(NSApplication.shared.sendAction(collapse.action!, to: collapse.target, from: collapse))
@@ -307,7 +269,7 @@ final class CollapseMenuTests: XCTestCase {
         XCTAssertEqual(host.created, 1)
         XCTAssertEqual(host.removed, 1)
         XCTAssertTrue(visibleItem.statusItemVisible)
-        XCTAssertFalse(hiddenItem.statusItemVisible)
+        XCTAssertTrue(secondItem.statusItemVisible)
     }
 
     func testRecoveryWarningReappearsAfterExpanding() async throws {
@@ -330,6 +292,23 @@ final class CollapseMenuTests: XCTestCase {
 
         XCTAssertEqual(host.created, 2)
         XCTAssertTrue(factory.created[0].statusItemVisible)
+    }
+
+    func testCollapsedMenuKeepsRecoveryActionsReachable() async throws {
+        let factory = CollapseFakeFactory()
+        let host = CollapseFakeStatusItemHost()
+        let controller = makeController(factory: factory, host: host)
+        addTeardownBlock { @MainActor in await controller.shutdown() }
+
+        await controller.apply(config: PinchosConfig(items: []))
+        await controller.showParseError("parse failed")
+
+        let collapsed = await controller.makeCollapsedMenu()
+        let recovery = try XCTUnwrap(collapsed.items.first(where: { $0.title.contains("pinchos") }))
+        let recoveryMenu = try XCTUnwrap(recovery.submenu)
+        XCTAssertNotNil(recoveryMenu.items.first(where: { $0.title == "Open Config" }))
+        XCTAssertNotNil(recoveryMenu.items.first(where: { $0.title == "Reload" }))
+        XCTAssertNotNil(recoveryMenu.items.first(where: { $0.title == "Quit" }))
     }
 
     func testCollapsedMenuDoesNotPresentAfterIconIsRemovedWhileBuilding() async throws {

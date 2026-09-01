@@ -8,14 +8,8 @@
 #   report no matching line, see limitations) and reflects whatever
 #   `pmset -g batt` reports at the moment the command runs.
 # Limitations: on a Mac with no battery (e.g. a desktop, or a VM), the
-#   `grep` finds nothing, `run` exits 1, and the item shows `error_text`
-#   with the default `on_error = "replace"`. `on_error = "keep_last"` is
-#   used below so a transient read failure keeps showing the last known
-#   percentage instead of flashing the error indicator every tick.
-#   This recipe uses a shell pipeline (`|`), so `pinchos doctor` reports
-#   that it "could not identify a single command to check safely" for
-#   this item's `run` line — that is expected, not a bug; `doctor` still
-#   checks the configured shell, working directory, and icon.
+#   `grep` finds nothing and `run` exits 1. This recipe uses a shell pipeline
+#   (`|`), so review the command before installing it.
 #
 # Copy this file's [item.*] table(s) into your pinchos.toml, then:
 #   .build/release/pinchos validate
@@ -23,9 +17,7 @@
 #   .build/release/pinchos run battery
 
 [item.battery]
-type = "command"
+
 run = "pmset -g batt | grep -Eo '[0-9]+%' | head -1"
 interval = "1m"
 format = "🔋 {output}"
-on_error = "keep_last"
-stale_after = "15m"

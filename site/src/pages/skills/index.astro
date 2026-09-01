@@ -14,7 +14,7 @@ import '../../styles/docs.css';
         <span>standalone Agent Skill</span>
       </div>
       <h1 class="serif-heading">Change your config with a second set of eyes.</h1>
-      <p class="body-copy">The <code>customize-pinchos</code> skill helps an AI agent add and review Pinchos items, groups, actions, triggers, and structured output. It pairs the current schema with a cautious workflow for commands that can run with your user permissions.</p>
+      <p class="body-copy">The <code>customize-pinchos</code> skill helps an AI agent add and review canonical Pinchos items and ordered menu rows. It pairs the current schema with a cautious workflow for commands that can run with your user permissions.</p>
     </header>
 
     <section class="docs-section" aria-labelledby="install-heading">
@@ -62,20 +62,20 @@ import '../../styles/docs.css';
         <li>After approval, promote only the reviewed diff if the live file is unchanged, then repeat the checks against the live path.</li>
         <li>Save the file and confirm the running app reloads the intended path.</li>
       </ol>
-      <p class="docs-note">The skill reference covers the current item, group, action, scheduler, and structured-output fields. It also explains declaration order, hidden members, error policies, output bounds, event triggers, and how relative paths, including <code>shell[0]</code>, behave in a staging root.</p>
+      <p class="docs-note">The skill reference covers the seven supported item keys, ordered menu rows, cache behavior, and the read-only configuration boundary.</p>
     </section>
 
     <section class="docs-section" aria-labelledby="safety-heading">
       <h2 id="safety-heading" class="serif-heading">4 · Review commands before you add them</h2>
       <div class="note-callout">
         <div class="overline overline--terracotta">command boundary</div>
-        <p>Pinchos runs <code>run</code>, <code>click</code>, and action commands with your permissions. Those commands are not sandboxed. <code>validate</code> and <code>doctor</code> do not approve command intent.</p>
+        <p>Pinchos runs <code>run</code>, row actions, and dynamic menu commands with your permissions. Those commands are not sandboxed. <code>validate</code> and <code>doctor</code> do not approve command intent.</p>
       </div>
       <ul class="olive-list">
         <li>Ask for authorization before a command changes state, uses credentials, sends data, contacts a private service, or invokes a privileged tool.</li>
         <li>Keep secrets out of TOML and use an existing login, keychain, or environment mechanism.</li>
         <li>Reject <code>curl | sh</code>, remote script execution, <code>eval</code>, <code>sudo</code>, destructive commands, and broad file globs.</li>
-        <li>Set Pinchos <code>timeout</code> and a small <code>max_output</code> value for commands that contact a network or may produce unbounded output.</li>
+        <li>Set a practical Pinchos <code>timeout</code> for commands that contact a network or may take longer than a menu refresh should.</li>
       </ul>
     </section>
 
@@ -86,7 +86,7 @@ import '../../styles/docs.css';
         <article class="component-card raised-card">
           <div class="overline">inside the repository</div>
           <p><a href="https://github.com/douglasjarquin/pinchos/blob/main/skills/customize-pinchos/SKILL.md">Read the skill entrypoint</a> for its scope and workflow.</p>
-          <p><a href="https://github.com/douglasjarquin/pinchos/blob/main/skills/customize-pinchos/references/configuration.md">Read the configuration reference</a> for the full v1 schema and safety rules.</p>
+          <p><a href="https://github.com/douglasjarquin/pinchos/blob/main/skills/customize-pinchos/references/configuration.md">Read the configuration reference</a> for the full 0.1 schema and safety rules.</p>
         </article>
         <article class="component-card raised-card">
           <div class="overline">when the skill is missing</div>

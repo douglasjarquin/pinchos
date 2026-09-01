@@ -11,15 +11,15 @@ import XCTest
 // already proves the shared `OutputMemoryBudget` bounds many runners
 // together. This file adds one thing neither covers: an end-to-end,
 // timing-independent proof (via `head -c`, not `yes`, so there is no
-// process-scheduling race) that a real `run`+`max_output` configuration
-// retains *exactly* its configured budget and *exactly* the tail of the
-// stream -- not just "some amount less than or equal to it" -- through the
-// same `CommandRunner` path `ManagedItem` uses in production.
+// process-scheduling race) that a real `CommandRunner` retains *exactly* its
+// explicit per-runner budget and *exactly* the tail of the stream -- not just
+// "some amount less than or equal to it" -- through the same path `ManagedItem`
+// uses in production.
 //
 // See docs/performance.md for the full profile catalogue and the wall-clock/
 // RSS budgets enforced separately on a reference machine.
 final class PerformanceInvariantTests: XCTestCase {
-    func testRetainedStdoutIsExactlyBoundedToTheConfiguredByteBudgetAndKeepsTheTail() async throws {
+    func testRetainedStdoutIsExactlyBoundedToTheRunnerByteBudgetAndKeepsTheTail() async throws {
         let headBytes = 7936
         let tailBytes = 256
         let command = "head -c \(headBytes) /dev/zero | tr '\\0' 'B'; head -c \(tailBytes) /dev/zero | tr '\\0' 'C'"
@@ -37,7 +37,7 @@ final class PerformanceInvariantTests: XCTestCase {
         )
         XCTAssertEqual(
             execution.stdout.utf8.count, tailBytes,
-            "retained stdout must be capped at exactly the configured byte budget, not merely bounded above it"
+            "retained stdout must be capped at exactly the runner byte budget, not merely bounded above it"
         )
         XCTAssertEqual(
             execution.stdout, String(repeating: "C", count: tailBytes),

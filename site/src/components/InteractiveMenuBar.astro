@@ -1,232 +1,36 @@
 ---
 import sampleConfig from '../../../example/pinchos.toml?raw';
-import Mark from './Mark.astro';
 import '../styles/interactive-menu-bar.css';
 
-const configValue = (itemName: string, key: string) => {
-  const section = sampleConfig.match(
-    new RegExp(`\\[item\\.${itemName}\\]([\\s\\S]*?)(?=\\n\\[item\\.|$)`),
-  )?.[1] ?? '';
+interface Props {
+  compact?: boolean;
+}
 
-  return section.match(new RegExp(`^${key} = "([^"]*)"`, 'm'))?.[1] ?? '';
-};
-
-const configBoolean = (itemName: string, key: string) => {
-  const section = sampleConfig.match(
-    new RegExp(`\\[item\\.${itemName}\\]([\\s\\S]*?)(?=\\n\\[item\\.|$)`),
-  )?.[1] ?? '';
-
-  return section.match(new RegExp(`^${key} = (true|false)\\s*(?:#.*)?$`, 'm'))?.[1] === 'true';
-};
-
-type ConfiguredAction = { title: string; kind: 'run' | 'refresh' };
-
-const configActions = (itemName: string): ConfiguredAction[] => {
-  const actionPattern = new RegExp(
-    `\\[\\[item\\.${itemName}\\.action\\]\\]([\\s\\S]*?)(?=\\n\\[\\[item\\.|\\n\\[item\\.|$)`,
-    'g',
-  );
-
-  return [...sampleConfig.matchAll(actionPattern)].flatMap(([, block]) => {
-    const title = block.match(/^title = "([^"]*)"/m)?.[1];
-    const run = block.match(/^run = "([^"]*)"/m)?.[1];
-    const refresh = /^refresh = true\s*$/m.test(block);
-
-    if (!title) return [];
-    if (run) return [{ title, kind: 'run' }];
-    if (refresh) return [{ title, kind: 'refresh' }];
-    return [];
-  });
-};
-
-const clickTarget = (command: string) => command.replace(/^open /, '');
-const batteryFormat = configValue('battery', 'format');
-const batteryDisplay = batteryFormat.replace('{output}', '94%');
-const claudeClick = configValue('claude', 'click');
-const codexClick = configValue('codex', 'click');
+const { compact = false } = Astro.props;
 ---
 
 <div class="interactive-menu" data-interactive-menu>
   <p class="interactive-menu__description" id="interactive-menu-description">
-    Interactive preview of the sample config. Each item has a default Run action, a fallback Refresh Now action, a config-backed Hide action, and any configured TOML actions. Collapse Pinchos turns the bar into one icon with first-level pinchos and nested original menus. Option-click an item, or press Alt+Enter while it is focused, to reveal diagnostics. Hover never reveals diagnostics. Values are illustrative; no local commands run in the browser.
+    Static preview of the canonical Pinchos 0.1 configuration. Cached menu values are available immediately, actions run only when selected, and opening a menu never starts a command.
   </p>
-
-  <div class="menu-bar" role="group" aria-label="Interactive sample pinchos menu bar" aria-describedby="interactive-menu-description">
-    <button
-      class="menu-bar__collapsed-item"
-      type="button"
-      aria-label="Pinchos menu"
-      aria-haspopup="menu"
-      aria-expanded="false"
-      aria-controls="collapsed-menu-panel"
-      data-collapsed-trigger
-      hidden
-    >
-      <Mark size={16} />
-    </button>
-    <button
-      class="menu-bar__item"
-      id="example-menu-item-claude"
-      type="button"
-      aria-haspopup="menu"
-      aria-expanded="false"
-      aria-controls="example-menu-panel"
-      aria-label="Claude, 82 percent, failed, showing last good value"
-      aria-keyshortcuts="Alt+Enter"
-      data-menu-item="claude"
-      data-item-label="Claude"
-      data-value="82%"
-      data-display-value="82% ⚠︎"
-      data-interval={configValue('claude', 'interval')}
-      data-format={configValue('claude', 'format')}
-      data-click-command={claudeClick}
-      data-click-url={clickTarget(claudeClick)}
-      data-error-policy={configValue('claude', 'on_error')}
-      data-stale-after={configValue('claude', 'stale_after')}
-      data-hidden={String(configBoolean('claude', 'hidden'))}
-      data-initial-state="failed"
-      data-actions={JSON.stringify(configActions('claude'))}
-    >
-      <span>claude</span><span data-item-display>82% ⚠︎</span>
-    </button>
-    <button
-      class="menu-bar__item"
-      id="example-menu-item-codex"
-      type="button"
-      aria-haspopup="menu"
-      aria-expanded="false"
-      aria-controls="example-menu-panel"
-      aria-label="Codex, 68 percent, fresh"
-      aria-keyshortcuts="Alt+Enter"
-      data-menu-item="codex"
-      data-item-label="Codex"
-      data-value="68%"
-      data-display-value="68%"
-      data-interval={configValue('codex', 'interval')}
-      data-format={configValue('codex', 'format')}
-      data-click-command={codexClick}
-      data-click-url={clickTarget(codexClick)}
-      data-error-policy={configValue('codex', 'on_error')}
-      data-stale-after={configValue('codex', 'stale_after')}
-      data-hidden={String(configBoolean('codex', 'hidden'))}
-      data-actions={JSON.stringify(configActions('codex'))}
-    >
-      <span>codex</span><span data-item-display>68%</span>
-    </button>
-    <button
-      class="menu-bar__item"
-      id="example-menu-item-clock"
-      type="button"
-      aria-haspopup="menu"
-      aria-expanded="false"
-      aria-controls="example-menu-panel"
-      aria-label="Clock, 14 colon 32, fresh"
-      aria-keyshortcuts="Alt+Enter"
-      data-menu-item="clock"
-      data-item-label="Clock"
-      data-value="14:32"
-      data-display-value="14:32"
-      data-interval={configValue('clock', 'interval')}
-      data-format={configValue('clock', 'format')}
-      data-click-command={configValue('clock', 'click')}
-      data-click-url={clickTarget(configValue('clock', 'click'))}
-      data-error-policy={configValue('clock', 'on_error')}
-      data-stale-after={configValue('clock', 'stale_after')}
-      data-hidden={String(configBoolean('clock', 'hidden'))}
-      data-actions={JSON.stringify(configActions('clock'))}
-    >
-      <span>14:32</span>
-    </button>
-    <button
-      class="menu-bar__item"
-      id="example-menu-item-battery"
-      type="button"
-      aria-haspopup="menu"
-      aria-expanded="false"
-      aria-controls="example-menu-panel"
-      aria-label="Battery, 94 percent, fresh"
-      aria-keyshortcuts="Alt+Enter"
-      data-menu-item="battery"
-      data-item-label="Battery"
-      data-value={batteryDisplay}
-      data-display-value={batteryDisplay}
-      data-interval={configValue('battery', 'interval')}
-      data-format={batteryFormat}
-      data-click-command={configValue('battery', 'click')}
-      data-click-url={clickTarget(configValue('battery', 'click'))}
-      data-error-policy={configValue('battery', 'on_error')}
-      data-stale-after={configValue('battery', 'stale_after')}
-      data-hidden={String(configBoolean('battery', 'hidden'))}
-      data-actions={JSON.stringify(configActions('battery'))}
-    >
-      <span>{batteryDisplay}</span>
-    </button>
-    <a class="menu-bar__empty" href="#sample-pinchos-config" data-menu-empty hidden>
-      all sample items hidden · set hidden = false in See config to restore
-    </a>
-  </div>
-
-  <div class="interactive-menu__surface" data-menu-surface>
-    <div
-      class="collapsed-menu"
-      id="collapsed-menu-panel"
-      role="menu"
-      aria-label="Collapsed Pinchos menu"
-      hidden
-      data-collapsed-panel
-    >
-      <div class="collapsed-menu__items" role="none" data-collapsed-items></div>
-      <p class="collapsed-menu__empty" role="none" data-collapsed-empty hidden>No visible Pinchos</p>
-      <div class="menu-rule" role="separator" aria-hidden="true"></div>
-      <button class="example-menu__action" type="button" role="menuitem" tabindex="-1" data-expand-action>Expand Pinchos</button>
-    </div>
-
-    <div
-      class="example-menu"
-      id="example-menu-panel"
-      role="menu"
-      aria-label="Claude item submenu"
-      aria-live="polite"
-      hidden
-      data-example-panel
-    >
-      <div class="example-menu__row-set" role="none" data-action-list>
-        <button class="example-menu__action" type="button" role="menuitem" tabindex="-1" data-run-action>Run Claude</button>
-        <div role="none" data-configured-actions></div>
-        <button class="example-menu__action" type="button" role="menuitem" tabindex="-1" data-refresh-action>Refresh Now</button>
-        <a class="example-menu__action" role="menuitem" tabindex="-1" data-click-link target="_blank" rel="noreferrer">
-          <span>Open Claude usage page</span><span aria-hidden="true">↗</span>
-        </a>
-        <span class="example-menu__no-click" role="none" data-no-click hidden>no click action configured</span>
+  <details class="menu-disclosure">
+    <summary class="menu-bar" aria-label="Open the Codex menu">
+      <span>codex</span>
+      <span>68%</span>
+    </summary>
+    {!compact && <div class="example-menu" role="group" aria-label="Codex submenu">
+      <div class="example-menu__row-set" role="none">
+        <div class="example-menu__row">Usage: 68% <span class="example-menu__kind">cached</span></div>
+        <div class="example-menu__row">Pace: ahead <span class="example-menu__kind">cached</span></div>
+        <a class="example-menu__action" href="https://chatgpt.com/codex">Refresh: 68% <span class="example-menu__kind">run + action</span></a>
+        <a class="example-menu__action" href="https://chatgpt.com/codex">Open Codex <span class="example-menu__kind">action</span></a>
       </div>
       <div class="menu-rule" role="separator" aria-hidden="true"></div>
-      <p class="example-menu__summary" role="none" data-summary>82% · failed · showing last good value</p>
-      <div class="example-menu__failure" role="none" data-failure-details>
-        <p class="example-menu__failure-label">Failed · exit 1 · showing last good value</p>
-        <code class="example-menu__error" data-error-preview>jq: parse error: Invalid numeric literal</code>
-        <button class="example-menu__action" type="button" role="menuitem" tabindex="-1" data-copy-error data-error-text="jq: parse error: Invalid numeric literal">Copy Full Error</button>
-      </div>
-      <p class="example-menu__meta" role="none" data-item-meta>Refresh: every 5m · Format: &#123;output&#125;%</p>
-      <details class="example-menu__diagnostics" role="group" aria-label="Diagnostics" data-diagnostics hidden>
-        <summary class="example-menu__diagnostics-trigger" role="menuitem" tabindex="-1" aria-expanded="false" aria-controls="diagnostics-content">
-          <span>Diagnostics</span><span aria-hidden="true" data-diagnostics-indicator>▸</span>
-        </summary>
-        <div class="example-menu__diagnostics-content" id="diagnostics-content">
-          <p data-diagnostic-item>[item.claude]</p>
-          <p data-diagnostic-refresh>Refresh: every 5m</p>
-          <p data-diagnostic-format>Format: &#123;output&#125;%</p>
-          <p data-diagnostic-click>Click: open https://claude.ai/settings/usage</p>
-          <p data-diagnostic-error>On error: keep_last</p>
-          <p data-diagnostic-stale>Stale after: 15m</p>
-          <p data-diagnostic-hidden>Hidden: no</p>
-        </div>
-      </details>
-      <div class="menu-rule" role="separator" aria-hidden="true"></div>
-      <button class="example-menu__action" type="button" role="menuitem" tabindex="-1" data-hide-action>Hide</button>
-      <button class="example-menu__action" type="button" role="menuitem" tabindex="-1" data-collapse-action>Collapse Pinchos</button>
-      <div role="none"><p class="example-menu__feedback" data-feedback role="status" hidden></p></div>
-    </div>
-  </div>
+      <div class="example-menu__row" role="none">Rows open from cached values; commands run only after activation.</div>
+    </div>}
+  </details>
+  {!compact && <details class="config-disclosure">
+    <summary>See canonical config</summary>
+    <pre tabindex="0"><code>{sampleConfig}</code></pre>
+  </details>}
 </div>
-
-<script src="../scripts/interactive-menu-bar.js"></script>

@@ -2,469 +2,12 @@ import Foundation
 import TOMLKit
 
 public enum ConfigParser {
-    static let supportedItemKeys: Set<String> = [
-        "type",
-        "run",
-        "shell",
-        "working_directory",
-        "env",
-        "interval",
-        "output",
-        "triggers",
-        "watch",
-        "timeout",
-        "max_output",
-        "format",
-        "error_text",
-        "on_error",
-        "stale_after",
-        "action",
-        "info",
-        "icon",
-        "symbol",
-        "max_length",
-        "hide_when_empty",
-        "hide_on_error",
-        "hidden",
-        "icon_only",
-        "disabled",
-        "notify_on",
-        "notify_cooldown"
-    ]
-
-    static let supportedActionKeys: Set<String> = ["title", "run", "refresh"]
-    static let supportedInfoKeys: Set<String> = ["title", "run"]
-    static let supportedRootKeys: Set<String> = ["item", "scheduler", "group"]
-    static let supportedSchedulerKeys: Set<String> = ["max_active_sessions"]
-    static let supportedGroupKeys: Set<String> = ["title", "members", "icon", "symbol", "hidden"]
-
-    /// Which top-level namespace a scanned declaration name belongs to.
-    /// Item and group names share one flat lookup space for membership
-    /// references, but come from two distinct TOML tables (`[item.*]` vs
-    /// `[group.*]`), so the scanner has to remember which table to read
-    /// each discovered name back out of.
-    private enum ItemNamespace: Equatable {
-        case item
-        case group
-    }
-
-    private enum SourceLineKey: Hashable {
-        case rootField(String)
-        case item(String)
-        case section(item: String, path: String)
-        case action(item: String, index: Int)
-        case field(item: String, path: String, actionIndex: Int?)
-    }
-
-    private typealias SourceLineMap = [SourceLineKey: Int]
+    static let supportedItemKeys: Set<String> = ["run", "interval", "timeout", "format", "symbol", "icon", "menu"]
+    static let supportedMenuKeys: Set<String> = ["label", "value", "run", "action", "cache", "separator"]
+    static let supportedRootKeys: Set<String> = ["item"]
 
     public static func parse(_ text: String, relativeTo configURL: URL? = nil) throws -> PinchosConfig {
-        let scan = try scanSource(text)
-        let order = scan.order
-        let sourceLines = scan.lines
-        let namespace = scan.namespace
-
-        let table: TOMLTable
-        do {
-            table = try TOMLTable(string: text)
-        } catch let error as TOMLParseError {
-            throw ConfigParseError(message: error.description, line: error.source.begin.line)
-        }
-
-        try validateUnknownKeys(
-            in: table,
-            allowedKeys: supportedRootKeys,
-            context: "root",
-            lineForKey: { sourceLines[.rootField($0)] }
-        )
-
-        let scheduler = try parseScheduler(table: table, sourceLines: sourceLines)
-
-        let itemNames = order.filter { namespace[$0] == .item }
-        let groupNames = order.filter { namespace[$0] == .group }
-
-        let itemSection = try namedSection(
-            "item",
-            table: table,
-            discoveredNames: itemNames,
-            sourceLines: sourceLines
-        )
-        let groupSection = try namedSection(
-            "group",
-            table: table,
-            discoveredNames: groupNames,
-            sourceLines: sourceLines
-        )
-
-        let items = try order.map { name -> ItemConfig in
-            switch namespace[name] {
-            case .item:
-                let itemTable = try requiredTable(
-                    name: name,
-                    section: itemSection,
-                    sectionKey: "item",
-                    sourceLines: sourceLines
-                )
-                return .command(
-                    try parseItem(
-                        name: name,
-                        table: itemTable,
-                        relativeTo: configURL,
-                        sourceLines: sourceLines
-                    )
-                )
-            case .group:
-                let groupTable = try requiredTable(
-                    name: name,
-                    section: groupSection,
-                    sectionKey: "group",
-                    sourceLines: sourceLines
-                )
-                return .group(
-                    try parseGroup(
-                        name: name,
-                        table: groupTable,
-                        relativeTo: configURL,
-                        sourceLines: sourceLines
-                    )
-                )
-            case nil:
-                throw ConfigParseError(
-                    message: "\(name): expected item was not found in the parsed configuration",
-                    line: sourceLines[.item(name)]
-                )
-            }
-        }
-
-        try validateGroupMembership(items, sourceLines: sourceLines)
-
-        return PinchosConfig(items: items, scheduler: scheduler)
-    }
-
-    /// Fetches the `[<sectionKey>.*]` table (`item` or `group`), when the
-    /// scanner discovered at least one declaration in that namespace, and
-    /// cross-checks the scanned name set against TOMLKit's parsed keys --
-    /// mirroring `crossCheckDiscoveredItems`'s "the parsed tree is
-    /// authoritative for existence" contract for both namespaces.
-    private static func namedSection(
-        _ sectionKey: String,
-        table: TOMLTable,
-        discoveredNames: [String],
-        sourceLines: SourceLineMap
-    ) throws -> TOMLTable? {
-        guard let sectionValue = table[sectionKey] else {
-            if discoveredNames.isEmpty {
-                return nil
-            }
-            // The scanner found declarations but TOMLKit has no matching
-            // root key at all; this should be unreachable given the
-            // scanner and TOMLKit agree on syntax, but fail loudly rather
-            // than silently dropping items if it ever happens.
-            throw ConfigParseError(
-                message: "\(sectionKey): expected declarations were not found in the parsed configuration",
-                line: sourceLines[.rootField(sectionKey)]
-            )
-        }
-        guard let sectionTable = sectionValue.table else {
-            throw typeError(
-                path: sectionKey,
-                expected: "table",
-                value: sectionValue,
-                line: sourceLines[.rootField(sectionKey)]
-            )
-        }
-        try crossCheckDiscoveredNames(
-            sectionKey: sectionKey,
-            discoveredNames: discoveredNames,
-            section: sectionTable,
-            sourceLines: sourceLines
-        )
-        return sectionTable
-    }
-
-    private static func requiredTable(
-        name: String,
-        section: TOMLTable?,
-        sectionKey: String,
-        sourceLines: SourceLineMap
-    ) throws -> TOMLTable {
-        guard let section, let value = section[name] else {
-            throw ConfigParseError(
-                message: "\(sectionKey).\(name): expected item was not found in the parsed configuration",
-                line: sourceLines[.item(name)] ?? sourceLines[.rootField(sectionKey)]
-            )
-        }
-        guard let itemTable = value.table else {
-            throw typeError(
-                path: "\(sectionKey).\(name)",
-                expected: "table",
-                value: value,
-                line: sourceLines[.item(name)] ?? sourceLines[.rootField(sectionKey)]
-            )
-        }
-        return itemTable
-    }
-
-    /// Parses the optional `[scheduler]` table, the sole advanced-user
-    /// override of `CommandScheduler`'s default active-session bound. Absent
-    /// entirely, `SchedulerConfig()` (no override) applies. When present,
-    /// `max_active_sessions` must be an integer within
-    /// `CommandScheduler.allowedMaxActiveSessionsRange`; anything else fails
-    /// validation rather than silently clamping, so a typo'd config cannot
-    /// silently run with a very different concurrency budget than intended.
-    private static func parseScheduler(
-        table: TOMLTable,
-        sourceLines: SourceLineMap
-    ) throws -> SchedulerConfig {
-        guard let schedulerValue = table["scheduler"] else {
-            return SchedulerConfig()
-        }
-        guard let schedulerTable = schedulerValue.table else {
-            throw typeError(
-                path: "scheduler",
-                expected: "table",
-                value: schedulerValue,
-                line: sourceLines[.rootField("scheduler")]
-            )
-        }
-        try validateUnknownKeys(
-            in: schedulerTable,
-            allowedKeys: supportedSchedulerKeys,
-            context: "scheduler",
-            lineForKey: { sourceLines[.rootField($0)] ?? sourceLines[.rootField("scheduler")] }
-        )
-
-        guard let maxActiveSessionsValue = schedulerTable["max_active_sessions"] else {
-            return SchedulerConfig()
-        }
-        let line = sourceLines[.rootField("max_active_sessions")] ?? sourceLines[.rootField("scheduler")]
-        guard let maxActiveSessions = maxActiveSessionsValue.int else {
-            throw typeError(
-                path: "scheduler.max_active_sessions",
-                expected: "integer",
-                value: maxActiveSessionsValue,
-                line: line
-            )
-        }
-        guard CommandScheduler.allowedMaxActiveSessionsRange.contains(maxActiveSessions) else {
-            throw ConfigParseError(
-                message: "scheduler.max_active_sessions must be between "
-                    + "\(CommandScheduler.allowedMaxActiveSessionsRange.lowerBound) and "
-                    + "\(CommandScheduler.allowedMaxActiveSessionsRange.upperBound)",
-                line: line
-            )
-        }
-        return SchedulerConfig(maxActiveSessions: maxActiveSessions)
-    }
-
-    private static func crossCheckDiscoveredNames(
-        sectionKey: String,
-        discoveredNames: [String],
-        section: TOMLTable,
-        sourceLines: SourceLineMap
-    ) throws {
-        let parsedNames = Set(section.keys)
-        let orderedNames = Set(discoveredNames)
-        guard parsedNames != orderedNames else { return }
-
-        if let missing = parsedNames.subtracting(orderedNames).sorted().first {
-            throw ConfigParseError(
-                message: "\(sectionKey).\(missing): declaration form is not supported; "
-                    + "use [\(sectionKey).\(missing)] tables or \(sectionKey).\(missing).<key> dotted keys",
-                line: sourceLines[.rootField(sectionKey)]
-            )
-        }
-        if let extra = orderedNames.subtracting(parsedNames).sorted().first {
-            throw ConfigParseError(
-                message: "\(sectionKey).\(extra): expected item was not found in the parsed configuration",
-                line: sourceLines[.item(extra)]
-            )
-        }
-    }
-
-    /// Scans the raw source text for three things in a single left-to-right pass:
-    /// - `order`: the left-to-right declaration order of top-level entries (both `[item.*]` and
-    ///   `[group.*]`), used for deterministic native menu-bar placement (TOMLKit's `TOMLTable`
-    ///   iterates keys alphabetically, not in file order, and its parsed tree carries no
-    ///   distinguishable source-order metadata).
-    /// - `namespace`: which table (`item` or `group`) each discovered name belongs to, so the
-    ///   caller knows where to look its value up in the TOMLKit-parsed tree.
-    /// - `lines`: a map from semantic locations (item/group fields, actions, root keys) to the
-    ///   1-based source line that declared them, used for diagnostics.
-    ///
-    /// Supported item-declaring forms are standard `[item.<name>]` / `[[item.<name>.<section>]]`
-    /// table headers and top-level dotted-key assignments (`item.<name>.<key> = value`). Groups
-    /// support the same two forms minus array-of-tables (`[group.<name>]` / `group.<name>.<key> =
-    /// value`), since a group has no repeated sub-sections like an item's `action` array. Inline
-    /// table declarations of an item/group or of the whole `item`/`group` namespace (`item = {
-    /// ... }` or `item.<name> = { ... }`) are rejected explicitly here rather than silently
-    /// producing an incomplete list: TOMLKit can parse them, but this scanner cannot recover
-    /// their source order, and `PinchosConfig.parse` must never drop an entry TOMLKit considers
-    /// valid.
-    private static func scanSource(
-        _ text: String
-    ) throws -> (order: [String], namespace: [String: ItemNamespace], lines: SourceLineMap) {
-        var lines: SourceLineMap = [:]
-        var order: [String] = []
-        var namespace: [String: ItemNamespace] = [:]
-        var seenItemNames = Set<String>()
-        var currentItem: String?
-        var currentSection: String?
-        var multilineDelimiter: String?
-
-        var actionIndices: [String: Int] = [:]
-        var currentActionIndex: Int?
-
-        func recordItemName(_ name: String, at lineNumber: Int, namespace entryNamespace: ItemNamespace) throws {
-            if let existing = namespace[name], existing != entryNamespace {
-                let existingKey = existing == .item ? "item" : "group"
-                let newKey = entryNamespace == .item ? "item" : "group"
-                throw ConfigParseError(
-                    message: "\(newKey).\(name): name is already declared as \(existingKey).\(name); "
-                        + "item and group names share one namespace and must be unique",
-                    line: lineNumber
-                )
-            }
-            namespace[name] = entryNamespace
-            if !seenItemNames.contains(name) {
-                seenItemNames.insert(name)
-                order.append(name)
-            }
-            lines[.item(name)] = lines[.item(name)] ?? lineNumber
-        }
-
-        for (offset, rawLine) in text.split(separator: "\n", omittingEmptySubsequences: false).enumerated() {
-            let lineNumber = offset + 1
-            let line = rawLine.trimmingCharacters(in: .whitespaces)
-            guard !line.isEmpty, !line.hasPrefix("#") else { continue }
-
-            if let delimiter = multilineDelimiter {
-                if unescapedDelimiterCount(delimiter, in: line) > 0 {
-                    multilineDelimiter = nil
-                }
-                continue
-            }
-
-            if let components = arrayHeaderComponents(in: line), components.count >= 3,
-               components[0] == "item" {
-                let name = components[1]
-                currentItem = name
-                let section = components.dropFirst(2).joined(separator: ".")
-                currentSection = section
-                try recordItemName(name, at: lineNumber, namespace: .item)
-                if section == "action" {
-                    let index = actionIndices[name, default: 0]
-                    actionIndices[name] = index + 1
-                    currentActionIndex = index
-                    lines[.action(item: name, index: index)] = lineNumber
-                } else {
-                    currentActionIndex = nil
-                }
-                lines[.section(item: name, path: section)] = lineNumber
-                continue
-            }
-
-            if let components = arrayHeaderComponents(in: line), let rootKey = components.first {
-                lines[.rootField(rootKey)] = lines[.rootField(rootKey)] ?? lineNumber
-                currentItem = nil
-                currentSection = nil
-                currentActionIndex = nil
-                continue
-            }
-
-            if let components = headerComponents(in: line), components.count >= 2,
-               components[0] == "item" || components[0] == "group" {
-                let entryNamespace: ItemNamespace = components[0] == "item" ? .item : .group
-                let name = components[1]
-                currentItem = name
-                currentSection = components.count == 2 ? nil : components.dropFirst(2).joined(separator: ".")
-                currentActionIndex = nil
-                try recordItemName(name, at: lineNumber, namespace: entryNamespace)
-                if let currentSection {
-                    lines[.section(item: name, path: currentSection)] = lineNumber
-                }
-                continue
-            }
-
-            if let components = headerComponents(in: line), let rootKey = components.first {
-                lines[.rootField(rootKey)] = lines[.rootField(rootKey)] ?? lineNumber
-                currentItem = nil
-                currentSection = nil
-                currentActionIndex = nil
-                continue
-            }
-
-            guard let equals = assignmentSeparator(in: line) else { continue }
-            let rawKey = line[..<equals].trimmingCharacters(in: .whitespaces)
-            let keyComponents = assignmentKeyComponents(String(rawKey))
-            guard !keyComponents.isEmpty else { continue }
-            if let currentItem, currentSection == "action", let currentActionIndex {
-                for path in fieldPathPrefixes(keyComponents) {
-                    let sourceKey = SourceLineKey.field(
-                        item: currentItem,
-                        path: path,
-                        actionIndex: currentActionIndex
-                    )
-                    lines[sourceKey] = lines[sourceKey] ?? lineNumber
-                }
-            } else if let currentItem {
-                let pathComponents = (currentSection?.split(separator: ".").map(String.init) ?? []) + keyComponents
-                for path in fieldPathPrefixes(pathComponents) {
-                    let sourceKey = SourceLineKey.field(item: currentItem, path: path, actionIndex: nil)
-                    lines[sourceKey] = lines[sourceKey] ?? lineNumber
-                }
-            } else if keyComponents[0] == "item" || keyComponents[0] == "group" {
-                let rootKey = keyComponents[0]
-                let entryNamespace: ItemNamespace = rootKey == "item" ? .item : .group
-                let rhs = String(line[line.index(after: equals)...]).trimmingCharacters(in: .whitespaces)
-                let isInlineTable = rhs.hasPrefix("{")
-
-                if keyComponents.count == 1 {
-                    guard !isInlineTable else {
-                        throw ConfigParseError(
-                            message: "\(rootKey): inline table declarations are not supported; "
-                                + "declare \(rootKey)s with [\(rootKey).<name>] tables or \(rootKey).<name>.<key> dotted keys",
-                            line: lineNumber
-                        )
-                    }
-                    for path in fieldPathPrefixes(keyComponents) {
-                        lines[.rootField(path)] = lines[.rootField(path)] ?? lineNumber
-                    }
-                } else {
-                    let name = keyComponents[1]
-                    let fieldPath = Array(keyComponents.dropFirst(2))
-                    guard !(fieldPath.isEmpty && isInlineTable) else {
-                        throw ConfigParseError(
-                            message: "\(rootKey).\(name): inline table declarations are not supported; "
-                                + "declare this \(rootKey) with [\(rootKey).\(name)] instead",
-                            line: lineNumber
-                        )
-                    }
-                    try recordItemName(name, at: lineNumber, namespace: entryNamespace)
-                    for path in fieldPathPrefixes(fieldPath) {
-                        let sourceKey = SourceLineKey.field(item: name, path: path, actionIndex: nil)
-                        lines[sourceKey] = lines[sourceKey] ?? lineNumber
-                    }
-                }
-            } else {
-                for path in fieldPathPrefixes(keyComponents) {
-                    lines[.rootField(path)] = lines[.rootField(path)] ?? lineNumber
-                }
-            }
-            multilineDelimiter = openMultilineDelimiter(in: String(line[line.index(after: equals)...]))
-        }
-
-        return (order, namespace, lines)
-    }
-
-    private static func fieldPathPrefixes(_ components: [String]) -> [String] {
-        var prefixes: [String] = []
-        var prefix = ""
-        for component in components where !component.isEmpty {
-            prefix = prefix.isEmpty ? component : "\(prefix).\(component)"
-            prefixes.append(prefix)
-        }
-        return prefixes
+        try parseCanonical(text, relativeTo: configURL)
     }
 
     private static func headerComponents(in line: String) -> [String]? {
@@ -673,927 +216,6 @@ public enum ConfigParser {
         return backslashCount % 2 == 1
     }
 
-    private static func sourceLine(
-        item name: String,
-        key: String,
-        index: Int? = nil,
-        sourceLines: SourceLineMap
-    ) -> Int? {
-        if let index {
-            return sourceLines[.field(item: name, path: key, actionIndex: index)]
-                ?? sourceLines[.field(item: name, path: "action", actionIndex: nil)]
-                ?? sourceLines[.field(item: name, path: key, actionIndex: nil)]
-                ?? sourceLines[.action(item: name, index: index)]
-                ?? sourceLines[.section(item: name, path: "action")]
-                ?? sourceLines[.item(name)]
-        }
-        return sourceLines[.field(item: name, path: key, actionIndex: nil)] ?? sourceLines[.item(name)]
-    }
-
-    private static func parseItem(
-        name: String,
-        table: TOMLTable,
-        relativeTo configURL: URL?,
-        sourceLines: SourceLineMap
-    ) throws -> CommandItemConfig {
-        try validateUnknownKeys(
-            in: table,
-            allowedKeys: supportedItemKeys,
-            context: "item.\(name)",
-            lineForKey: { sourceLine(item: name, key: $0, sourceLines: sourceLines) }
-        )
-
-        let type = try requiredString(
-            name: name,
-            key: "type",
-            table: table,
-            sourceLines: sourceLines
-        )
-        guard type == "command" else {
-            throw ConfigParseError(
-                message: "item.\(name).type: unsupported value '\(type)' (only 'command' is supported)",
-                line: sourceLine(item: name, key: "type", sourceLines: sourceLines)
-            )
-        }
-        let run = try requiredString(
-            name: name,
-            key: "run",
-            table: table,
-            sourceLines: sourceLines,
-            requireNonEmpty: true
-        )
-
-        let shell = try parseShell(
-            name: name,
-            value: table["shell"],
-            relativeTo: configURL,
-            sourceLines: sourceLines
-        )
-        let workingDirectory = try parseWorkingDirectory(
-            name: name,
-            value: table["working_directory"],
-            relativeTo: configURL,
-            sourceLines: sourceLines
-        )
-        let environment = try parseEnvironment(name: name, value: table["env"], sourceLines: sourceLines)
-
-        let triggers = try parseTriggers(name: name, value: table["triggers"], sourceLines: sourceLines)
-        let watch = try parseWatchPaths(
-            name: name,
-            value: table["watch"],
-            relativeTo: configURL,
-            sourceLines: sourceLines
-        )
-
-        let intervalString = try optionalString(
-            name: name,
-            key: "interval",
-            table: table,
-            sourceLines: sourceLines
-        ) ?? "60s"
-        let refreshInterval: RefreshInterval
-        if intervalString == "manual" {
-            refreshInterval = .manual
-        } else {
-            let interval: TimeInterval
-            do {
-                interval = try parseDuration(intervalString)
-            } catch {
-                throw ConfigParseError(
-                    message: "item.\(name): invalid interval '\(intervalString)'",
-                    line: sourceLine(item: name, key: "interval", sourceLines: sourceLines)
-                )
-            }
-            refreshInterval = .scheduled(interval)
-        }
-
-        let output: CommandOutputFormat
-        if let outputValue = table["output"] {
-            let rawValue = try stringValue(
-                name: name,
-                key: "output",
-                value: outputValue,
-                sourceLines: sourceLines
-            )
-            guard let parsedValue = CommandOutputFormat(rawValue: rawValue), parsedValue != .plain else {
-                throw ConfigParseError(
-                    message: "item.\(name): output must be 'json-v1'",
-                    line: sourceLine(item: name, key: "output", sourceLines: sourceLines)
-                )
-            }
-            output = parsedValue
-        } else {
-            output = .plain
-        }
-
-        let onError: ItemErrorPolicy
-        if let onErrorValue = table["on_error"] {
-            let rawValue = try stringValue(
-                name: name,
-                key: "on_error",
-                value: onErrorValue,
-                sourceLines: sourceLines
-            )
-            guard let parsedValue = ItemErrorPolicy(rawValue: rawValue) else {
-                throw ConfigParseError(
-                    message: "item.\(name): on_error must be 'replace' or 'keep_last'",
-                    line: sourceLine(item: name, key: "on_error", sourceLines: sourceLines)
-                )
-            }
-            onError = parsedValue
-        } else {
-            onError = .replace
-        }
-
-        let staleAfter: TimeInterval?
-        if let staleAfterValue = table["stale_after"] {
-            let rawValue = try stringValue(
-                name: name,
-                key: "stale_after",
-                value: staleAfterValue,
-                sourceLines: sourceLines
-            )
-            do {
-                staleAfter = try parseDuration(rawValue)
-            } catch {
-                throw ConfigParseError(
-                    message: "item.\(name): invalid stale_after '\(rawValue)'",
-                    line: sourceLine(item: name, key: "stale_after", sourceLines: sourceLines)
-                )
-            }
-        } else {
-            staleAfter = nil
-        }
-
-        let actions = try parseActions(
-            name: name,
-            value: table["action"],
-            sourceLines: sourceLines
-        )
-
-        let infoRows = try parseInfoRows(
-            name: name,
-            value: table["info"],
-            sourceLines: sourceLines
-        )
-
-        let timeoutString: String
-        if let timeoutValue = table["timeout"] {
-            timeoutString = try stringValue(
-                name: name,
-                key: "timeout",
-                value: timeoutValue,
-                sourceLines: sourceLines
-            )
-        } else {
-            timeoutString = "15s"
-        }
-        let timeout: TimeInterval
-        do {
-            timeout = try parseDuration(timeoutString)
-        } catch {
-            throw ConfigParseError(
-                message: "item.\(name): invalid timeout '\(timeoutString)'",
-                line: sourceLine(item: name, key: "timeout", sourceLines: sourceLines)
-            )
-        }
-
-        let maxOutputString: String
-        if let maxOutputValue = table["max_output"] {
-            maxOutputString = try stringValue(
-                name: name,
-                key: "max_output",
-                value: maxOutputValue,
-                sourceLines: sourceLines
-            )
-        } else {
-            maxOutputString = "64KiB"
-        }
-        let maxOutputBytes: Int
-        do {
-            maxOutputBytes = try parseByteCount(maxOutputString)
-        } catch ByteCountParseError.tooLarge {
-            throw ConfigParseError(
-                message: "item.\(name): max_output '\(maxOutputString)' exceeds the \(maxAllowedOutputBytes / (1024 * 1024))MiB safe maximum per stream",
-                line: sourceLine(item: name, key: "max_output", sourceLines: sourceLines)
-            )
-        } catch {
-            throw ConfigParseError(
-                message: "item.\(name): invalid max_output '\(maxOutputString)'",
-                line: sourceLine(item: name, key: "max_output", sourceLines: sourceLines)
-            )
-        }
-
-        let iconSource = try parseIconSource(
-            name: name,
-            namespace: "item",
-            table: table,
-            relativeTo: configURL,
-            sourceLines: sourceLines
-        )
-
-        let maxLength: Int?
-        if let maxLengthValue = table["max_length"] {
-            guard let value = maxLengthValue.int else {
-                throw typeError(
-                    path: "item.\(name).max_length",
-                    expected: "integer",
-                    value: maxLengthValue,
-                    line: sourceLine(item: name, key: "max_length", sourceLines: sourceLines)
-                )
-            }
-            guard value > 0 else {
-                throw ConfigParseError(
-                    message: "item.\(name).max_length must be a positive integer",
-                    line: sourceLine(item: name, key: "max_length", sourceLines: sourceLines)
-                )
-            }
-            maxLength = value
-        } else {
-            maxLength = nil
-        }
-
-        let hideWhenEmpty = try optionalBool(
-            name: name,
-            key: "hide_when_empty",
-            table: table,
-            sourceLines: sourceLines
-        ) ?? false
-        let hideOnError = try optionalBool(
-            name: name,
-            key: "hide_on_error",
-            table: table,
-            sourceLines: sourceLines
-        ) ?? false
-        let hidden = try optionalBool(
-            name: name,
-            key: "hidden",
-            table: table,
-            sourceLines: sourceLines
-        ) ?? false
-        let iconOnly = try optionalBool(
-            name: name,
-            key: "icon_only",
-            table: table,
-            sourceLines: sourceLines
-        ) ?? false
-        let disabled = try optionalBool(
-            name: name,
-            key: "disabled",
-            table: table,
-            sourceLines: sourceLines
-        ) ?? false
-        let notifyOn = try parseNotificationEvents(
-            name: name,
-            value: table["notify_on"],
-            sourceLines: sourceLines
-        )
-        let notifyCooldown: TimeInterval?
-        if let notifyCooldownValue = table["notify_cooldown"] {
-            let rawValue = try stringValue(
-                name: name,
-                key: "notify_cooldown",
-                value: notifyCooldownValue,
-                sourceLines: sourceLines
-            )
-            do {
-                notifyCooldown = try parseDuration(rawValue)
-            } catch {
-                throw ConfigParseError(
-                    message: "item.\(name): invalid notify_cooldown '\(rawValue)'",
-                    line: sourceLine(item: name, key: "notify_cooldown", sourceLines: sourceLines)
-                )
-            }
-        } else {
-            notifyCooldown = nil
-        }
-
-        return CommandItemConfig(
-            name: name,
-            run: run,
-            interval: refreshInterval,
-            output: output,
-            timeout: timeout,
-            maxOutputBytes: maxOutputBytes,
-            shell: shell,
-            workingDirectory: workingDirectory,
-            environment: environment,
-            format: try optionalString(
-                name: name,
-                key: "format",
-                table: table,
-                sourceLines: sourceLines
-            ),
-            triggers: triggers,
-            watch: watch,
-            errorText: try optionalString(
-                name: name,
-                key: "error_text",
-                table: table,
-                sourceLines: sourceLines
-            ) ?? "\u{2013}",
-            onError: onError,
-            staleAfter: staleAfter,
-            actions: actions,
-            infoRows: infoRows,
-            icon: iconSource?.filePath,
-            symbol: iconSource?.symbolName,
-            maxLength: maxLength,
-            hideWhenEmpty: hideWhenEmpty,
-            hideOnError: hideOnError,
-            hidden: hidden,
-            iconOnly: iconOnly,
-            disabled: disabled,
-            notifyOn: notifyOn,
-            notifyCooldown: notifyCooldown
-        )
-    }
-
-    private static func parseTriggers(
-        name: String,
-        value: TOMLValueConvertible?,
-        sourceLines: SourceLineMap
-    ) throws -> Set<ItemTrigger> {
-        guard let value else { return [] }
-        guard let array = value.array else {
-            throw typeError(
-                path: "item.\(name).triggers",
-                expected: "array",
-                value: value,
-                line: sourceLine(item: name, key: "triggers", sourceLines: sourceLines)
-            )
-        }
-
-        var triggers = Set<ItemTrigger>()
-        for (index, element) in array.enumerated() {
-            let rawValue = try stringValue(
-                path: "item.\(name).triggers[\(index)]",
-                value: element,
-                requireNonEmpty: true,
-                line: sourceLine(item: name, key: "triggers", index: index, sourceLines: sourceLines)
-            )
-            guard let trigger = ItemTrigger(rawValue: rawValue) else {
-                throw ConfigParseError(
-                    message: "item.\(name).triggers[\(index)]: unsupported value '\(rawValue)'",
-                    line: sourceLine(item: name, key: "triggers", index: index, sourceLines: sourceLines)
-                )
-            }
-            triggers.insert(trigger)
-        }
-        return triggers
-    }
-
-    private static func parseWatchPaths(
-        name: String,
-        value: TOMLValueConvertible?,
-        relativeTo configURL: URL?,
-        sourceLines: SourceLineMap
-    ) throws -> [String] {
-        guard let value else { return [] }
-        guard let array = value.array else {
-            throw typeError(
-                path: "item.\(name).watch",
-                expected: "array",
-                value: value,
-                line: sourceLine(item: name, key: "watch", sourceLines: sourceLines)
-            )
-        }
-
-        var paths = Set<String>()
-        for (index, element) in array.enumerated() {
-            let rawPath = try stringValue(
-                path: "item.\(name).watch[\(index)]",
-                value: element,
-                requireNonEmpty: true,
-                line: sourceLine(item: name, key: "watch", index: index, sourceLines: sourceLines)
-            )
-            paths.insert(resolvePath(rawPath, relativeTo: configURL))
-        }
-        return paths.sorted()
-    }
-
-    private static func parseNotificationEvents(
-        name: String,
-        value: TOMLValueConvertible?,
-        sourceLines: SourceLineMap
-    ) throws -> Set<ItemNotificationEvent> {
-        guard let value else { return [] }
-        guard let array = value.array else {
-            throw typeError(
-                path: "item.\(name).notify_on",
-                expected: "array",
-                value: value,
-                line: sourceLine(item: name, key: "notify_on", sourceLines: sourceLines)
-            )
-        }
-
-        var events = Set<ItemNotificationEvent>()
-        for (index, element) in array.enumerated() {
-            let rawValue = try stringValue(
-                path: "item.\(name).notify_on[\(index)]",
-                value: element,
-                requireNonEmpty: true,
-                line: sourceLine(item: name, key: "notify_on", sourceLines: sourceLines)
-            )
-            guard let event = ItemNotificationEvent(rawValue: rawValue) else {
-                throw ConfigParseError(
-                    message: "item.\(name): notify_on must contain only 'failure' or 'recovery'",
-                    line: sourceLine(item: name, key: "notify_on", sourceLines: sourceLines)
-                )
-            }
-            events.insert(event)
-        }
-        return events
-    }
-
-    /// Parses one `[group.<name>]` table. `members` existence, duplicate,
-    /// and cycle validation happens once for the whole config after every
-    /// item and group has been parsed (see `validateGroupMembership`), not
-    /// here, since a member declared later in the file (or a forward
-    /// reference to another group) is legal.
-    private static func parseGroup(
-        name: String,
-        table: TOMLTable,
-        relativeTo configURL: URL?,
-        sourceLines: SourceLineMap
-    ) throws -> GroupItemConfig {
-        try validateUnknownKeys(
-            in: table,
-            allowedKeys: supportedGroupKeys,
-            context: "group.\(name)",
-            lineForKey: { sourceLine(item: name, key: $0, sourceLines: sourceLines) }
-        )
-
-        let title = try requiredGroupString(name: name, key: "title", table: table, sourceLines: sourceLines)
-        let members = try parseGroupMembers(name: name, value: table["members"], sourceLines: sourceLines)
-        let hidden = try optionalBool(
-            name: name,
-            key: "hidden",
-            table: table,
-            sourceLines: sourceLines,
-            namespace: "group"
-        ) ?? false
-        let iconSource = try parseIconSource(
-            name: name,
-            namespace: "group",
-            table: table,
-            relativeTo: configURL,
-            sourceLines: sourceLines
-        )
-
-        return GroupItemConfig(
-            name: name,
-            title: title,
-            members: members,
-            icon: iconSource?.filePath,
-            symbol: iconSource?.symbolName,
-            hidden: hidden
-        )
-    }
-
-    /// Parses the mutually exclusive `symbol` / `icon` pair shared by
-    /// `[item.*]` and `[group.*]`. Each key is type-checked on its own
-    /// (empty/non-string `symbol` is an item/key/line error); if both keys
-    /// are present the config is rejected rather than silently ranking them.
-    private static func parseIconSource(
-        name: String,
-        namespace: String,
-        table: TOMLTable,
-        relativeTo configURL: URL?,
-        sourceLines: SourceLineMap
-    ) throws -> ItemIconSource? {
-        let context = "\(namespace).\(name)"
-        let symbol: String?
-        if let symbolValue = table["symbol"] {
-            symbol = try stringValue(
-                path: "\(context).symbol",
-                value: symbolValue,
-                requireNonEmpty: true,
-                line: sourceLine(item: name, key: "symbol", sourceLines: sourceLines)
-            )
-        } else {
-            symbol = nil
-        }
-
-        let icon: String?
-        if let iconValue = table["icon"] {
-            let rawIcon = try stringValue(
-                path: "\(context).icon",
-                value: iconValue,
-                requireNonEmpty: false,
-                line: sourceLine(item: name, key: "icon", sourceLines: sourceLines)
-            )
-            icon = resolvePath(rawIcon, relativeTo: configURL)
-        } else {
-            icon = nil
-        }
-
-        if symbol != nil, table["icon"] != nil {
-            throw ConfigParseError(
-                message: "\(context).symbol: cannot be combined with icon; choose one icon source",
-                line: sourceLine(item: name, key: "symbol", sourceLines: sourceLines)
-            )
-        }
-
-        if let symbol {
-            return .symbol(symbol)
-        }
-        if let icon {
-            return .file(icon)
-        }
-        return nil
-    }
-
-    private static func requiredGroupString(
-        name: String,
-        key: String,
-        table: TOMLTable,
-        sourceLines: SourceLineMap
-    ) throws -> String {
-        guard let value = table[key] else {
-            throw ConfigParseError(
-                message: "group.\(name): missing required field '\(key)'",
-                line: sourceLine(item: name, key: key, sourceLines: sourceLines)
-            )
-        }
-        return try stringValue(
-            path: "group.\(name).\(key)",
-            value: value,
-            requireNonEmpty: true,
-            line: sourceLine(item: name, key: key, sourceLines: sourceLines)
-        )
-    }
-
-    private static func parseGroupMembers(
-        name: String,
-        value: TOMLValueConvertible?,
-        sourceLines: SourceLineMap
-    ) throws -> [String] {
-        guard let value else {
-            throw ConfigParseError(
-                message: "group.\(name): missing required field 'members'",
-                line: sourceLine(item: name, key: "members", sourceLines: sourceLines)
-            )
-        }
-        guard let array = value.array else {
-            throw typeError(
-                path: "group.\(name).members",
-                expected: "array",
-                value: value,
-                line: sourceLine(item: name, key: "members", sourceLines: sourceLines)
-            )
-        }
-        guard !array.isEmpty else {
-            throw ConfigParseError(
-                message: "group.\(name).members must not be empty",
-                line: sourceLine(item: name, key: "members", sourceLines: sourceLines)
-            )
-        }
-
-        var members: [String] = []
-        var seen = Set<String>()
-        for (index, element) in array.enumerated() {
-            let member = try stringValue(
-                path: "group.\(name).members[\(index)]",
-                value: element,
-                requireNonEmpty: true,
-                line: sourceLine(item: name, key: "members", sourceLines: sourceLines)
-            )
-            guard seen.insert(member).inserted else {
-                throw ConfigParseError(
-                    message: "group.\(name).members: duplicate member '\(member)'",
-                    line: sourceLine(item: name, key: "members", sourceLines: sourceLines)
-                )
-            }
-            members.append(member)
-        }
-        return members
-    }
-
-    /// Validates cross-item invariants that only make sense once every
-    /// item and group in the file has been parsed: every group member
-    /// name must resolve to some other declared entry, and following
-    /// member references (through nested groups) must never cycle back to
-    /// an entry already being visited. Command items have no outgoing
-    /// membership edges, so they are always cycle-free leaves in this
-    /// graph; only a chain of group memberships can cycle.
-    private static func validateGroupMembership(_ items: [ItemConfig], sourceLines: SourceLineMap) throws {
-        let groups = items.compactMap(\.groupConfig)
-        guard !groups.isEmpty else { return }
-
-        let allNames = Set(items.map(\.name))
-        let groupsByName = Dictionary(uniqueKeysWithValues: groups.map { ($0.name, $0) })
-
-        for group in groups {
-            for member in group.members where !allNames.contains(member) {
-                throw ConfigParseError(
-                    message: "group.\(group.name).members: unknown member '\(member)'",
-                    line: sourceLine(item: group.name, key: "members", sourceLines: sourceLines)
-                )
-            }
-        }
-
-        enum VisitState {
-            case visiting
-            case done
-        }
-        var state: [String: VisitState] = [:]
-
-        func visit(_ name: String, path: [String]) throws {
-            if state[name] == .done { return }
-            if state[name] == .visiting {
-                let cycle = (path + [name]).joined(separator: " -> ")
-                throw ConfigParseError(
-                    message: "group membership cycle detected: \(cycle)",
-                    line: sourceLine(item: name, key: "members", sourceLines: sourceLines)
-                )
-            }
-            guard let group = groupsByName[name] else { return }
-            state[name] = .visiting
-            for member in group.members {
-                try visit(member, path: path + [name])
-            }
-            state[name] = .done
-        }
-
-        for group in groups {
-            try visit(group.name, path: [])
-        }
-    }
-
-    private static func parseActions(
-        name: String,
-        value: TOMLValueConvertible?,
-        sourceLines: SourceLineMap
-    ) throws -> [ItemAction] {
-        guard let value else { return [] }
-        guard let array = value.array else {
-            throw typeError(
-                path: "item.\(name).action",
-                expected: "array",
-                value: value,
-                line: sourceLine(item: name, key: "action", sourceLines: sourceLines)
-            )
-        }
-
-        return try array.enumerated().map { index, element in
-            guard let table = element.table else {
-                throw typeError(
-                    path: "item.\(name).action[\(index)]",
-                    expected: "table",
-                    value: element,
-                    line: sourceLine(item: name, key: "action", index: index, sourceLines: sourceLines)
-                )
-            }
-
-            try validateUnknownKeys(
-                in: table,
-                allowedKeys: supportedActionKeys,
-                context: "item.\(name).action[\(index)]",
-                lineForKey: { sourceLine(item: name, key: $0, index: index, sourceLines: sourceLines) }
-            )
-
-            guard let titleValue = table["title"] else {
-                throw ConfigParseError(
-                    message: "item.\(name).action[\(index)].title: missing required field",
-                    line: sourceLine(item: name, key: "action", index: index, sourceLines: sourceLines)
-                )
-            }
-            let title = try stringValue(
-                path: "item.\(name).action[\(index)].title",
-                value: titleValue,
-                requireNonEmpty: true,
-                line: sourceLine(item: name, key: "title", index: index, sourceLines: sourceLines)
-            )
-
-            let runValue = table["run"]
-            let run = try runValue.map {
-                try stringValue(
-                    path: "item.\(name).action[\(index)].run",
-                    value: $0,
-                    requireNonEmpty: true,
-                    line: sourceLine(item: name, key: "run", index: index, sourceLines: sourceLines)
-                )
-            }
-            let refresh: Bool?
-            if let refreshValue = table["refresh"] {
-                guard let parsedRefresh = refreshValue.bool else {
-                    throw typeError(
-                        path: "item.\(name).action[\(index)].refresh",
-                        expected: "boolean",
-                        value: refreshValue,
-                        line: sourceLine(item: name, key: "refresh", index: index, sourceLines: sourceLines)
-                    )
-                }
-                refresh = parsedRefresh
-            } else {
-                refresh = nil
-            }
-
-            if run != nil, refresh != nil {
-                throw ConfigParseError(
-                    message: "item.\(name).action[\(index)]: specify either run or refresh = true, not both",
-                    line: sourceLine(item: name, key: "action", index: index, sourceLines: sourceLines)
-                )
-            }
-            if let run {
-                return ItemAction(title: title, kind: .command(run))
-            }
-            guard refresh == true else {
-                throw ConfigParseError(
-                    message: "item.\(name).action[\(index)]: specify run or refresh = true",
-                    line: sourceLine(item: name, key: "action", index: index, sourceLines: sourceLines)
-                )
-            }
-            return ItemAction(title: title, kind: .refresh)
-        }
-    }
-
-    private static func parseInfoRows(
-        name: String,
-        value: TOMLValueConvertible?,
-        sourceLines: SourceLineMap
-    ) throws -> [ItemInfoRow] {
-        guard let value else { return [] }
-        guard let array = value.array else {
-            throw typeError(
-                path: "item.\(name).info",
-                expected: "array",
-                value: value,
-                line: sourceLine(item: name, key: "info", sourceLines: sourceLines)
-            )
-        }
-
-        return try array.enumerated().map { index, element in
-            guard let table = element.table else {
-                throw typeError(
-                    path: "item.\(name).info[\(index)]",
-                    expected: "table",
-                    value: element,
-                    line: sourceLine(item: name, key: "info", index: index, sourceLines: sourceLines)
-                )
-            }
-
-            try validateUnknownKeys(
-                in: table,
-                allowedKeys: supportedInfoKeys,
-                context: "item.\(name).info[\(index)]",
-                lineForKey: { sourceLine(item: name, key: $0, index: index, sourceLines: sourceLines) }
-            )
-
-            guard let titleValue = table["title"] else {
-                throw ConfigParseError(
-                    message: "item.\(name).info[\(index)].title: missing required field",
-                    line: sourceLine(item: name, key: "info", index: index, sourceLines: sourceLines)
-                )
-            }
-            let title = try stringValue(
-                path: "item.\(name).info[\(index)].title",
-                value: titleValue,
-                requireNonEmpty: true,
-                line: sourceLine(item: name, key: "title", index: index, sourceLines: sourceLines)
-            )
-            guard let runValue = table["run"] else {
-                throw ConfigParseError(
-                    message: "item.\(name).info[\(index)].run: missing required field",
-                    line: sourceLine(item: name, key: "info", index: index, sourceLines: sourceLines)
-                )
-            }
-            let run = try stringValue(
-                path: "item.\(name).info[\(index)].run",
-                value: runValue,
-                requireNonEmpty: true,
-                line: sourceLine(item: name, key: "run", index: index, sourceLines: sourceLines)
-            )
-            return ItemInfoRow(title: title, run: run)
-        }
-    }
-
-    private static func parseShell(
-        name: String,
-        value: TOMLValueConvertible?,
-        relativeTo configURL: URL?,
-        sourceLines: SourceLineMap
-    ) throws -> [String] {
-        guard let value else { return CommandItemConfig.defaultShell }
-        guard let array = value.array else {
-            throw typeError(
-                path: "item.\(name).shell",
-                expected: "array",
-                value: value,
-                line: sourceLine(item: name, key: "shell", sourceLines: sourceLines)
-            )
-        }
-
-        var shell = [String]()
-        for (index, element) in array.enumerated() {
-            let argument = try stringValue(
-                path: "item.\(name).shell[\(index)]",
-                value: element,
-                requireNonEmpty: true,
-                line: sourceLine(item: name, key: "shell", sourceLines: sourceLines)
-            )
-            shell.append(argument)
-        }
-        guard let executable = shell.first else {
-            throw ConfigParseError(
-                message: "item.\(name): shell must include an executable",
-                line: sourceLine(item: name, key: "shell", sourceLines: sourceLines)
-            )
-        }
-
-        shell[0] = resolvePath(executable, relativeTo: configURL)
-        guard FileManager.default.isExecutableFile(atPath: shell[0]) else {
-            throw ConfigParseError(
-                message: "item.\(name): shell executable cannot be resolved: \(shell[0])",
-                line: sourceLine(item: name, key: "shell", sourceLines: sourceLines)
-            )
-        }
-        return shell
-    }
-
-    private static func parseWorkingDirectory(
-        name: String,
-        value: TOMLValueConvertible?,
-        relativeTo configURL: URL?,
-        sourceLines: SourceLineMap
-    ) throws -> String? {
-        guard let value else { return nil }
-        guard let rawPath = value.string else {
-            throw typeError(
-                path: "item.\(name).working_directory",
-                expected: "string",
-                value: value,
-                line: sourceLine(item: name, key: "working_directory", sourceLines: sourceLines)
-            )
-        }
-
-        let path = resolvePath(rawPath, relativeTo: configURL)
-        var isDirectory = ObjCBool(false)
-        guard FileManager.default.fileExists(atPath: path, isDirectory: &isDirectory), isDirectory.boolValue else {
-            throw ConfigParseError(
-                message: "item.\(name): working_directory cannot be resolved: \(path)",
-                line: sourceLine(item: name, key: "working_directory", sourceLines: sourceLines)
-            )
-        }
-        return path
-    }
-
-    private static func parseEnvironment(
-        name: String,
-        value: TOMLValueConvertible?,
-        sourceLines: SourceLineMap
-    ) throws -> [String: String] {
-        guard let value else { return [:] }
-        guard let table = value.table else {
-            throw typeError(
-                path: "item.\(name).env",
-                expected: "table",
-                value: value,
-                line: sourceLines[.field(item: name, path: "env", actionIndex: nil)]
-                    ?? sourceLines[.section(item: name, path: "env")]
-                    ?? sourceLines[.item(name)]
-            )
-        }
-
-        var environment = [String: String]()
-        for (key, value) in table {
-            guard isValidEnvironmentName(key) else {
-                throw ConfigParseError(
-                    message: "item.\(name).env.\(key): invalid environment key; not a valid environment name",
-                    line: sourceLine(item: name, key: "env.\(key)", sourceLines: sourceLines)
-                )
-            }
-            guard let string = value.string else {
-                throw typeError(
-                    path: "item.\(name).env.\(key)",
-                    expected: "string",
-                    value: value,
-                    line: sourceLine(item: name, key: "env.\(key)", sourceLines: sourceLines)
-                )
-            }
-            guard !string.unicodeScalars.contains(where: { $0.value == 0 }) else {
-                throw ConfigParseError(
-                    message: "item.\(name).env.\(key) must be a string without NUL bytes",
-                    line: sourceLine(item: name, key: "env.\(key)", sourceLines: sourceLines)
-                )
-            }
-            environment[key] = string
-        }
-        return environment
-    }
-
-    private static func isValidEnvironmentName(_ name: String) -> Bool {
-        let bytes = Array(name.utf8)
-        guard let first = bytes.first else { return false }
-        guard first == 95 || first >= 65 && first <= 90 || first >= 97 && first <= 122 else {
-            return false
-        }
-        return bytes.dropFirst().allSatisfy { byte in
-            byte == 95 || byte >= 48 && byte <= 57 || byte >= 65 && byte <= 90 || byte >= 97 && byte <= 122
-        }
-    }
-
     private static func validateUnknownKeys(
         in table: TOMLTable,
         allowedKeys: Set<String>,
@@ -1608,95 +230,6 @@ public enum ConfigParser {
                 line: lineForKey(key)
             )
         }
-    }
-
-    private static func requiredString(
-        name: String,
-        key: String,
-        table: TOMLTable,
-        sourceLines: SourceLineMap,
-        requireNonEmpty: Bool = false
-    ) throws -> String {
-        guard let value = table[key] else {
-            throw ConfigParseError(
-                message: "item.\(name): missing required field '\(key)'",
-                line: sourceLine(item: name, key: key, sourceLines: sourceLines)
-            )
-        }
-        return try stringValue(
-            path: "item.\(name).\(key)",
-            value: value,
-            requireNonEmpty: requireNonEmpty,
-            line: sourceLine(item: name, key: key, sourceLines: sourceLines)
-        )
-    }
-
-    private static func optionalString(
-        name: String,
-        key: String,
-        table: TOMLTable,
-        sourceLines: SourceLineMap,
-        requireNonEmpty: Bool = false
-    ) throws -> String? {
-        guard let value = table[key] else { return nil }
-        return try stringValue(
-            path: "item.\(name).\(key)",
-            value: value,
-            requireNonEmpty: requireNonEmpty,
-            line: sourceLine(item: name, key: key, sourceLines: sourceLines)
-        )
-    }
-
-    private static func optionalBool(
-        name: String,
-        key: String,
-        table: TOMLTable,
-        sourceLines: SourceLineMap,
-        namespace: String = "item"
-    ) throws -> Bool? {
-        guard let value = table[key] else { return nil }
-        guard let bool = value.bool else {
-            throw typeError(
-                path: "\(namespace).\(name).\(key)",
-                expected: "boolean",
-                value: value,
-                line: sourceLine(item: name, key: key, sourceLines: sourceLines)
-            )
-        }
-        return bool
-    }
-
-    private static func stringValue(
-        name: String,
-        key: String,
-        value: TOMLValueConvertible,
-        sourceLines: SourceLineMap,
-        requireNonEmpty: Bool = false
-    ) throws -> String {
-        try stringValue(
-            path: "item.\(name).\(key)",
-            value: value,
-            requireNonEmpty: requireNonEmpty,
-            line: sourceLine(item: name, key: key, sourceLines: sourceLines)
-        )
-    }
-
-    private static func stringValue(
-        path: String,
-        value: TOMLValueConvertible,
-        requireNonEmpty: Bool,
-        line: Int?
-    ) throws -> String {
-        guard let string = value.string else {
-            throw typeError(path: path, expected: "string", value: value, line: line)
-        }
-        guard !requireNonEmpty || !string.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-            throw ConfigParseError(
-                message: "\(path) must be a non-empty string",
-                line: line
-            )
-        }
-        return string
     }
 
     private static func typeError(
@@ -1753,5 +286,412 @@ public enum ConfigParser {
         return url
             .standardizedFileURL
             .path
+    }
+
+    private struct CanonicalSourceMap {
+        var order: [String] = []
+        var rootLines: [String: Int] = [:]
+        var itemLines: [String: Int] = [:]
+        var fieldLines: [String: Int] = [:]
+        var menuRows: [String: Int] = [:]
+
+        func line(item: String, key: String, row: Int? = nil) -> Int? {
+            if let row {
+                return fieldLines["\(item).menu[\(row)].\(key)"]
+                    ?? fieldLines["\(item).menu[\(row)]"]
+            }
+            return fieldLines["\(item).\(key)"] ?? itemLines[item]
+        }
+    }
+
+    private enum CanonicalSection {
+        case item(String)
+        case menu(String, Int)
+    }
+
+    private static func parseCanonical(_ text: String, relativeTo configURL: URL?) throws -> PinchosConfig {
+        let source = try scanCanonicalSource(text)
+        let table: TOMLTable
+        do {
+            table = try TOMLTable(string: text)
+        } catch let error as TOMLParseError {
+            throw ConfigParseError(message: error.description, line: error.source.begin.line)
+        }
+
+        for key in table.keys where !supportedRootKeys.contains(key) {
+            throw ConfigParseError(
+                message: "unsupported root key or table '\(key)' (only [item.<id>] is supported)",
+                line: source.rootLines[key]
+            )
+        }
+        guard let itemValue = table["item"] else { return PinchosConfig(items: []) }
+        guard let itemSection = itemValue.table else {
+            throw ConfigParseError(
+                message: "item must contain [item.<id>] tables",
+                line: source.rootLines["item"]
+            )
+        }
+
+        let parsedNames = Set(itemSection.keys)
+        let declaredNames = Set(source.order)
+        guard parsedNames == declaredNames else {
+            let name = parsedNames.subtracting(declaredNames).sorted().first
+            throw ConfigParseError(
+                message: name.map { "item.\($0): use the canonical [item.\($0)] table declaration" }
+                    ?? "items must use canonical [item.<id>] table declarations",
+                line: name.flatMap { source.itemLines[$0] } ?? source.rootLines["item"]
+            )
+        }
+
+        let items = try source.order.map { name -> ItemConfig in
+            guard let value = itemSection[name], let itemTable = value.table else {
+                throw ConfigParseError(
+                    message: "item.\(name) must be a table",
+                    line: source.itemLines[name]
+                )
+            }
+            return try parseCanonicalItem(
+                name: name,
+                table: itemTable,
+                relativeTo: configURL,
+                source: source
+            )
+        }
+        return PinchosConfig(items: items)
+    }
+
+    private static func scanCanonicalSource(_ text: String) throws -> CanonicalSourceMap {
+        var source = CanonicalSourceMap()
+        var section: CanonicalSection?
+        var multilineDelimiter: String?
+
+        for (offset, rawLine) in text.split(separator: "\n", omittingEmptySubsequences: false).enumerated() {
+            let lineNumber = offset + 1
+            let raw = String(rawLine)
+            if let delimiter = multilineDelimiter {
+                if unescapedDelimiterCount(delimiter, in: raw) % 2 == 1 { multilineDelimiter = nil }
+                continue
+            }
+            let line = withoutInlineComment(from: raw).trimmingCharacters(in: .whitespaces)
+            guard !line.isEmpty else { continue }
+
+            if let components = arrayHeaderComponents(in: line) {
+                guard components.count == 3, components[0] == "item", components[2] == "menu",
+                      !headerUsesQuotedKey(line), isCanonicalItemID(components[1]) else {
+                    throw ConfigParseError(
+                        message: "items and menu rows must use [item.<id>] and [[item.<id>.menu]] declarations",
+                        line: lineNumber
+                    )
+                }
+                let name = components[1]
+                let row = source.menuRows[name, default: 0]
+                source.menuRows[name] = row + 1
+                if !source.order.contains(name) { source.order.append(name) }
+                source.itemLines[name] = source.itemLines[name] ?? lineNumber
+                source.fieldLines["\(name).menu[\(row)]"] = lineNumber
+                section = .menu(name, row)
+                multilineDelimiter = nil
+                continue
+            }
+
+            if let components = headerComponents(in: line) {
+                if components.count == 1 {
+                    let root = components[0]
+                    source.rootLines[root] = source.rootLines[root] ?? lineNumber
+                    throw ConfigParseError(
+                        message: "unsupported root key or table '\(root)' (only [item.<id>] is supported)",
+                        line: lineNumber
+                    )
+                }
+                guard components.count == 2, components[0] == "item",
+                      !headerUsesQuotedKey(line), isCanonicalItemID(components.count > 1 ? components[1] : "") else {
+                    let root = components.first ?? "item"
+                    source.rootLines[root] = source.rootLines[root] ?? lineNumber
+                    let message = components.count == 2 && components[0] != "item"
+                        ? "unsupported root key or table '\(components[0])' (only [item.<id>] is supported)"
+                        : "items must use exactly [item.<id>] tables"
+                    throw ConfigParseError(
+                        message: message,
+                        line: lineNumber
+                    )
+                }
+                let name = components[1]
+                if !source.order.contains(name) { source.order.append(name) }
+                source.itemLines[name] = source.itemLines[name] ?? lineNumber
+                section = .item(name)
+                continue
+            }
+
+            if let components = arrayHeaderComponents(in: line), let root = components.first {
+                source.rootLines[root] = source.rootLines[root] ?? lineNumber
+                throw ConfigParseError(
+                    message: "unsupported array table '\(line)'",
+                    line: lineNumber
+                )
+            }
+
+            guard let equals = assignmentSeparator(in: line) else { continue }
+            let rawKey = line[..<equals].trimmingCharacters(in: .whitespaces)
+            let key = String(rawKey)
+            let keyComponents = assignmentKeyComponents(key)
+            let rhs = String(line[line.index(after: equals)...]).trimmingCharacters(in: .whitespaces)
+            multilineDelimiter = openMultilineDelimiter(in: rhs)
+
+            switch section {
+            case .item(let name):
+                guard keyComponents.count == 1, !key.contains("\""), !key.contains("'") else {
+                    throw ConfigParseError(
+                        message: "item.\(name): nested, dotted, or quoted keys are not supported",
+                        line: lineNumber
+                    )
+                }
+                if keyComponents[0] == "menu" {
+                    throw ConfigParseError(
+                        message: "item.\(name).menu: use [[item.\(name).menu]] array tables",
+                        line: lineNumber
+                    )
+                }
+                source.fieldLines["\(name).\(keyComponents[0])"] = source.fieldLines["\(name).\(keyComponents[0])"] ?? lineNumber
+            case .menu(let name, let row):
+                guard keyComponents.count == 1, !key.contains("\""), !key.contains("'") else {
+                    throw ConfigParseError(
+                        message: "item.\(name).menu[\(row)]: nested, dotted, or quoted keys are not supported",
+                        line: lineNumber
+                    )
+                }
+                source.fieldLines["\(name).menu[\(row)].\(keyComponents[0])"] = lineNumber
+            case nil:
+                guard keyComponents.count == 1, !key.contains("\""), !key.contains("'") else {
+                    source.rootLines[keyComponents.first ?? key] = source.rootLines[keyComponents.first ?? key] ?? lineNumber
+                    throw ConfigParseError(
+                        message: "root keys must be a single supported table name",
+                        line: lineNumber
+                    )
+                }
+                source.rootLines[keyComponents[0]] = source.rootLines[keyComponents[0]] ?? lineNumber
+            }
+        }
+        return source
+    }
+
+    private static func headerUsesQuotedKey(_ line: String) -> Bool {
+        let body = line.dropFirst(line.hasPrefix("[[") ? 2 : 1).dropLast(line.hasSuffix("]]" ) ? 2 : 1)
+        return body.contains("\"") || body.contains("'")
+    }
+
+    private static func isCanonicalItemID(_ value: String) -> Bool {
+        !value.isEmpty && value.utf8.allSatisfy { byte in
+            (byte >= 65 && byte <= 90) || (byte >= 97 && byte <= 122)
+                || (byte >= 48 && byte <= 57) || byte == 95 || byte == 45
+        }
+    }
+
+    private static func parseCanonicalItem(
+        name: String,
+        table: TOMLTable,
+        relativeTo configURL: URL?,
+        source: CanonicalSourceMap
+    ) throws -> ItemConfig {
+        try validateUnknownKeys(
+            in: table,
+            allowedKeys: supportedItemKeys,
+            context: "item.\(name)",
+            lineForKey: { source.line(item: name, key: $0) }
+        )
+        let run = try canonicalString(
+            path: "item.\(name).run",
+            value: table["run"],
+            line: source.line(item: name, key: "run")
+        )
+        let interval = try canonicalInterval(name: name, value: table["interval"], source: source)
+        let timeout = try canonicalDuration(name: name, key: "timeout", value: table["timeout"], defaultValue: 15, source: source)
+        let format = try canonicalFormat(name: name, value: table["format"], source: source)
+        let icon = try canonicalOptionalString(name: name, key: "icon", value: table["icon"], source: source)
+        let symbol = try canonicalOptionalString(name: name, key: "symbol", value: table["symbol"], source: source)
+        if icon != nil, symbol != nil {
+            throw ConfigParseError(
+                message: "item.\(name): icon and symbol are mutually exclusive",
+                line: source.line(item: name, key: "symbol") ?? source.line(item: name, key: "icon")
+            )
+        }
+        let menu: [MenuRowConfig]
+        if let value = table["menu"] {
+            guard let rows = value.array else {
+                throw typeError(
+                    path: "item.\(name).menu",
+                    expected: "array",
+                    value: value,
+                    line: source.line(item: name, key: "menu")
+                )
+            }
+            menu = try rows.enumerated().map { index, row in
+                try parseCanonicalRow(name: name, index: index, value: row, source: source)
+            }
+        } else {
+            menu = []
+        }
+        return ItemConfig(
+            name: name,
+            run: run,
+            interval: interval,
+            timeout: timeout,
+            format: format,
+            menu: menu,
+            icon: icon.map { resolvePath($0, relativeTo: configURL) },
+            symbol: symbol
+        )
+    }
+
+    private static func parseCanonicalRow(
+        name: String,
+        index: Int,
+        value: TOMLValueConvertible,
+        source: CanonicalSourceMap
+    ) throws -> MenuRowConfig {
+        guard let table = value.table else {
+            throw typeError(
+                path: "item.\(name).menu[\(index)]",
+                expected: "table",
+                value: value,
+                line: source.line(item: name, key: "menu", row: index)
+            )
+        }
+        try validateUnknownKeys(
+            in: table,
+            allowedKeys: supportedMenuKeys,
+            context: "item.\(name).menu[\(index)]",
+            lineForKey: { source.line(item: name, key: $0, row: index) }
+        )
+        let separator = try canonicalOptionalBool(name: name, key: "separator", table: table, index: index, source: source)
+        if separator == true {
+            guard table.keys.count == 1 else {
+                throw ConfigParseError(
+                    message: "item.\(name).menu[\(index)]: separator = true cannot be combined with other fields",
+                    line: source.line(item: name, key: "separator", row: index)
+                )
+            }
+            return .init(separator: true)
+        }
+        if separator == false {
+            throw ConfigParseError(
+                message: "item.\(name).menu[\(index)].separator must be true when present",
+                line: source.line(item: name, key: "separator", row: index)
+            )
+        }
+        let label = try canonicalString(
+            path: "item.\(name).menu[\(index)].label",
+            value: table["label"],
+            line: source.line(item: name, key: "label", row: index)
+        )
+        let staticValue = try canonicalOptionalString(name: name, key: "value", value: table["value"], row: index, source: source)
+        let run = try canonicalOptionalString(name: name, key: "run", value: table["run"], row: index, source: source)
+        let action = try canonicalOptionalString(name: name, key: "action", value: table["action"], row: index, source: source)
+        let cache = try canonicalOptionalDuration(name: name, key: "cache", value: table["cache"], row: index, source: source)
+        if cache != nil, run == nil {
+            throw ConfigParseError(
+                message: "item.\(name).menu[\(index)].cache requires run",
+                line: source.line(item: name, key: "cache", row: index)
+            )
+        }
+        guard staticValue != nil || run != nil || action != nil else {
+            throw ConfigParseError(
+                message: "item.\(name).menu[\(index)]: specify value, run, or action",
+                line: source.line(item: name, key: "label", row: index)
+            )
+        }
+        if staticValue != nil, run != nil {
+            throw ConfigParseError(
+                message: "item.\(name).menu[\(index)]: specify either value or run, not both",
+                line: source.line(item: name, key: "run", row: index) ?? source.line(item: name, key: "value", row: index)
+            )
+        }
+        return MenuRowConfig(label: label, value: staticValue, run: run, action: action, cache: cache)
+    }
+
+    private static func canonicalString(path: String, value: TOMLValueConvertible?, line: Int?) throws -> String {
+        guard let value else {
+            throw ConfigParseError(message: "\(path): missing required field", line: line)
+        }
+        guard let string = value.string else {
+            throw typeError(path: path, expected: "string", value: value, line: line)
+        }
+        guard !string.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            throw ConfigParseError(message: "\(path) must be a non-empty string", line: line)
+        }
+        return string
+    }
+
+    private static func canonicalOptionalString(
+        name: String,
+        key: String,
+        value: TOMLValueConvertible?,
+        row: Int? = nil,
+        source: CanonicalSourceMap
+    ) throws -> String? {
+        guard value != nil else { return nil }
+        let path = row.map { "item.\(name).menu[\($0)].\(key)" } ?? "item.\(name).\(key)"
+        return try canonicalString(path: path, value: value, line: source.line(item: name, key: key, row: row))
+    }
+
+    private static func canonicalOptionalBool(
+        name: String,
+        key: String,
+        table: TOMLTable,
+        index: Int,
+        source: CanonicalSourceMap
+    ) throws -> Bool? {
+        guard let value = table[key] else { return nil }
+        guard let bool = value.bool else {
+            throw typeError(
+                path: "item.\(name).menu[\(index)].\(key)",
+                expected: "boolean",
+                value: value,
+                line: source.line(item: name, key: key, row: index)
+            )
+        }
+        return bool
+    }
+
+    private static func canonicalInterval(name: String, value: TOMLValueConvertible?, source: CanonicalSourceMap) throws -> RefreshInterval {
+        guard let value else { return .scheduled(60) }
+        let raw = try canonicalString(path: "item.\(name).interval", value: value, line: source.line(item: name, key: "interval"))
+        if raw == "manual" { return .manual }
+        do { return .scheduled(try parseDuration(raw)) }
+        catch { throw ConfigParseError(message: "item.\(name): invalid interval '\(raw)'", line: source.line(item: name, key: "interval")) }
+    }
+
+    private static func canonicalDuration(
+        name: String,
+        key: String,
+        value: TOMLValueConvertible?,
+        defaultValue: TimeInterval,
+        source: CanonicalSourceMap
+    ) throws -> TimeInterval {
+        guard let value else { return defaultValue }
+        let raw = try canonicalString(path: "item.\(name).\(key)", value: value, line: source.line(item: name, key: key))
+        do { return try parseDuration(raw) }
+        catch { throw ConfigParseError(message: "item.\(name): invalid \(key) '\(raw)'", line: source.line(item: name, key: key)) }
+    }
+
+    private static func canonicalOptionalDuration(
+        name: String,
+        key: String,
+        value: TOMLValueConvertible?,
+        row: Int,
+        source: CanonicalSourceMap
+    ) throws -> TimeInterval? {
+        guard let value else { return nil }
+        let raw = try canonicalString(path: "item.\(name).menu[\(row)].\(key)", value: value, line: source.line(item: name, key: key, row: row))
+        do { return try parseDuration(raw) }
+        catch { throw ConfigParseError(message: "item.\(name).menu[\(row)]: invalid cache '\(raw)'", line: source.line(item: name, key: key, row: row)) }
+    }
+
+    private static func canonicalFormat(name: String, value: TOMLValueConvertible?, source: CanonicalSourceMap) throws -> String? {
+        guard let format = try canonicalOptionalString(name: name, key: "format", value: value, source: source) else { return nil }
+        let remainder = format.replacingOccurrences(of: "{output}", with: "")
+        guard !remainder.contains("{") && !remainder.contains("}") else {
+            throw ConfigParseError(message: "item.\(name).format may contain only {output}", line: source.line(item: name, key: "format"))
+        }
+        return format
     }
 }

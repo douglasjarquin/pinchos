@@ -90,9 +90,7 @@ public struct ItemRuntimeSnapshot: Equatable, Sendable {
         lastExecution: CommandExecution?,
         staleAfter: TimeInterval?,
         skippedRefreshes: Int,
-        now: Date,
-        structuredOutput: StructuredCommandOutput? = nil,
-        outputDiagnostic: String? = nil
+        now: Date
     ) {
         self.isRunning = isRunning
         self.fullOutput = fullOutput
@@ -101,8 +99,6 @@ public struct ItemRuntimeSnapshot: Equatable, Sendable {
         self.lastExecution = lastExecution
         self.staleAfter = staleAfter
         self.skippedRefreshes = skippedRefreshes
-        self.structuredOutput = structuredOutput
-        self.outputDiagnostic = outputDiagnostic
         if let staleAfter, let lastUpdatedAt {
             self.isStale = now.timeIntervalSince(lastUpdatedAt) >= staleAfter
         } else {
@@ -111,12 +107,8 @@ public struct ItemRuntimeSnapshot: Equatable, Sendable {
 
         if isRunning {
             status = .running
-        } else if outputDiagnostic != nil {
-            status = .error
         } else if let lastExecution, lastExecution.terminalReason != .exited(code: 0) {
             status = .error
-        } else if let structuredState = structuredOutput?.state {
-            status = structuredState.runtimeStatus
         } else if fullOutput == nil {
             status = .unavailable
         } else if self.isStale {
@@ -125,9 +117,6 @@ public struct ItemRuntimeSnapshot: Equatable, Sendable {
             status = .fresh
         }
     }
-
-    public let structuredOutput: StructuredCommandOutput?
-    public let outputDiagnostic: String?
 
     public var lastRunDuration: TimeInterval? {
         lastExecution?.duration
@@ -150,7 +139,6 @@ public struct ItemRuntimeSnapshot: Equatable, Sendable {
     }
 
     public var errorSummary: String? {
-        if let outputDiagnostic { return outputDiagnostic }
         guard let lastExecution, lastExecution.terminalReason != .exited(code: 0) else {
             return nil
         }
@@ -1055,6 +1043,8 @@ private enum CommandExecutionEngine {
 }
 
 public actor CommandRunner {
+    static let defaultShell = ["/bin/sh", "-c"]
+    private static let defaultMaxOutputBytes = 64 * 1024
     private let command: String
     private let shell: [String]
     private let workingDirectory: String?
@@ -1071,11 +1061,23 @@ public actor CommandRunner {
     private var shutdownRequested = false
     private var runGeneration: UInt64 = 0
 
-    public init(
+    public init(command: String, timeout: TimeInterval) {
+        self.init(
+            command: command,
+            timeout: timeout,
+            maxOutputBytes: Self.defaultMaxOutputBytes,
+            shell: Self.defaultShell,
+            workingDirectory: nil,
+            environment: [:],
+            outputBudget: .shared
+        )
+    }
+
+    init(
         command: String,
         timeout: TimeInterval,
         maxOutputBytes: Int,
-        shell: [String] = CommandItemConfig.defaultShell,
+        shell: [String] = CommandRunner.defaultShell,
         workingDirectory: String? = nil,
         environment: [String: String] = [:]
     ) {
@@ -1090,18 +1092,30 @@ public actor CommandRunner {
         )
     }
 
+    init(command: String, timeout: TimeInterval, maxOutputBytes: Int, outputBudget: OutputMemoryBudget) {
+        self.init(
+            command: command,
+            timeout: timeout,
+            maxOutputBytes: maxOutputBytes,
+            shell: Self.defaultShell,
+            workingDirectory: nil,
+            environment: [:],
+            outputBudget: outputBudget
+        )
+    }
+
     /// Test-only entry point for exercising a private, non-default
     /// `OutputMemoryBudget` (e.g. a small budget shared across many
     /// runners to prove aggregate retained-output memory stays bounded)
     /// without mutating the process-wide `OutputMemoryBudget.shared`
     /// singleton other concurrently-running tests also rely on.
-    init(
+    private init(
         command: String,
         timeout: TimeInterval,
         maxOutputBytes: Int,
-        shell: [String] = CommandItemConfig.defaultShell,
-        workingDirectory: String? = nil,
-        environment: [String: String] = [:],
+        shell: [String],
+        workingDirectory: String?,
+        environment: [String: String],
         outputBudget: OutputMemoryBudget
     ) {
         precondition(timeout > 0, "command timeout must be positive")

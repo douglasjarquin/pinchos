@@ -56,7 +56,7 @@ final class PinchosCLITests: XCTestCase {
         XCTAssertEqual(firstInitCode, 0)
         let initialContents = try Data(contentsOf: configURL)
         XCTAssertTrue(capture.stdout.contains("Created example config"))
-        XCTAssertTrue(String(decoding: initialContents, as: UTF8.self).contains("[item.clock]"))
+        XCTAssertTrue(String(decoding: initialContents, as: UTF8.self).contains("[item.codex]"))
 
         capture.stdout = ""
         let secondInitCode = await cli.run(arguments: ["init"])
@@ -111,7 +111,6 @@ final class PinchosCLITests: XCTestCase {
 
         try """
         [item.bad]
-        type = "command"
         run = "echo bad"
         interval = "soon"
         """.write(to: configURL, atomically: true, encoding: .utf8)
@@ -120,7 +119,7 @@ final class PinchosCLITests: XCTestCase {
         XCTAssertEqual(semanticCode, 3)
         XCTAssertTrue(capture.stderr.contains("item.bad"))
         XCTAssertTrue(capture.stderr.contains("interval"))
-        XCTAssertTrue(capture.stderr.contains("line 4"))
+        XCTAssertTrue(capture.stderr.contains("line 3"))
     }
 
     func testIssue45SchemaErrorIsSharedAcrossValidateDoctorAndRun() async throws {
@@ -130,7 +129,6 @@ final class PinchosCLITests: XCTestCase {
         try FileManager.default.createDirectory(at: configURL.deletingLastPathComponent(), withIntermediateDirectories: true)
         try """
         [item.clock]
-        type = "command"
         run = "date"
         intervall = "5s"
         """.write(to: configURL, atomically: true, encoding: .utf8)
@@ -140,21 +138,21 @@ final class PinchosCLITests: XCTestCase {
         let validateCode = await cli.run(arguments: ["validate"])
         XCTAssertEqual(validateCode, 3)
         XCTAssertTrue(capture.stderr.contains("item.clock.intervall"))
-        XCTAssertTrue(capture.stderr.contains("line 4"))
+        XCTAssertTrue(capture.stderr.contains("line 3"))
 
         capture.stdout = ""
         capture.stderr = ""
         let doctorCode = await cli.run(arguments: ["doctor"])
         XCTAssertEqual(doctorCode, 4)
         XCTAssertTrue(capture.stdout.contains("item.clock.intervall"))
-        XCTAssertTrue(capture.stdout.contains("line 4"))
+        XCTAssertTrue(capture.stdout.contains("line 3"))
 
         capture.stdout = ""
         capture.stderr = ""
         let runCode = await cli.run(arguments: ["run", "clock"])
         XCTAssertEqual(runCode, 3)
         XCTAssertTrue(capture.stderr.contains("item.clock.intervall"))
-        XCTAssertTrue(capture.stderr.contains("line 4"))
+        XCTAssertTrue(capture.stderr.contains("line 3"))
     }
 
     func testIssue45RootSchemaErrorIsSharedAcrossValidateDoctorAndRun() async throws {
@@ -168,25 +166,25 @@ final class PinchosCLITests: XCTestCase {
 
         let validateCode = await cli.run(arguments: ["validate"])
         XCTAssertEqual(validateCode, 3)
-        XCTAssertTrue(capture.stderr.contains("item: type error, must be a table"))
+        XCTAssertTrue(capture.stderr.contains("item must contain [item.<id>] tables"))
         XCTAssertTrue(capture.stderr.contains("line 1"))
 
         capture.stdout = ""
         capture.stderr = ""
         let doctorCode = await cli.run(arguments: ["doctor"])
         XCTAssertEqual(doctorCode, 4)
-        XCTAssertTrue(capture.stdout.contains("item: type error, must be a table"))
+        XCTAssertTrue(capture.stdout.contains("item must contain [item.<id>] tables"))
         XCTAssertTrue(capture.stdout.contains("line 1"))
 
         capture.stdout = ""
         capture.stderr = ""
         let runCode = await cli.run(arguments: ["run", "clock"])
         XCTAssertEqual(runCode, 3)
-        XCTAssertTrue(capture.stderr.contains("item: type error, must be a table"))
+        XCTAssertTrue(capture.stderr.contains("item must contain [item.<id>] tables"))
         XCTAssertTrue(capture.stderr.contains("line 1"))
     }
 
-    func testValidateReportsShellWorkingDirectoryAndEnvironmentFailures() async throws {
+    func testValidateRejectsDeferredItemOptions() async throws {
         let root = try makeRoot()
         defer { try? FileManager.default.removeItem(at: root) }
         let configURL = root.appendingPathComponent("pinchos/pinchos.toml")
@@ -196,18 +194,16 @@ final class PinchosCLITests: XCTestCase {
 
         try """
         [item.bad]
-        type = "command"
         run = "echo bad"
         shell = ["/definitely/missing/pinchos-shell", "-lc"]
         """.write(to: configURL, atomically: true, encoding: .utf8)
         let shellCode = await cli.run(arguments: ["validate"])
         XCTAssertEqual(shellCode, 3)
         XCTAssertTrue(capture.stderr.contains("item.bad"))
-        XCTAssertTrue(capture.stderr.contains("shell"))
+        XCTAssertTrue(capture.stderr.contains("unknown key"))
 
         try """
         [item.bad]
-        type = "command"
         run = "echo bad"
         working_directory = "missing"
         """.write(to: configURL, atomically: true, encoding: .utf8)
@@ -215,11 +211,10 @@ final class PinchosCLITests: XCTestCase {
         let workingDirectoryCode = await cli.run(arguments: ["validate"])
         XCTAssertEqual(workingDirectoryCode, 3)
         XCTAssertTrue(capture.stderr.contains("item.bad"))
-        XCTAssertTrue(capture.stderr.contains("working_directory"))
+        XCTAssertTrue(capture.stderr.contains("unknown key"))
 
         try """
         [item.bad]
-        type = "command"
         run = "echo bad"
 
         [item.bad.env]
@@ -228,7 +223,7 @@ final class PinchosCLITests: XCTestCase {
         capture.stderr = ""
         let environmentCode = await cli.run(arguments: ["validate"])
         XCTAssertEqual(environmentCode, 3)
-        XCTAssertTrue(capture.stderr.contains("item.bad.env.BAD-NAME"))
+        XCTAssertTrue(capture.stderr.contains("items must use exactly [item.<id>] tables"))
         XCTAssertTrue(capture.stderr.contains("line"))
     }
 
@@ -239,7 +234,6 @@ final class PinchosCLITests: XCTestCase {
         try FileManager.default.createDirectory(at: configURL.deletingLastPathComponent(), withIntermediateDirectories: true)
         try """
         [item.bad]
-        type = "command"
         run = "definitely_missing_pinchos_command"
         icon = "missing.svg"
         """.write(to: configURL, atomically: true, encoding: .utf8)
@@ -251,7 +245,7 @@ final class PinchosCLITests: XCTestCase {
         XCTAssertTrue(capture.stdout.contains("[PASS] config: readable and parsed"))
         XCTAssertTrue(capture.stdout.contains("[FAIL] item.bad.run"))
         XCTAssertTrue(capture.stdout.contains("[FAIL] item.bad.icon"))
-        XCTAssertTrue(capture.stdout.contains("launch at login"))
+        XCTAssertFalse(capture.stdout.contains("launch at login"))
     }
 
     func testDoctorReportsConfiguredSymbolInsteadOfMissingFileIcon() async throws {
@@ -261,7 +255,6 @@ final class PinchosCLITests: XCTestCase {
         try FileManager.default.createDirectory(at: configURL.deletingLastPathComponent(), withIntermediateDirectories: true)
         try """
         [item.chart]
-        type = "command"
         run = "true"
         symbol = "chart.bar.fill"
         """.write(to: configURL, atomically: true, encoding: .utf8)
@@ -282,7 +275,6 @@ final class PinchosCLITests: XCTestCase {
         try FileManager.default.createDirectory(at: configURL.deletingLastPathComponent(), withIntermediateDirectories: true)
         try """
         [item.missing]
-        type = "command"
         run = "true"
         symbol = "pinchos.definitely.not.a.real.symbol"
         """.write(to: configURL, atomically: true, encoding: .utf8)
@@ -307,7 +299,6 @@ final class PinchosCLITests: XCTestCase {
         try FileManager.default.createDirectory(at: configURL.deletingLastPathComponent(), withIntermediateDirectories: true)
         try """
         [item.both]
-        type = "command"
         run = "true"
         icon = "/tmp/icon.svg"
         symbol = "chart.bar.fill"
@@ -317,31 +308,18 @@ final class PinchosCLITests: XCTestCase {
 
         let validateCode = await cli.run(arguments: ["validate"])
         XCTAssertEqual(validateCode, 3)
-        XCTAssertTrue(capture.stderr.contains("item.both.symbol"))
-        XCTAssertTrue(capture.stderr.contains("cannot be combined"))
+        XCTAssertTrue(capture.stderr.contains("icon and symbol are mutually exclusive"))
     }
 
     func testDoctorDoesNotExecuteConfiguredShellOrEnvironment() async throws {
         let root = try makeRoot()
         defer { try? FileManager.default.removeItem(at: root) }
         let configURL = root.appendingPathComponent("pinchos/pinchos.toml")
-        let shellURL = root.appendingPathComponent("doctor-shell")
         let markerURL = root.appendingPathComponent("doctor-shell-ran")
         try FileManager.default.createDirectory(at: configURL.deletingLastPathComponent(), withIntermediateDirectories: true)
         try """
-        #!/bin/sh
-        touch '\(markerURL.path)'
-        exec /bin/sh "$@"
-        """.write(to: shellURL, atomically: true, encoding: .utf8)
-        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: shellURL.path)
-        try """
         [item.safe]
-        type = "command"
-        run = "true"
-        shell = ["\(shellURL.path)", "-lc"]
-
-        [item.safe.env]
-        PINCHOS_DOCTOR_PROBE = "configured"
+        run = "touch '\(markerURL.path)'"
         """.write(to: configURL, atomically: true, encoding: .utf8)
         let capture = CLIOutputCapture()
         let cli = PinchosCLI(configPath: configURL.path, output: capture.output)
@@ -360,7 +338,6 @@ final class PinchosCLITests: XCTestCase {
         try FileManager.default.createDirectory(at: configURL.deletingLastPathComponent(), withIntermediateDirectories: true)
         try """
         [item.compound]
-        type = "command"
         run = "cd /tmp; definitely_missing_pinchos_command"
         """.write(to: configURL, atomically: true, encoding: .utf8)
         let capture = CLIOutputCapture()
@@ -383,11 +360,10 @@ final class PinchosCLITests: XCTestCase {
         try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: executableURL.path)
         try """
         [item.spaced]
-        type = "command"
         run = "'\(executableURL.path)'"
         """.write(to: configURL, atomically: true, encoding: .utf8)
         let parsed = try ConfigParser.parse(String(contentsOf: configURL), relativeTo: configURL)
-        XCTAssertEqual(parsed.items.first?.commandConfig?.run, "'\(executableURL.path)'")
+        XCTAssertEqual(parsed.items.first?.run, "'\(executableURL.path)'")
         let capture = CLIOutputCapture()
         let cli = PinchosCLI(configPath: configURL.path, output: capture.output)
 
@@ -405,7 +381,6 @@ final class PinchosCLITests: XCTestCase {
         try FileManager.default.createDirectory(at: configURL.deletingLastPathComponent(), withIntermediateDirectories: true)
         try """
         [item.env_prefix]
-        type = "command"
         run = "env PINCHOS_PROBE=1 definitely_missing_pinchos_command"
         """.write(to: configURL, atomically: true, encoding: .utf8)
         let capture = CLIOutputCapture()
@@ -418,22 +393,14 @@ final class PinchosCLITests: XCTestCase {
         XCTAssertTrue(capture.stdout.contains("definitely_missing_pinchos_command"))
     }
 
-    func testRunUsesConfiguredShellWorkingDirectoryAndMergedEnvironment() async throws {
+    func testRunExecutesCanonicalItem() async throws {
         let root = try makeRoot()
         defer { try? FileManager.default.removeItem(at: root) }
         let configURL = root.appendingPathComponent("pinchos/pinchos.toml")
-        let workingDirectory = configURL.deletingLastPathComponent().appendingPathComponent("work")
         try FileManager.default.createDirectory(at: configURL.deletingLastPathComponent(), withIntermediateDirectories: true)
-        try FileManager.default.createDirectory(at: workingDirectory, withIntermediateDirectories: true)
         try """
         [item.example]
-        type = "command"
-        run = 'printf "%s\\n%s\\n" "$PINCHOS_TEST_OVERRIDE" "$PWD"'
-        shell = ["/bin/zsh", "-lc"]
-        working_directory = "work"
-
-        [item.example.env]
-        PINCHOS_TEST_OVERRIDE = "configured value"
+        run = "printf canonical"
         """.write(to: configURL, atomically: true, encoding: .utf8)
         let capture = CLIOutputCapture()
         let cli = PinchosCLI(configPath: configURL.path, output: capture.output)
@@ -441,9 +408,7 @@ final class PinchosCLITests: XCTestCase {
         let runCode = await cli.run(arguments: ["run", "example"])
         XCTAssertEqual(runCode, 0)
         XCTAssertEqual(capture.stderr, "")
-        let outputLines = capture.stdout.split(whereSeparator: \.isNewline).map(String.init)
-        XCTAssertEqual(outputLines.first, "configured value")
-        XCTAssertTrue(outputLines.dropFirst().first?.hasSuffix("/pinchos/work") == true)
+        XCTAssertEqual(capture.stdout, "canonical")
     }
 
     func testRunPreservesChildExitCodeAndRejectsUnknownItems() async throws {
@@ -453,7 +418,6 @@ final class PinchosCLITests: XCTestCase {
         try FileManager.default.createDirectory(at: configURL.deletingLastPathComponent(), withIntermediateDirectories: true)
         try """
         [item.failure]
-        type = "command"
         run = "printf boom >&2; exit 7"
         """.write(to: configURL, atomically: true, encoding: .utf8)
         let capture = CLIOutputCapture()
@@ -477,7 +441,6 @@ final class PinchosCLITests: XCTestCase {
         try FileManager.default.createDirectory(at: configURL.deletingLastPathComponent(), withIntermediateDirectories: true)
         try """
         [item.timeout]
-        type = "command"
         run = "sleep 2"
         timeout = "1s"
         """.write(to: configURL, atomically: true, encoding: .utf8)
@@ -496,7 +459,6 @@ final class PinchosCLITests: XCTestCase {
         try FileManager.default.createDirectory(at: configURL.deletingLastPathComponent(), withIntermediateDirectories: true)
         try """
         [item.lingering]
-        type = "command"
         run = "(sleep 0.3; printf 'late\\n') & exit 0"
         timeout = "2s"
         """.write(to: configURL, atomically: true, encoding: .utf8)
@@ -522,7 +484,6 @@ final class PinchosCLITests: XCTestCase {
         let childPIDURL = root.appendingPathComponent("child.pid")
         try """
         [item.indefinite]
-        type = "command"
         run = "(trap '' TERM; while :; do sleep 1; done) & child=$!; printf '%s' $child > '\(childPIDURL.path)'; exit 0"
         timeout = "1s"
         """.write(to: configURL, atomically: true, encoding: .utf8)

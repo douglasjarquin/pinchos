@@ -26,7 +26,6 @@ final class SignalIntegrationTests: XCTestCase {
             .appendingPathComponent("pinchos-issue45-doctor-shell-free-\(UUID().uuidString)", isDirectory: true)
         let configDirectory = root.appendingPathComponent("pinchos", isDirectory: true)
         let configURL = configDirectory.appendingPathComponent("pinchos.toml")
-        let shellURL = root.appendingPathComponent("must-not-run-shell")
         let markerURL = root.appendingPathComponent("doctor-shell.pid")
         try FileManager.default.createDirectory(at: configDirectory, withIntermediateDirectories: true)
         var process: Process?
@@ -39,21 +38,9 @@ final class SignalIntegrationTests: XCTestCase {
         }
 
         try #"""
-        #!/bin/sh
-        printf '%s' "$$" > "$PINCHOS_MARKER"
-        sleep 30
-        exec /bin/sh "$@"
-        """#.write(to: shellURL, atomically: true, encoding: .utf8)
-        try FileManager.default.setAttributes([.posixPermissions: NSNumber(value: 0o755)], ofItemAtPath: shellURL.path)
-        try #"""
         [item.probe]
-        type = "command"
         timeout = "1m"
-        shell = ["\#(shellURL.path)", "-c"]
-        run = "true"
-
-        [item.probe.env]
-        PINCHOS_MARKER = "\#(markerURL.path)"
+        run = "touch '\#(markerURL.path)'"
         """#.write(to: configURL, atomically: true, encoding: .utf8)
 
         let launchedProcess = Process()
@@ -103,7 +90,6 @@ final class SignalIntegrationTests: XCTestCase {
 
         try #"""
         [item.gui]
-        type = "command"
         interval = "manual"
         timeout = "1h"
         run = "(trap '' TERM INT; while :; do sleep 1; done) & child_pid=$!; printf '%s' \"$child_pid\" > \"$PINCHOS_MARKER\"; wait \"$child_pid\""
@@ -168,7 +154,6 @@ final class SignalIntegrationTests: XCTestCase {
 
         try #"""
         [item.normal]
-        type = "command"
         run = "exit 7"
         """#.write(to: configURL, atomically: true, encoding: .utf8)
 
@@ -218,7 +203,6 @@ final class SignalIntegrationTests: XCTestCase {
 
         try #"""
         [item.long]
-        type = "command"
         run = "(trap '' TERM INT; while :; do sleep 1; done) & child_pid=$!; printf '%s' \"$child_pid\" > \"$PINCHOS_MARKER\"; wait \"$child_pid\""
         """#.write(to: configURL, atomically: true, encoding: .utf8)
 

@@ -1,42 +1,29 @@
-[item.claude]
-type = "command"
-run = "quota-axi --provider claude --json | jq -r '.providers[0].windows[] | select(.label==\"week\") | .percentRemaining'"
-interval = "5m"
-timeout = "15s"
-max_output = "64KiB"
-format = "{output}%"
-hidden = false
-icon = "/path/to/pinchos/example/icons/claude.svg"
-error_text = "–"
-on_error = "keep_last"
-stale_after = "15m"
-
 [item.codex]
-type = "command"
 run = "quota-axi --provider codex --json | jq -r '.providers[0].windows[] | select(.label==\"week\") | .percentRemaining'"
 interval = "5m"
-format = "{output}%"
-hidden = false
-icon = "/path/to/pinchos/example/icons/codex.svg"
-error_text = "–"
+timeout = "15s"
+format = "{output}"
+symbol = "terminal"
 
-[[item.codex.info]]
-title = "Reset"
-run = "quota-axi --provider codex --json | jq -r '.providers[0].windows[0].resetsAt'"
+[[item.codex.menu]]
+label = "Usage"
+run = "quota-axi --provider codex --json | jq -r '.providers[0].windows[] | select(.label==\"week\") | .percentRemaining'"
+cache = "5m"
 
-[[item.codex.info]]
-title = "Pace"
-run = "quota-axi --provider codex --json | jq -r '.providers[0].windows[0].pace.status'"
+[[item.codex.menu]]
+label = "Pace"
+run = "quota-axi --provider codex --json | jq -r '.providers[0].windows[] | select(.label==\"week\") | .pace.status'"
+cache = "5m"
 
-[item.clock]
-type = "command"
-run = "date '+%H:%M'"
-interval = "30s"
-hidden = false
+[[item.codex.menu]]
+label = "Refresh"
+run = "quota-axi --provider codex --json | jq -r '.providers[0].windows[] | select(.label==\"week\") | .percentRemaining'"
+cache = "5m"
+action = "open https://chatgpt.com/codex"
 
-[item.battery]
-type = "command"
-run = "pmset -g batt | grep -Eo '[0-9]+%' | head -1"
-interval = "1m"
-hidden = false
-format = "🔋 {output}"
+[[item.codex.menu]]
+label = "Open Codex"
+action = "open https://chatgpt.com/codex"
+
+[[item.codex.menu]]
+separator = true

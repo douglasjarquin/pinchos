@@ -3,9 +3,11 @@ import { resolve } from 'node:path';
 
 export interface RecipeItem {
   readonly name: string;
+  readonly run: string;
   readonly format: string;
   readonly interval: string;
   readonly preview: string;
+  readonly menuRows: readonly string[];
 }
 
 export interface Recipe {
@@ -25,6 +27,11 @@ const readStringField = (section: string, key: string): string => {
   const match = section.match(new RegExp(`^${key} = "((?:\\\\.|[^"])*)"$`, 'm'));
   return match?.[1]?.replace(/\\"/g, '"').replace(/\\\\/g, '\\') ?? '';
 };
+
+const readMenuRows = (section: string): readonly string[] => Array.from(
+  section.matchAll(/^\[\[item\.[^\]]+\.menu\]\][\s\S]*?^label = "([^"]+)"/gm),
+  (match) => match[1],
+);
 
 const readExpectedCommandOutput = (sourceBeforeHeader: string): string => {
   let raw = 'sample output';
@@ -52,9 +59,11 @@ const readItems = (source: string): readonly RecipeItem[] => {
 
     return [{
       name,
+      run: readStringField(section, 'run'),
       format,
       interval,
       preview: format.replace('{output}', example),
+      menuRows: readMenuRows(section),
     }];
   });
 };
@@ -74,7 +83,7 @@ const readRecipe = (filename: string): Recipe => {
     category,
     source,
     items,
-    searchText: [title, category, filename, ...items.map((item) => `${item.name} ${item.format}`), source]
+    searchText: [title, category, filename, ...items.map((item) => `${item.name} ${item.run} ${item.format} ${item.menuRows.join(' ')}`), source]
       .join(' ')
       .toLocaleLowerCase('en-US'),
   };

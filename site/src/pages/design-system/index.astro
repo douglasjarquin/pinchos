@@ -20,8 +20,8 @@ const colors = [
 const typeRows = [
   ['display · 54/1.06 · 600 · -1.5%', 'type-display', 'Pin your scripts'],
   ['h2 · 32/1.15 · 600 · -1%', 'type-h2', 'Get pinchos'],
-  ['h3 · 22/1.3 · 600', 'type-h3', 'Quiet when healthy'],
-  ['body · 16.5/1.65 · 400', 'type-body', 'Healthy items are just text; failure speaks in place.'],
+  ['h3 · 22/1.3 · 600', 'type-h3', 'Rows stay ordered'],
+  ['body · 16.5/1.65 · 400', 'type-body', 'Cached values stay close at hand.'],
   ['small · 14/1.6 · 500', 'type-small', 'Build it yourself'],
   ['overline · 12 · 500 · +9% · caps', 'type-overline', 'macOS menu bar utility'],
   ['code · 13.5/1.85 · 400', 'type-code', 'swift build -c release'],
@@ -36,16 +36,16 @@ const spaces = [4, 8, 12, 16, 24, 32, 48, 64, 96];
       <div class="docs-intro__identity">
         <Mark size={26} label="pinchos mark" />
         <strong>pinchos</strong>
-        <span>web design system · v1</span>
+        <span>web design system · 0.1</span>
       </div>
       <h1 class="serif-heading">Everything the site is allowed to do.</h1>
-      <p class="body-copy">Scope: the website only. The product's own design system (menus, markers, states) lives in <code>design/docs/design-system.md</code> — the site quotes the product, never restyles it.</p>
+      <p class="body-copy">Scope: the website only. The product's own native menu behavior lives in the Swift package — the site quotes the product, never restyles it.</p>
     </header>
 
     <section class="docs-section" aria-labelledby="principles-heading">
       <h2 id="principles-heading" class="serif-heading">1 · Principles</h2>
       <div class="principles-grid">
-        <p><strong>Paper, not chrome.</strong> Ivory background, ink text, hairline rules. No gradients, no glass, no dark mode in v1.</p>
+        <p><strong>Paper, not chrome.</strong> Ivory background, ink text, hairline rules. No gradients, no glass, no dark mode in 0.1.</p>
         <p><strong>The product is the only dark surface.</strong> Menu-bar mockups and code blocks sit on charcoal; nothing else does.</p>
         <p><strong>One accent per block.</strong> Terracotta is interactive, olive is labels. Never both carrying meaning in the same block.</p>
         <p><strong>Write like a README.</strong> Matter-of-fact, lowercase “pinchos”, no exclamation marks, no superlatives.</p>
@@ -94,7 +94,7 @@ const spaces = [4, 8, 12, 16, 24, 32, 48, 64, 96];
       </div>
       <div class="type-table">
         {typeRows.map(([spec, className, sample]) => <div class="type-row"><code>{spec}</code><span class={className}>{sample}</span></div>)}
-        <p>Rules: serif never below 20px · sentence case everywhere · “pinchos” always lowercase, even at line start · product markers <code>⚠︎ ~</code> quoted verbatim in mono.</p>
+        <p>Rules: serif never below 20px · sentence case everywhere · “pinchos” always lowercase, even at line start · technical values use mono.</p>
       </div>
     </section>
 
@@ -131,7 +131,7 @@ const spaces = [4, 8, 12, 16, 24, 32, 48, 64, 96];
         <article class="component-card raised-card">
           <div class="overline">product mockups</div>
           <ProductMockup compact />
-          <p>The bar is always the dark pill with system font and real product vocabulary: <code>⚠︎</code> failed, <code>~</code> stale.</p>
+          <p>The bar is a dark pill with system font. The submenu demonstrates static, cached, action, run-plus-action, and separator rows in declaration order.</p>
         </article>
         <article class="component-card raised-card">
           <div class="overline">note / callout</div>
@@ -139,51 +139,50 @@ const spaces = [4, 8, 12, 16, 24, 32, 48, 64, 96];
           <p>Overline color by kind: olive for notes, link terracotta for warnings.</p>
         </article>
         <article class="component-card raised-card component-card--wide">
-          <div class="overline">table</div>
+          <div class="overline">menu rows</div>
           <table class="marker-table">
-            <thead><tr><th scope="col">marker</th><th scope="col">meaning</th><th scope="col">first level shows</th></tr></thead>
+            <thead><tr><th scope="col">row</th><th scope="col">fields</th><th scope="col">behavior</th></tr></thead>
             <tbody>
-              <tr><td>⚠︎</td><td>Failed</td><td>exact cause headline, bounded stderr line, Copy Full Error</td></tr>
-              <tr><td>~</td><td>Stale</td><td>last output kept in the bar, marked stale</td></tr>
-              <tr><td>—</td><td>Healthy</td><td>text only; nothing is promoted</td></tr>
+              <tr><td>static</td><td><code>label</code> + <code>value</code></td><td>read-only text</td></tr>
+              <tr><td>cached</td><td><code>label</code> + <code>run</code> + <code>cache</code></td><td>cached value, background refresh</td></tr>
+              <tr><td>action</td><td><code>label</code> + <code>action</code></td><td>runs after activation</td></tr>
+              <tr><td>run-plus-action</td><td><code>label</code> + <code>run</code> + <code>action</code></td><td>cached value with an action</td></tr>
+              <tr><td>separator</td><td><code>separator = true</code></td><td>visual rule only</td></tr>
             </tbody>
           </table>
-          <p>Header: mono caps olive on Paper Raised. Hairline rows only — no zebra, no vertical rules.</p>
+          <p>Rows are ordered exactly as declared. Menu construction never executes a command.</p>
         </article>
         <article class="component-card raised-card component-card--wide">
           <div class="overline">forms</div>
           <div class="form-layout">
             <form class="specimen-form">
-              <label for="email">Email</label><input id="email" value="ana@example.com" />
-              <label for="config-name">Config name</label><input id="config-name" value="pinchos..toml" aria-describedby="config-error" /><span id="config-error" class="form-error">error — must end in .toml, exactly one dot</span>
-              <label for="version">Version</label><select id="version"><option>latest release</option></select>
-              <label class="check-row"><input type="checkbox" checked /> Notify me about releases</label>
-              <label class="check-row"><input type="checkbox" /> Include pre-releases</label>
-              <fieldset><legend>channel</legend><label class="check-row"><input type="radio" name="channel" checked /> stable</label><label class="check-row"><input type="radio" name="channel" /> beta</label></fieldset>
-              <button type="button" class="button button--primary">Subscribe</button>
+              <label for="item-name">Item name</label><input id="item-name" value="codex" />
+              <label for="item-command">Command</label><input id="item-command" value="quota-axi --provider codex --json | jq -r '.providers[0].windows[] | select(.label==&quot;week&quot;) | .percentRemaining'" />
+              <label for="item-interval">Interval</label><select id="item-interval"><option>5m</option></select>
+              <button type="button" class="button button--primary">Validate</button>
             </form>
-            <div class="form-rules"><div class="overline">rules</div><div>· labels above fields, never placeholder-as-label</div><div>· fields use Paper Field fill, 1px border, radius 8, padding 10 12</div><div>· hints and errors in mono 11 below the field</div><div>· checks and radios are 16px; checked fill Link Terracotta</div></div>
+            <div class="form-rules"><div class="overline">rules</div><div>· labels above fields, never placeholder-as-label</div><div>· fields use Paper Field fill, 1px border, radius 8, padding 10 12</div><div>· validate before running a new command</div></div>
           </div>
         </article>
         <article class="component-card raised-card">
           <div class="overline">tabs · tags · kbd</div>
           <div class="tabs"><span class="tabs__active">Overview</span><span>Config</span><span>Changelog</span></div>
-          <div class="chips"><code>json-v1</code><code class="chip-olive">new in 0.4</code><code class="chip-terracotta">breaking</code><kbd><span aria-hidden="true">⌘</span><span class="visually-hidden">Command</span></kbd><kbd>C</kbd></div>
+          <div class="chips"><code>menu</code><code class="chip-olive">cached</code><code class="chip-terracotta">read-only</code><kbd><span aria-hidden="true">⌘</span><span class="visually-hidden">Command</span></kbd><kbd>C</kbd></div>
           <p>Tabs use a 2px Link Terracotta underline. Tags are mono chips; kbd uses a 2px bottom border.</p>
         </article>
         <article class="component-card raised-card">
           <div class="overline">lists · quote · prev/next</div>
           <ul class="olive-list"><li>unordered — olive dot, hanging, 6px row gap</li><li>ordered — mono olive numerals, zero-padded</li></ul>
           <blockquote>“It behaves like a built-in menu extra.”<cite>— design/README.md</cite></blockquote>
-          <div class="pager"><a href="#config">← Config format</a><a href="#markers">Markers →</a></div>
+          <div class="pager"><a href="#config">← Config format</a><a href="#menu-rows">Menu rows →</a></div>
         </article>
       </div>
     </section>
 
     <section class="docs-section" aria-labelledby="voice-heading">
       <h2 id="voice-heading" class="serif-heading">7 · Voice</h2>
-      <div class="voice-grid"><div><div class="overline">say</div><p>“pinchos runs the commands you give it.”</p><p>“Failed 2 minutes ago — exit 1.”</p><p>“Free, open source, native AppKit.”</p></div><div><div class="overline overline--terracotta">don't say</div><p>“Supercharge your workflow!”</p><p>“Something went wrong.”</p><p>“The ultimate menu bar experience.”</p></div></div>
-      <p class="docs-note">Sentence case, present tense, no exclamation marks, no emoji. Error examples in copy are always real ones with exact causes. Feature claims name the mechanism, not the feeling.</p>
+      <div class="voice-grid"><div><div class="overline">say</div><p>“pinchos runs the commands you give it.”</p><p>“Cached rows refresh in the background.”</p><p>“Free, open source, native AppKit.”</p></div><div><div class="overline overline--terracotta">don't say</div><p>“Supercharge your workflow!”</p><p>“The ultimate menu bar experience.”</p><p>“A settings dashboard for every preference.”</p></div></div>
+      <p class="docs-note">Sentence case, present tense, no exclamation marks, and no promises beyond the documented command and menu-row behavior.</p>
     </section>
 
     <section class="docs-section docs-section--last" aria-labelledby="later-heading">

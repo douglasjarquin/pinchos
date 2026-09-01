@@ -14,12 +14,12 @@ runner to runner. Pinchos therefore splits performance evidence into two tiers:
 1. **Deterministic architectural invariants, in ordinary PR CI.** These don't measure
    wall-clock time or absolute memory; they prove structural properties that can only be
    true or false, regardless of runner noise, e.g. "a manual-interval item never holds a
-   timer" or "retained output never exceeds its configured byte budget." Enforced by
+   timer" or "retained output never exceeds its fixed per-runner byte budget." Enforced by
    `.github/workflows/verify.yml` (`swift build`, `swift test`, `swift build -c release`).
 2. **Wall-clock/RSS/wakeup budgets, run manually on a controlled machine.** These are the
    absolute product claims (the "under 15MB" line in the README). They're measured with
    the real release binary using `footprint`'s `phys_footprint` (Apple's own private-memory
-   metric — see the note in [`docs/manual-qa/v1-evidence.md`](manual-qa/v1-evidence.md) on
+   metric — see the note in [`docs/manual-qa/0.1.0-evidence.md`](manual-qa/0.1.0-evidence.md) on
    why this is preferred over `ps` RSS), run repeatedly, and compared against both an
    absolute budget and a percentage regression threshold. There is currently no scheduled
    CI workflow for this tier; it is a documented local command (below) run by a maintainer
@@ -77,15 +77,15 @@ Deterministic resource-invariant tests, run as part of `swift test`:
   concurrent runners, each individually configured to retain more than its fair share,
   never collectively exceed the shared budget). [`Tests/PinchosCoreTests/PerformanceInvariantTests.swift`](../Tests/PinchosCoreTests/PerformanceInvariantTests.swift)
   adds one more thing neither covers: an end-to-end, timing-independent proof (`head -c`,
-  not `yes`, so there's no process-scheduling race) that a real `run`+`max_output`
-  configuration retains *exactly* its configured budget and *exactly* the tail of the
+  not `yes`, so there's no process-scheduling race) that a real `CommandRunner` retains
+  *exactly* its explicit per-runner budget and *exactly* the tail of the
   stream through the same `CommandRunner` path `ManagedItem` uses in production. Together
   these are the architectural half of the P4 budget.
-- **Menu construction cost, independent of `max_output`** (issue #53) —
-  [`Tests/pinchosTests/StatusItemControllerTests.swift`](../Tests/pinchosTests/StatusItemControllerTests.swift)`.testMenuConstructionCostIsBoundedIndependentOfMaxOutput`
+- **Menu construction cost, independent of retained output size** (issue #53) —
+  [`Tests/pinchosTests/StatusItemControllerTests.swift`](../Tests/pinchosTests/StatusItemControllerTests.swift)`.testMenuConstructionCostIsBoundedIndependentOfRetainedOutput`
   builds a real lifecycle menu against the maximum allowed retained output
-  (`maxAllowedOutputBytes`, 4MiB) simultaneously across the primary value, primary
-  stderr, and a command action's stdout/stderr, and proves the combined size of every
+  (a pathological 4MiB retained value) simultaneously across the primary value,
+  primary stderr, and a menu action's stdout/stderr, and proves the combined size of every
   resulting menu title stays a small, fixed budget — the deterministic, timing-free half
   of "menu construction stays under a measured main-thread latency budget in a release
   build." [`Tests/PinchosCoreTests/DiagnosticPreviewFormatterTests.swift`](../Tests/PinchosCoreTests/DiagnosticPreviewFormatterTests.swift)
@@ -124,10 +124,14 @@ directory. It is a stub, not a full harness: it only covers P1, it doesn't yet r
 baseline to diff against, and its rerun/threshold policy is the manual guidance in this
 document rather than automated pass/fail. Extending it to P0–P5, a baseline/threshold
 file, and a scheduled or self-hosted CI workflow that retains artifacts is tracked as
-follow-up work under issue #55.
+follow-up work in the 0.1 roadmap.
+
+The retained reference sample was captured at runtime commit `44bb2b3d3fd8bc90ae52e4d2da2dd7b4b0e7aeb6` and is recorded in [`docs/manual-qa/0.1.0-p1.json`](manual-qa/0.1.0-p1.json).
+The later evidence-only commit does not change executable code.
+The sample records three settled `phys_footprint` values between 13.78 MB and 13.81 MB on an arm64 Mac15,11, below the 15 MB P1 budget.
 
 For a worked example of this measurement (a prior manual pass, before this script
-existed), see [`docs/manual-qa/v1-evidence.md`](manual-qa/v1-evidence.md), section "Idle
+existed), see [`docs/manual-qa/0.1.0-evidence.md`](manual-qa/0.1.0-evidence.md), section "Idle
 RSS with the example shape" — `phys_footprint: 14 MB`, under the 15MB bar.
 
 ## Absolute budgets (current)

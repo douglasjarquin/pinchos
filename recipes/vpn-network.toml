@@ -7,10 +7,8 @@
 # Dependencies: none beyond the macOS base system (/sbin/ifconfig,
 # /sbin/route).
 #
-# Both commands use a shell pipeline (`|`), so `pinchos doctor` reports
-# that it "could not identify a single command to check safely" for each
-# item's `run` line — that is expected for compound commands, not a bug;
-# `doctor` still checks the configured shell, working directory, and icon.
+# Both commands use a shell pipeline (`|`). Review the commands before
+# installing them.
 
 # --- network -----------------------------------------------------------
 # Expected output: "en0" or "en7" (the BSD name of the interface
@@ -18,7 +16,7 @@
 #   Machine- and network-dependent: the interface name depends on this
 #   Mac's hardware and which network it is joined to.
 [item.network]
-type = "command"
+
 run = "route -n get default 2>/dev/null | awk '/interface:/{print $2}' | sed 's/^$/offline/'"
 interval = "30s"
 
@@ -34,7 +32,7 @@ interval = "30s"
 #   networking tool could still cause a false positive. Treat the
 #   output as "likely tunnel activity", not certainty.
 [item.vpn]
-type = "command"
+
 run = "ifconfig | awk '/^utun[0-9]+:/{iface=1;next} /^[a-zA-Z0-9_.]+:/{iface=0} iface && /^[[:space:]]+inet[[:space:]]/{print}' | wc -l | tr -d ' '"
 interval = "30s"
 format = "{output}"

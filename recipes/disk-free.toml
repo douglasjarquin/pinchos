@@ -6,11 +6,10 @@
 # Expected output: "412Gi" or another machine-specific free-space value.
 # Limitations: this checks only `/`; external volumes and per-user quotas
 #   are outside its scope.
-# This recipe uses a shell pipeline, so doctor will not identify one command
-#   to check safely; it still checks the shell and other config basics.
+# This recipe uses a shell pipeline. Review the command before installing it.
 
 [item.disk_free]
-type = "command"
+
 run = "df -h / | awk 'NR==2{print $4}'"
 interval = "5m"
 format = "free {output}"

@@ -1,7 +1,6 @@
 import AppKit
 import Foundation
 import PinchosCore
-import ServiceManagement
 
 struct CLIOutput {
     let stdout: (String) -> Void
@@ -84,8 +83,6 @@ struct PinchosCLI {
     private let opener: (URL) -> Bool
     private let shutdownCoordinator: ShutdownCoordinator?
     private let runnerRegistry: CLICommandRunnerRegistry
-    private let launchAgentService: LaunchAgentService
-    private let currentExecutablePath: () -> String?
 
     init(
         configPath: String = ConfigLocation.resolve(),
@@ -93,9 +90,7 @@ struct PinchosCLI {
         output: CLIOutput = CLIOutput(),
         opener: @escaping (URL) -> Bool = { NSWorkspace.shared.open($0) },
         shutdownCoordinator: ShutdownCoordinator? = nil,
-        runnerRegistry: CLICommandRunnerRegistry? = nil,
-        launchAgentService: LaunchAgentService = LaunchAgentService(),
-        currentExecutablePath: @escaping () -> String? = { Bundle.main.executablePath }
+        runnerRegistry: CLICommandRunnerRegistry? = nil
     ) {
         self.configPath = configPath
         self.fileManager = fileManager
@@ -103,8 +98,6 @@ struct PinchosCLI {
         self.opener = opener
         self.shutdownCoordinator = shutdownCoordinator
         self.runnerRegistry = runnerRegistry ?? CLICommandRunnerRegistry()
-        self.launchAgentService = launchAgentService
-        self.currentExecutablePath = currentExecutablePath
     }
 
     func run(arguments: [String]) async -> Int32 {
@@ -132,8 +125,6 @@ struct PinchosCLI {
                 return try runOpenConfig(arguments: Array(arguments.dropFirst()))
             case "run":
                 return try await runItem(arguments: Array(arguments.dropFirst()))
-            case "service":
-                return try runService(arguments: Array(arguments.dropFirst()))
             default:
                 throw CLIError.usage("unknown command '\(command)'\nTry 'pinchos --help' for usage.")
             }
@@ -246,9 +237,7 @@ struct PinchosCLI {
         guard let matchedItem = config.items.first(where: { $0.name == name }) else {
             throw CLIError.config("item '\(name)' is not configured in \(configPath)")
         }
-        guard case .command(let item) = matchedItem else {
-            throw CLIError.config("item '\(name)' is a group and has no command to run")
-        }
+        let item = matchedItem
 
         guard shutdownCoordinator?.isShutdownRequested != true else {
             return shutdownCoordinator?.terminationExitCode ?? CLIExitCode.execution
@@ -256,11 +245,7 @@ struct PinchosCLI {
 
         let runner = CommandRunner(
             command: item.run,
-            timeout: item.timeout,
-            maxOutputBytes: item.maxOutputBytes,
-            shell: item.shell,
-            workingDirectory: item.workingDirectory,
-            environment: item.environment
+            timeout: item.timeout
         )
         guard runnerRegistry.register(runner) else {
             return shutdownCoordinator?.terminationExitCode ?? CLIExitCode.execution
@@ -314,118 +299,6 @@ struct PinchosCLI {
             output.stderr("pinchos run \(name): launch failed: \(message)\n")
             return CLIExitCode.launchFailure
         }
-    }
-
-    private func runService(arguments: [String]) throws -> Int32 {
-        guard let subcommand = arguments.first else {
-            printServiceHelp()
-            return CLIExitCode.usage
-        }
-        switch subcommand {
-        case "--help", "-h", "help":
-            printServiceHelp()
-            return 0
-        case "install":
-            return try runServiceInstall(arguments: Array(arguments.dropFirst()))
-        case "status":
-            return try runServiceStatus(arguments: Array(arguments.dropFirst()))
-        case "uninstall":
-            return try runServiceUninstall(arguments: Array(arguments.dropFirst()))
-        default:
-            throw CLIError.usage("unknown service subcommand '\(subcommand)'\nTry 'pinchos service --help' for usage.")
-        }
-    }
-
-    private func runServiceInstall(arguments: [String]) throws -> Int32 {
-        if arguments == ["--help"] || arguments == ["-h"] {
-            printServiceInstallHelp()
-            return 0
-        }
-        let usage = "usage: pinchos service install [--executable <absolute-path>]"
-        let executablePath = try parseExecutableOverride(arguments, usage: usage) ?? resolveCurrentExecutablePath()
-        guard executablePath.hasPrefix("/") else {
-            throw CLIError.usage(usage)
-        }
-
-        switch launchAgentService.install(executablePath: executablePath) {
-        case .alreadyInstalled:
-            output.stdout("Launch agent already installed and enabled: \(launchAgentService.plistURL.path)\n")
-            return 0
-        case .installed:
-            output.stdout("Installed launch agent: \(launchAgentService.plistURL.path)\n")
-            output.stdout("Target executable: \(executablePath)\n")
-            output.stdout("Logs: \(launchAgentService.standardOutURL.path)\n")
-            return 0
-        case .failed(let message):
-            throw CLIError.config(message)
-        }
-    }
-
-    private func runServiceStatus(arguments: [String]) throws -> Int32 {
-        if arguments == ["--help"] || arguments == ["-h"] {
-            printServiceStatusHelp()
-            return 0
-        }
-        let usage = "usage: pinchos service status [--executable <absolute-path>]"
-        let expectedExecutablePath = try parseExecutableOverride(arguments, usage: usage) ?? resolveCurrentExecutablePath()
-
-        let status = launchAgentService.status(expectedExecutablePath: expectedExecutablePath)
-        output.stdout("Launch agent: \(launchAgentService.label)\n")
-        output.stdout("Configuration file: \(status.plistPath) (\(status.plistExists ? "present" : "missing"))\n")
-        if let configured = status.configuredExecutablePath {
-            if status.matchesExpectedExecutable {
-                output.stdout("Executable: \(configured)\n")
-            } else {
-                output.stdout("Executable: \(configured) (differs from the current binary at \(expectedExecutablePath))\n")
-            }
-        } else {
-            output.stdout("Executable: not configured\n")
-        }
-        output.stdout("Enabled: \(status.loaded ? "yes" : "no")\n")
-        if status.running, let pid = status.pid {
-            output.stdout("Running: yes (pid \(pid))\n")
-        } else {
-            output.stdout("Running: \(status.running ? "yes" : "no")\n")
-        }
-        output.stdout("Logs: \(launchAgentService.standardOutURL.path)\n")
-
-        return status.loaded ? 0 : CLIExitCode.notEnabled
-    }
-
-    private func runServiceUninstall(arguments: [String]) throws -> Int32 {
-        if arguments == ["--help"] || arguments == ["-h"] {
-            printServiceUninstallHelp()
-            return 0
-        }
-        guard arguments.isEmpty else {
-            throw CLIError.usage("usage: pinchos service uninstall")
-        }
-
-        switch launchAgentService.uninstall() {
-        case .alreadyAbsent:
-            output.stdout("Launch agent already not installed.\n")
-            return 0
-        case .uninstalled:
-            output.stdout("Uninstalled launch agent: \(launchAgentService.plistURL.path)\n")
-            return 0
-        case .failed(let message):
-            throw CLIError.config(message)
-        }
-    }
-
-    private func parseExecutableOverride(_ arguments: [String], usage: String) throws -> String? {
-        guard !arguments.isEmpty else { return nil }
-        guard arguments.count == 2, arguments[0] == "--executable", !arguments[1].isEmpty else {
-            throw CLIError.usage(usage)
-        }
-        return arguments[1]
-    }
-
-    private func resolveCurrentExecutablePath() throws -> String {
-        guard let path = currentExecutablePath(), path.hasPrefix("/") else {
-            throw CLIError.config("unable to resolve the current executable's path; pass --executable <absolute-path> instead")
-        }
-        return path
     }
 
     private func runDoctor(arguments: [String]) async throws -> Int32 {
@@ -485,89 +358,26 @@ struct PinchosCLI {
                 problemCount += 1
             }
             for entry in config.items {
-                switch entry {
-                case .group(let group):
-                    reportSuccess("group.\(group.name).members", "\(group.members.count) member\(group.members.count == 1 ? "" : "s")")
-                    problemCount += reportIconSource(
-                        path: "group.\(group.name)",
-                        source: group.iconSource,
-                        reportAbsentAsIconNotConfigured: false
-                    )
-                case .command(let item):
-                    if fileManager.isExecutableFile(atPath: item.shell[0]) {
-                        reportSuccess("item.\(item.name).shell", item.shell[0])
+                let item = entry
+                problemCount += reportIconSource(
+                    path: "item.\(item.name)",
+                    source: item.iconSource,
+                    reportAbsentAsIconNotConfigured: true
+                )
+
+                if let command = commandName(from: item.run) {
+                    if let executablePath = executablePath(for: command, processEnvironment: processEnvironment) {
+                        reportSuccess("item.\(item.name).run", executablePath)
                     } else {
-                        reportFailure("item.\(item.name).shell", "executable cannot be resolved: \(item.shell[0])")
+                        reportFailure("item.\(item.name).run", "command '\(command)' is unavailable in the process environment")
                         problemCount += 1
                     }
-
-                    if let workingDirectory = item.workingDirectory {
-                        var itemIsDirectory = ObjCBool(false)
-                        if fileManager.fileExists(atPath: workingDirectory, isDirectory: &itemIsDirectory), itemIsDirectory.boolValue {
-                            reportSuccess("item.\(item.name).working_directory", workingDirectory)
-                        } else {
-                            reportFailure("item.\(item.name).working_directory", "directory cannot be resolved: \(workingDirectory)")
-                            problemCount += 1
-                        }
-                    } else {
-                        reportSuccess("item.\(item.name).working_directory", "inherits Pinchos working directory")
-                    }
-
-                    problemCount += reportIconSource(
-                        path: "item.\(item.name)",
-                        source: item.iconSource,
-                        reportAbsentAsIconNotConfigured: true
-                    )
-
-                    if item.environment.isEmpty {
-                        reportSuccess("item.\(item.name).env", "inherits process environment")
-                    } else {
-                        reportSuccess("item.\(item.name).env", "\(item.environment.count) configured variable\(item.environment.count == 1 ? "" : "s")")
-                    }
-
-                    if let command = commandName(from: item.run) {
-                        if let executablePath = executablePath(
-                            for: command,
-                            item: item,
-                            processEnvironment: processEnvironment
-                        ) {
-                            reportSuccess("item.\(item.name).run", executablePath)
-                        } else {
-                            reportFailure("item.\(item.name).run", "command '\(command)' is unavailable in the configured shell environment")
-                            problemCount += 1
-                        }
-                    } else {
-                        reportFailure("item.\(item.name).run", "could not identify a single command to check safely")
-                        problemCount += 1
-                    }
+                } else {
+                    reportFailure("item.\(item.name).run", "could not identify a single command to check safely")
+                    problemCount += 1
                 }
             }
         }
-
-        #if os(macOS)
-        if Bundle.main.bundleURL.pathExtension == "app" {
-            switch SMAppService.mainApp.status {
-            case .enabled:
-                reportSuccess("launch at login", "enabled")
-            case .requiresApproval:
-                reportFailure("launch at login", "requires approval in System Settings")
-                problemCount += 1
-            case .notRegistered:
-                reportFailure("launch at login", "not registered")
-                problemCount += 1
-            case .notFound:
-                reportFailure("launch at login", "app registration is unavailable")
-                problemCount += 1
-            @unknown default:
-                reportFailure("launch at login", "status is unknown")
-                problemCount += 1
-            }
-        } else {
-            output.stdout("[INFO] launch at login: unavailable for standalone executable\n")
-        }
-        #else
-        output.stdout("[INFO] launch at login: unavailable on this platform\n")
-        #endif
 
         if problemCount == 0 {
             output.stdout("Doctor found no problems.\n")
@@ -579,7 +389,6 @@ struct PinchosCLI {
 
     private func executablePath(
         for command: String,
-        item: CommandItemConfig,
         processEnvironment: [String: String]
     ) -> String? {
         if command.contains("/") {
@@ -587,13 +396,12 @@ struct PinchosCLI {
             if command.hasPrefix("/") {
                 path = command
             } else {
-                let base = item.workingDirectory ?? fileManager.currentDirectoryPath
-                path = URL(fileURLWithPath: base).appendingPathComponent(command).path
+                path = URL(fileURLWithPath: fileManager.currentDirectoryPath).appendingPathComponent(command).path
             }
             return fileManager.isExecutableFile(atPath: path) ? path : nil
         }
 
-        let pathValue = item.environment["PATH"] ?? processEnvironment["PATH"] ?? ""
+        let pathValue = processEnvironment["PATH"] ?? ""
         for directory in pathValue.split(separator: ":", omittingEmptySubsequences: false) {
             let directoryPath = directory.isEmpty
                 ? fileManager.currentDirectoryPath
@@ -657,9 +465,7 @@ struct PinchosCLI {
 
     /// Reports the configured icon source. Missing files and unavailable
     /// symbols are doctor failures (the item itself stays valid and renders
-    /// text-only). `reportAbsentAsIconNotConfigured` preserves the historical
-    /// command-item "icon: not configured" line; groups omit the absent case
-    /// so existing doctor output for icon-free groups stays unchanged.
+    /// text-only).
     @discardableResult
     private func reportIconSource(
         path: String,
@@ -797,7 +603,6 @@ struct PinchosCLI {
           config-path      Print the resolved config path
           open-config      Open the config in its default application
           run <item>       Execute one configured item
-          service          Manage the per-user launch-at-login agent
 
         Use `pinchos <command> --help` for command-specific help.
         """
@@ -813,7 +618,7 @@ struct PinchosCLI {
     }
 
     private func printDoctorHelp() {
-        output.stdout("Usage: pinchos doctor\n\nInspect config accessibility, shells, commands, working directories, icons and SF Symbols, environment, and launch-at-login state when available.\n")
+        output.stdout("Usage: pinchos doctor\n\nInspect config accessibility, commands, icons and SF Symbols, and the process environment.\n")
     }
 
     private func printConfigPathHelp() {
@@ -825,51 +630,7 @@ struct PinchosCLI {
     }
 
     private func printRunHelp() {
-        output.stdout("Usage: pinchos run <item>\n\nExecute one configured item with the shell, working directory, merged environment, timeout, and output limits used by Pinchos.\n")
+        output.stdout("Usage: pinchos run <item>\n\nExecute one configured item with its timeout and bounded output handling.\n")
     }
 
-    private func printServiceHelp() {
-        let help = """
-        Usage: pinchos service <subcommand> [options]
-
-        Subcommands:
-          install      Install and enable the per-user launch-at-login agent
-          status       Report the agent's configuration, enabled, and running state
-          uninstall    Disable and remove the agent
-
-        Manages a per-user launchd LaunchAgent (~/Library/LaunchAgents) that starts
-        Pinchos at login. No root privileges are required or used.
-
-        Use `pinchos service <subcommand> --help` for subcommand-specific help.
-        """
-        output.stdout(help + "\n")
-    }
-
-    private func printServiceInstallHelp() {
-        let help = """
-        Usage: pinchos service install [--executable <absolute-path>]
-
-        Installs (or re-installs) the per-user launch-at-login agent and loads it
-        immediately. Idempotent: running it again with the same target executable
-        while already enabled makes no changes. Defaults to the currently running
-        binary's absolute path; pass --executable to target a different one (for
-        example after copying a new build to ~/.local/bin/pinchos).
-        """
-        output.stdout(help + "\n")
-    }
-
-    private func printServiceStatusHelp() {
-        let help = """
-        Usage: pinchos service status [--executable <absolute-path>]
-
-        Reports the agent's configuration file path, configured executable,
-        enabled (loaded) state, and running state (with pid when running).
-        Exit code is 0 when enabled, 1 when not installed or not enabled.
-        """
-        output.stdout(help + "\n")
-    }
-
-    private func printServiceUninstallHelp() {
-        output.stdout("Usage: pinchos service uninstall\n\nUnloads the agent and removes its configuration file. Safe to run when not installed.\n")
-    }
 }

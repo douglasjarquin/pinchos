@@ -8,16 +8,12 @@ private final class FakeManagedItem: ManagedItemLifecycle {
     private let eventLog: EventLog
     private var pendingConfig: ItemConfig?
     private(set) var config: ItemConfig
-    var actions: [ItemAction] {
-        config.commandConfig?.actions ?? []
-    }
     var iconDiagnosticNote: String?
     private(set) var isVisible: Bool
     let initiallyVisible: Bool
-    let isTopLevel: Bool
     let ownedStatusItem: NSStatusItem?
     var runtimeSnapshotValue: ItemRuntimeSnapshot?
-    var actionSnapshotValues: [CommandRunnerSnapshot?] = []
+    var menuRowSnapshotValues: [CommandRunnerSnapshot?] = []
     /// When set, `prepareUpdate`/`prepareRemoval` sleep for this duration
     /// after logging, letting tests prove operations across many fake items
     /// are fired and awaited concurrently (bounded by the slowest one) under
@@ -28,15 +24,13 @@ private final class FakeManagedItem: ManagedItemLifecycle {
         config: ItemConfig,
         eventLog: EventLog,
         initiallyVisible: Bool,
-        isTopLevel: Bool,
         ownedStatusItem: NSStatusItem?
     ) {
         self.config = config
         self.eventLog = eventLog
         self.initiallyVisible = initiallyVisible
-        self.isTopLevel = isTopLevel
         self.ownedStatusItem = ownedStatusItem
-        self.isVisible = initiallyVisible && !config.hidden
+        self.isVisible = initiallyVisible
     }
 
     func owns(statusItem: NSStatusItem) -> Bool {
@@ -44,7 +38,7 @@ private final class FakeManagedItem: ManagedItemLifecycle {
     }
 
     func activate() {
-        isVisible = !config.hidden
+        isVisible = true
         eventLog.append("activate:\(config.name)")
     }
 
@@ -61,7 +55,7 @@ private final class FakeManagedItem: ManagedItemLifecycle {
     func commitPreparedUpdate() {
         config = pendingConfig!
         pendingConfig = nil
-        isVisible = !config.hidden
+        isVisible = true
         eventLog.append("commit-update:\(config.name)")
     }
 
@@ -98,12 +92,12 @@ private final class FakeManagedItem: ManagedItemLifecycle {
         )
     }
 
-    func actionSnapshot(at index: Int) async -> CommandRunnerSnapshot? {
-        guard actionSnapshotValues.indices.contains(index) else { return nil }
-        return actionSnapshotValues[index]
+    func menuRowSnapshot(at index: Int) async -> CommandRunnerSnapshot? {
+        guard menuRowSnapshotValues.indices.contains(index) else { return nil }
+        return menuRowSnapshotValues[index]
     }
 
-    func invokeAction(at index: Int) {
+    func invokeMenuRow(at index: Int) {
         eventLog.append("action:\(index)")
     }
 
@@ -134,14 +128,12 @@ private final class FakeManagedItemFactory: ManagedItemFactory {
     func make(
         config: ItemConfig,
         menuDelegate: StatusItemMenuDelegate,
-        initiallyVisible: Bool,
-        isTopLevel: Bool
+        initiallyVisible: Bool
     ) -> any ManagedItemLifecycle {
         let item = FakeManagedItem(
             config: config,
             eventLog: eventLog,
             initiallyVisible: initiallyVisible,
-            isTopLevel: isTopLevel,
             ownedStatusItem: statusItemToOwn
         )
         statusItemToOwn = nil
@@ -168,7 +160,7 @@ final class StatusItemControllerTests: XCTestCase {
         )
     }
 
-    func testLifecycleMenuRendersConfiguredInfoRows() async throws {
+    func testLifecycleMenuRendersGenericRowsWithoutExecutingCommands() async throws {
         let factory = FakeManagedItemFactory()
         let controller = makeController(factory: factory)
         addTeardownBlock { @MainActor in await controller.shutdown() }
@@ -177,10 +169,9 @@ final class StatusItemControllerTests: XCTestCase {
             name: "alpha",
             run: "echo alpha",
             interval: .manual,
-            info: [
-                ItemInfoRow(title: "Reset", run: "echo 2026-09-07"),
-                // A failing info command must fall back to the `–` value.
-                ItemInfoRow(title: "Pace", run: "exit 3")
+            menu: [
+                MenuRowConfig(label: "Reset", value: "2026-09-07"),
+                MenuRowConfig(label: "Pace", run: "touch /tmp/pinchos-menu-must-not-run")
             ]
         )
         await controller.apply(config: PinchosConfig(items: [config]))
@@ -188,12 +179,55 @@ final class StatusItemControllerTests: XCTestCase {
         let menu = await controller.makeLifecycleMenu(forManagedItem: factory.created[0], revealsDiagnostics: false)
         let titles = menu.items.map(\.title)
 
-        XCTAssertTrue(titles.contains("Reset: Loading…") || titles.contains("Reset: 2026-09-07"))
-        XCTAssertTrue(titles.contains("Pace: Loading…") || titles.contains("Pace: –"))
-        // Info rows are read-only: the row rendering must not be a clickable action.
-        let infoTitle = try XCTUnwrap(menu.items.first(where: { $0.title.hasPrefix("Reset:") }))
-        XCTAssertFalse(infoTitle.isEnabled)
-        XCTAssertNil(infoTitle.action)
+        XCTAssertTrue(titles.contains("Reset: 2026-09-07"))
+        XCTAssertTrue(titles.contains("Pace: Loading…"))
+        let staticRow = try XCTUnwrap(menu.items.first(where: { $0.title == "Reset: 2026-09-07" }))
+        let dynamicRow = try XCTUnwrap(menu.items.first(where: { $0.title == "Pace: Loading…" }))
+        XCTAssertFalse(staticRow.isEnabled)
+        XCTAssertNil(staticRow.action)
+        XCTAssertFalse(dynamicRow.isEnabled)
+        XCTAssertNil(dynamicRow.action)
+    }
+
+    func testLifecycleMenuRendersEveryGenericRowShapeInDeclarationOrder() async throws {
+        let factory = FakeManagedItemFactory()
+        let controller = makeController(factory: factory)
+        addTeardownBlock { @MainActor in await controller.shutdown() }
+
+        let config = ItemConfig(
+            name: "alpha",
+            run: "echo alpha",
+            interval: .manual,
+            menu: [
+                MenuRowConfig(label: "Static", value: "ready"),
+                MenuRowConfig(label: "Dynamic", run: "echo dynamic"),
+                MenuRowConfig(label: "Action", action: "echo action"),
+                MenuRowConfig(label: "Dynamic action", run: "echo dynamic", action: "echo action"),
+                .separator,
+            ]
+        )
+        await controller.apply(config: PinchosConfig(items: [config]))
+
+        let menu = await controller.makeLifecycleMenu(forManagedItem: factory.created[0], revealsDiagnostics: false)
+        let rows = Array(menu.items.prefix(6))
+
+        XCTAssertEqual(rows.map(\.title), [
+            "Static: ready",
+            "Dynamic: Loading…",
+            "Action",
+            "Dynamic action: Loading…",
+            "",
+            "Refresh Now",
+        ])
+        XCTAssertFalse(rows[0].isEnabled)
+        XCTAssertFalse(rows[1].isEnabled)
+        XCTAssertTrue(rows[2].isEnabled)
+        XCTAssertTrue(rows[3].isEnabled)
+        XCTAssertTrue(rows[2].action != nil)
+        XCTAssertTrue(rows[3].action != nil)
+        XCTAssertNil(rows[0].action)
+        XCTAssertNil(rows[1].action)
+        XCTAssertNil(rows[4].action)
     }
 
     func testLifecycleMenuOffersRefreshNowAndDelegatesToItem() async throws {
@@ -216,62 +250,16 @@ final class StatusItemControllerTests: XCTestCase {
         XCTAssertEqual(Array(menu.items.suffix(3).map(\.title)), ["Open Config", "Reload Config", "Quit Pinchos"])
     }
 
-    func testLifecycleMenuOffersHideThatPersistsAndRequestsReload() async throws {
-        let configURL = FileManager.default.temporaryDirectory
-            .appendingPathComponent("pinchos-hide-menu-\(UUID().uuidString).toml")
-        let source = """
-        [item.alpha]
-        type = "command"
-        run = "echo alpha"
-        """
-        try Data(source.utf8).write(to: configURL)
-        addTeardownBlock {
-            try? FileManager.default.removeItem(at: configURL)
-        }
-        var reloadCount = 0
-        let factory = FakeManagedItemFactory()
-        let controller = makeController(
-            factory: factory,
-            configPath: configURL.path,
-            onReload: { reloadCount += 1 }
-        )
-        addTeardownBlock { @MainActor in
-            await controller.shutdown()
-        }
-
-        let config = try ConfigParser.parse(source, relativeTo: configURL)
-        await controller.apply(config: config)
-        let menu = await controller.makeLifecycleMenu(forManagedItem: factory.created[0])
-        let hide = try XCTUnwrap(menu.items.first(where: { $0.title == "Hide" }))
-
-        XCTAssertTrue(hide.isEnabled)
-        XCTAssertTrue(NSApplication.shared.sendAction(hide.action!, to: hide.target, from: hide))
-        XCTAssertEqual(reloadCount, 1)
-
-        let updated = try String(contentsOf: configURL, encoding: .utf8)
-        XCTAssertTrue(updated.contains("run = \"echo alpha\""))
-        XCTAssertTrue(updated.contains("hidden = true"))
-        XCTAssertTrue(try ConfigParser.parse(updated).items[0].hidden)
-    }
-
-    func testHiddenConfigUpdatesTheExistingManagedItemInPlace() async throws {
+    func testLifecycleMenuOmitsDeprecatedHideAction() async throws {
         let factory = FakeManagedItemFactory()
         let controller = makeController(factory: factory)
         addTeardownBlock { @MainActor in
             await controller.shutdown()
         }
 
-        let visible = item("alpha")
-        let hidden = ItemConfig(name: "alpha", run: "echo alpha", interval: .scheduled(60), hidden: true)
-        await controller.apply(config: PinchosConfig(items: [visible]))
-        let managedItem = factory.created[0]
-        factory.eventLog.clear()
-
-        await controller.apply(config: PinchosConfig(items: [hidden]))
-
-        XCTAssertTrue(factory.created[0] === managedItem)
-        XCTAssertEqual(factory.eventLog.events, ["prepare-update:alpha", "commit-update:alpha"])
-        XCTAssertTrue(factory.created[0].config.hidden)
+        await controller.apply(config: PinchosConfig(items: [item("alpha")]))
+        let menu = await controller.makeLifecycleMenu(forManagedItem: factory.created[0])
+        XCTAssertFalse(menu.items.contains { $0.title == "Hide" })
     }
 
     func testLifecycleMenuShowsRuntimeStateAndRunnerDiagnostics() async throws {
@@ -321,7 +309,7 @@ final class StatusItemControllerTests: XCTestCase {
         XCTAssertTrue(titles.contains("Skipped ticks: 2"))
     }
 
-    func testCompactLifecycleMenuShowsOnlyActionsAndHide() async throws {
+    func testCompactLifecycleMenuShowsOnlyActions() async throws {
         let factory = FakeManagedItemFactory()
         let controller = makeController(factory: factory)
         addTeardownBlock { @MainActor in
@@ -354,7 +342,7 @@ final class StatusItemControllerTests: XCTestCase {
         let titles = menu.items.map(\.title)
 
         // Refresh Now leads the top group; Hide sits directly under it.
-        XCTAssertEqual(Array(titles.prefix(2)), ["Refresh Now", "Hide"])
+        XCTAssertEqual(Array(titles.prefix(1)), ["Refresh Now"])
         // Collapse Pinchos lives in the shared bottom group, below Reload Config.
         XCTAssertEqual(Array(titles.suffix(3)), ["Open Config", "Reload Config", "Quit Pinchos"])
         // No runtime state, diagnostics, or value summary appears.
@@ -370,16 +358,11 @@ final class StatusItemControllerTests: XCTestCase {
     func testLifecycleMenuPlacesDeclarativeActionsBeforeGlobalActions() async throws {
         let toml = """
         [item.codex]
-        type = "command"
         run = "echo value"
 
-        [[item.codex.action]]
-        title = "Open usage"
-        run = "open https://example.com/usage"
-
-        [[item.codex.action]]
-        title = "Refresh now"
-        refresh = true
+        [[item.codex.menu]]
+        label = "Open usage"
+        action = "open https://example.com/usage"
         """
         let config = try ConfigParser.parse(toml)
         let factory = FakeManagedItemFactory()
@@ -392,9 +375,9 @@ final class StatusItemControllerTests: XCTestCase {
         let menu = await controller.makeLifecycleMenu(forManagedItem: factory.created[0])
         let titles = menu.items.map(\.title)
 
-        XCTAssertEqual(Array(titles.prefix(2)), ["Open usage", "Refresh now"])
-        XCTAssertTrue(titles.contains("Refresh now"))
-        XCTAssertFalse(titles.contains("Refresh Now"))
+        XCTAssertEqual(Array(titles.prefix(3)), ["Open usage", "", "Refresh Now"])
+        XCTAssertTrue(titles.contains("Open usage"))
+        XCTAssertTrue(titles.contains("Refresh Now"))
         XCTAssertEqual(Array(titles.suffix(3)), ["Open Config", "Reload Config", "Quit Pinchos"])
     }
 
@@ -408,9 +391,8 @@ final class StatusItemControllerTests: XCTestCase {
             name: "codex",
             run: "echo value",
             interval: .manual,
-            actions: [
-                ItemAction(title: "Open usage", kind: .command("echo usage")),
-                ItemAction(title: "Refresh now", kind: .refresh)
+            menu: [
+                MenuRowConfig(label: "Open usage", action: "echo usage")
             ]
         )
 
@@ -418,12 +400,14 @@ final class StatusItemControllerTests: XCTestCase {
         let menu = await controller.makeLifecycleMenu(forManagedItem: factory.created[0])
         factory.eventLog.clear()
 
-        for title in ["Open usage", "Refresh now"] {
+        for title in ["Open usage"] {
             let action = try XCTUnwrap(menu.items.first(where: { $0.title == title }))
             XCTAssertTrue(NSApplication.shared.sendAction(action.action!, to: action.target, from: action))
         }
 
-        XCTAssertEqual(factory.eventLog.events, ["action:0", "action:1"])
+        let refresh = try XCTUnwrap(menu.items.first(where: { $0.title == "Refresh Now" }))
+        XCTAssertTrue(NSApplication.shared.sendAction(refresh.action!, to: refresh.target, from: refresh))
+        XCTAssertEqual(factory.eventLog.events, ["action:0", "refresh-now:codex"])
     }
 
     func testLifecycleMenuShowsDeclarativeActionDiagnostics() async throws {
@@ -436,7 +420,7 @@ final class StatusItemControllerTests: XCTestCase {
             name: "codex",
             run: "echo value",
             interval: .manual,
-            actions: [ItemAction(title: "Fail action", kind: .command("exit 7"))]
+            menu: [MenuRowConfig(label: "Fail action", action: "exit 7")]
         )
         await controller.apply(config: PinchosConfig(items: [config]))
         let execution = CommandExecution(
@@ -449,7 +433,7 @@ final class StatusItemControllerTests: XCTestCase {
             stderrTruncated: false,
             duration: 0.1
         )
-        factory.created[0].actionSnapshotValues = [
+        factory.created[0].menuRowSnapshotValues = [
             CommandRunnerSnapshot(isRunning: false, lastExecution: execution, skippedRefreshes: 2)
         ]
 
@@ -460,50 +444,6 @@ final class StatusItemControllerTests: XCTestCase {
         XCTAssertTrue(titles.contains("Action \"Fail action\": last exit code: 7"))
         XCTAssertTrue(titles.contains("Action \"Fail action\": stderr: action-error"))
         XCTAssertTrue(titles.contains("Action \"Fail action\": skipped invocations: 2"))
-    }
-
-    func testDisabledItemMenuDisablesExecutableActionsAndReportsDisabledState() async throws {
-        let factory = FakeManagedItemFactory()
-        let controller = makeController(factory: factory)
-        addTeardownBlock { @MainActor in
-            await controller.shutdown()
-        }
-        let config = ItemConfig(
-            name: "codex",
-            run: "echo value",
-            interval: .manual,
-            actions: [
-                ItemAction(title: "Open usage", kind: .command("echo usage")),
-                ItemAction(title: "Refresh now", kind: .refresh)
-            ],
-            disabled: true
-        )
-
-        await controller.apply(config: PinchosConfig(items: [config]))
-        let menu = await controller.makeLifecycleMenu(forManagedItem: factory.created[0])
-        let titles = menu.items.map(\.title)
-
-        let openUsage = try XCTUnwrap(menu.items.first(where: { $0.title == "Open usage" }))
-        let refreshNow = try XCTUnwrap(menu.items.first(where: { $0.title == "Refresh now" }))
-        XCTAssertFalse(openUsage.isEnabled)
-        XCTAssertFalse(refreshNow.isEnabled)
-        XCTAssertTrue(titles.contains("Disabled: yes"))
-    }
-
-    func testDisabledItemWithoutDeclarativeActionsDisablesFallbackRefreshNow() async throws {
-        let factory = FakeManagedItemFactory()
-        let controller = makeController(factory: factory)
-        addTeardownBlock { @MainActor in
-            await controller.shutdown()
-        }
-        let config = ItemConfig(name: "alpha", run: "echo alpha", interval: .scheduled(60), disabled: true)
-
-        await controller.apply(config: PinchosConfig(items: [config]))
-        let menu = await controller.makeLifecycleMenu(forManagedItem: factory.created[0])
-
-        let refresh = try XCTUnwrap(menu.items.first(where: { $0.title == "Refresh Now" }))
-        XCTAssertFalse(refresh.isEnabled)
-        XCTAssertTrue(menu.items.map(\.title).contains("Disabled: yes"))
     }
 
     func testEnabledItemMenuLeavesActionsEnabledAndOmitsDisabledState() async throws {
@@ -556,7 +496,7 @@ final class StatusItemControllerTests: XCTestCase {
             "prepare-update:beta",
             "commit-update:beta"
         ])
-        XCTAssertEqual(beta.config.commandConfig?.run, "echo changed")
+        XCTAssertEqual(beta.config.run, "echo changed")
     }
 
     func testIconSourceChangeUpdatesExistingItemInPlace() async {
@@ -582,7 +522,7 @@ final class StatusItemControllerTests: XCTestCase {
             "prepare-update:alpha",
             "commit-update:alpha"
         ])
-        XCTAssertEqual(original.config.command.iconSource, .symbol("chart.bar.fill"))
+        XCTAssertEqual(original.config.iconSource, .symbol("chart.bar.fill"))
     }
 
     func testLifecycleMenuSurfacesUnavailableSymbolDiagnostic() async throws {
@@ -637,11 +577,9 @@ final class StatusItemControllerTests: XCTestCase {
 
         let config = try ConfigParser.parse("""
         [item.zebra]
-        type = "command"
         run = "echo z"
 
         [item.apple]
-        type = "command"
         run = "echo a"
         """)
         XCTAssertEqual(config.items.map(\.name), ["zebra", "apple"])
@@ -949,7 +887,7 @@ final class StatusItemControllerTests: XCTestCase {
             name: "codex",
             run: "echo value",
             interval: .manual,
-            actions: [ItemAction(title: "Fail action", kind: .command("exit 7"))]
+            menu: [MenuRowConfig(label: "Fail action", action: "exit 7")]
         )
         await controller.apply(config: PinchosConfig(items: [config]))
         let execution = CommandExecution(
@@ -962,7 +900,7 @@ final class StatusItemControllerTests: XCTestCase {
             stderrTruncated: false,
             duration: 0.1
         )
-        factory.created[0].actionSnapshotValues = [
+        factory.created[0].menuRowSnapshotValues = [
             CommandRunnerSnapshot(isRunning: false, lastExecution: execution, skippedRefreshes: 0)
         ]
 
@@ -985,12 +923,12 @@ final class StatusItemControllerTests: XCTestCase {
     /// a small, fixed budget no matter how large the retained output is,
     /// because every output-derived title routes through
     /// `DiagnosticPreviewFormatter` instead of embedding the raw string.
-    /// Exercises the maximum allowed `max_output` value (`maxAllowedOutputBytes`)
-    /// simultaneously across the primary value, primary stderr, and a
-    /// command action's stdout/stderr -- the menu is still cheap to lay out,
+    /// Exercises pathological retained output simultaneously across the
+    /// primary value, primary stderr, and a menu action's stdout/stderr.
+    /// The menu is still cheap to lay out,
     /// and the exact retained text for each stream remains reachable through
     /// its own Copy action.
-    func testMenuConstructionCostIsBoundedIndependentOfMaxOutput() async throws {
+    func testMenuConstructionCostIsBoundedIndependentOfRetainedOutput() async throws {
         let factory = FakeManagedItemFactory()
         let controller = makeController(factory: factory)
         addTeardownBlock { @MainActor in
@@ -1000,18 +938,19 @@ final class StatusItemControllerTests: XCTestCase {
             name: "codex",
             run: "echo value",
             interval: .manual,
-            actions: [ItemAction(title: "Noisy action", kind: .command("false"))]
+            menu: [MenuRowConfig(label: "Noisy action", action: "false")]
         )
         await controller.apply(config: PinchosConfig(items: [config]))
 
-        let maximalValue = String(repeating: "v", count: maxAllowedOutputBytes)
-        let maximalStderr = String(repeating: "e", count: maxAllowedOutputBytes)
+        let pathologicalOutputBytes = 4 * 1024 * 1024
+        let maximalValue = String(repeating: "v", count: pathologicalOutputBytes)
+        let maximalStderr = String(repeating: "e", count: pathologicalOutputBytes)
         let execution = CommandExecution(
             terminalReason: .exited(code: 1),
             stdout: maximalValue,
             stderr: maximalStderr,
-            stdoutBytesRead: maxAllowedOutputBytes,
-            stderrBytesRead: maxAllowedOutputBytes,
+            stdoutBytesRead: pathologicalOutputBytes,
+            stderrBytesRead: pathologicalOutputBytes,
             stdoutTruncated: false,
             stderrTruncated: false,
             duration: 0.1
@@ -1026,7 +965,7 @@ final class StatusItemControllerTests: XCTestCase {
             skippedRefreshes: 0,
             now: Date()
         )
-        factory.created[0].actionSnapshotValues = [
+        factory.created[0].menuRowSnapshotValues = [
             CommandRunnerSnapshot(isRunning: false, lastExecution: execution, skippedRefreshes: 0)
         ]
 
@@ -1035,13 +974,13 @@ final class StatusItemControllerTests: XCTestCase {
         let totalTitleBytes = menu.items.reduce(0) { $0 + $1.title.utf8.count }
         XCTAssertLessThan(
             totalTitleBytes, 16 * 1024,
-            "the combined size of every menu title must stay a small fixed budget regardless of a multi-megabyte max_output"
+            "the combined size of every menu title must stay a small fixed budget regardless of multi-megabyte retained output"
         )
         XCTAssertEqual(Array(menu.items.suffix(3).map(\.title)), ["Open Config", "Reload Config", "Quit Pinchos"])
 
         let copyOutput = try XCTUnwrap(menu.items.first(where: { $0.title == "Copy Full Output" }))
         NSApplication.shared.sendAction(copyOutput.action!, to: copyOutput.target, from: copyOutput)
-        XCTAssertEqual(NSPasteboard.general.string(forType: .string)?.utf8.count, maxAllowedOutputBytes)
+        XCTAssertEqual(NSPasteboard.general.string(forType: .string)?.utf8.count, pathologicalOutputBytes)
     }
 
     func testInvalidReloadRetainsLastGoodItemsAndCorrectedReloadApplies() async {

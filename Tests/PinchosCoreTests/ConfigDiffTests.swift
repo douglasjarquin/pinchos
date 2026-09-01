@@ -6,15 +6,13 @@ final class ConfigDiffTests: XCTestCase {
         _ name: String,
         run: String = "echo x",
         interval: RefreshInterval = .scheduled(60),
-        timeout: TimeInterval = 15,
-        maxOutputBytes: Int = 64 * 1024
+        format: String? = nil
     ) -> ItemConfig {
         ItemConfig(
             name: name,
             run: run,
             interval: interval,
-            timeout: timeout,
-            maxOutputBytes: maxOutputBytes
+            format: format
         )
     }
 
@@ -29,13 +27,13 @@ final class ConfigDiffTests: XCTestCase {
         XCTAssertFalse(diff.requiresNativeRebuild)
     }
 
-    func testChangingInfoRowsMarksItemChanged() {
+    func testChangingMenuRowsMarksItemChanged() {
         let old = PinchosConfig(items: [item("a")])
         let withInfo = ItemConfig(
             name: "a",
             run: "echo x",
             interval: .scheduled(60),
-            info: [ItemInfoRow(title: "Reset", run: "echo 1")]
+            menu: [MenuRowConfig(label: "Reset", value: "1")]
         )
         let diff = ConfigDiffEngine.diff(old: old, new: PinchosConfig(items: [withInfo]))
         XCTAssertFalse(diff.isEmpty)
@@ -83,35 +81,7 @@ final class ConfigDiffTests: XCTestCase {
                 name: "a",
                 run: "echo x",
                 interval: .scheduled(60),
-                actions: [ItemAction(title: "Refresh", kind: .refresh)]
-            )
-        ])
-
-        let diff = ConfigDiffEngine.diff(old: old, new: new)
-
-        XCTAssertEqual(diff.changed.map(\.name), ["a"])
-        XCTAssertTrue(diff.added.isEmpty)
-        XCTAssertTrue(diff.removed.isEmpty)
-    }
-
-    func testDetectsChangedCommandBounds() {
-        let old = PinchosConfig(items: [item("a")])
-        let new = PinchosConfig(items: [item("a", timeout: 30, maxOutputBytes: 128 * 1024)])
-        let diff = ConfigDiffEngine.diff(old: old, new: new)
-        XCTAssertEqual(diff.changed.map(\.name), ["a"])
-        XCTAssertTrue(diff.added.isEmpty)
-        XCTAssertTrue(diff.removed.isEmpty)
-    }
-
-    func testDetectsChangedRuntimePresentationSettings() {
-        let old = PinchosConfig(items: [item("a")])
-        let new = PinchosConfig(items: [
-            ItemConfig(
-                name: "a",
-                run: "echo x",
-                interval: .scheduled(60),
-                onError: .keepLast,
-                staleAfter: 900
+                menu: [MenuRowConfig(label: "Refresh", action: "echo refresh")]
             )
         ])
 
@@ -143,47 +113,6 @@ final class ConfigDiffTests: XCTestCase {
             ItemConfig(name: "a", run: "echo x", interval: .scheduled(60), symbol: "chart.bar.fill")
         ])
         let new = PinchosConfig(items: [item("a")])
-
-        let diff = ConfigDiffEngine.diff(old: old, new: new)
-
-        XCTAssertEqual(diff.changed.map(\.name), ["a"])
-        XCTAssertTrue(diff.added.isEmpty)
-        XCTAssertTrue(diff.removed.isEmpty)
-    }
-
-    func testDetectsChangedGroupIconSource() {
-        let old = PinchosConfig(items: [
-            item("claude"),
-            .group(GroupItemConfig(name: "ai", title: "AI", members: ["claude"], icon: "/tmp/a.svg"))
-        ])
-        let new = PinchosConfig(items: [
-            item("claude"),
-            .group(GroupItemConfig(name: "ai", title: "AI", members: ["claude"], symbol: "brain"))
-        ])
-
-        let diff = ConfigDiffEngine.diff(old: old, new: new)
-
-        XCTAssertEqual(diff.changed.map(\.name), ["ai"])
-        XCTAssertTrue(diff.added.isEmpty)
-        XCTAssertTrue(diff.removed.isEmpty)
-        XCTAssertFalse(diff.requiresNativeRebuild)
-    }
-
-    func testDetectsChangedVisibilityAndDisabledPolicy() {
-        let old = PinchosConfig(items: [item("a")])
-        let new = PinchosConfig(items: [
-            ItemConfig(
-                name: "a",
-                run: "echo x",
-                interval: .scheduled(60),
-                maxLength: 24,
-                hideWhenEmpty: true,
-                hideOnError: true,
-                hidden: true,
-                iconOnly: true,
-                disabled: true
-            )
-        ])
 
         let diff = ConfigDiffEngine.diff(old: old, new: new)
 
@@ -235,102 +164,4 @@ final class ConfigDiffTests: XCTestCase {
         XCTAssertEqual(diff.unchanged, ["c"])
     }
 
-    // MARK: - Groups (issue #18)
-
-    private func group(_ name: String, title: String = "Group", members: [String]) -> ItemConfig {
-        .group(GroupItemConfig(name: name, title: title, members: members))
-    }
-
-    func testAddingAGroupIsAnAddedTopLevelItem() {
-        let old = PinchosConfig(items: [item("claude")])
-        let new = PinchosConfig(items: [item("claude"), group("ai", members: ["claude"])])
-
-        let diff = ConfigDiffEngine.diff(old: old, new: new)
-
-        // "claude" becomes a hidden member in `new`, so it is recreated
-        // (removed then added) alongside the brand-new "ai" group -- see
-        // `testMemberVisibilityChangeForcesRecreationNotInPlaceUpdate`.
-        XCTAssertEqual(Set(diff.added.map(\.name)), ["ai", "claude"])
-        XCTAssertEqual(diff.removed, ["claude"])
-    }
-
-    func testMemberVisibilityChangeForcesRecreationNotInPlaceUpdate() {
-        let old = PinchosConfig(items: [item("claude"), item("codex")])
-        let new = PinchosConfig(items: [item("claude"), item("codex"), group("ai", members: ["claude", "codex"])])
-
-        let diff = ConfigDiffEngine.diff(old: old, new: new)
-
-        XCTAssertEqual(diff.removed.sorted(), ["claude", "codex"])
-        XCTAssertEqual(Set(diff.added.map(\.name)), ["ai", "claude", "codex"])
-        XCTAssertTrue(diff.changed.isEmpty)
-    }
-
-    func testMemberRemovedFromGroupBecomesTopLevelAgainViaRecreation() {
-        let old = PinchosConfig(items: [item("claude"), item("codex"), group("ai", members: ["claude", "codex"])])
-        let new = PinchosConfig(items: [item("claude"), item("codex"), group("ai", members: ["codex"])])
-
-        let diff = ConfigDiffEngine.diff(old: old, new: new)
-
-        // "ai"'s own config changed (its `members` array shrank) but it
-        // stays a top-level group either way, so it updates in place.
-        XCTAssertEqual(diff.changed.map(\.name), ["ai"])
-        // "claude" flips from hidden to top-level, which an in-place
-        // update cannot express -- it must be recreated.
-        XCTAssertEqual(diff.removed, ["claude"])
-        XCTAssertEqual(diff.added.map(\.name), ["claude"])
-        XCTAssertEqual(diff.unchanged, ["codex"])
-    }
-
-    func testGroupTitleChangeWithStableMembershipIsAnIncrementalUpdate() {
-        let old = PinchosConfig(items: [item("claude"), group("ai", title: "AI", members: ["claude"])])
-        let new = PinchosConfig(items: [item("claude"), group("ai", title: "AI Assistants", members: ["claude"])])
-
-        let diff = ConfigDiffEngine.diff(old: old, new: new)
-
-        XCTAssertEqual(diff.changed.map(\.name), ["ai"])
-        XCTAssertTrue(diff.added.isEmpty)
-        XCTAssertTrue(diff.removed.isEmpty)
-        XCTAssertFalse(diff.requiresNativeRebuild)
-    }
-
-    func testKindChangeFromCommandToGroupForcesRecreation() {
-        let old = PinchosConfig(items: [item("ai"), item("claude")])
-        let new = PinchosConfig(items: [group("ai", members: ["claude"]), item("claude")])
-
-        let diff = ConfigDiffEngine.diff(old: old, new: new)
-
-        XCTAssertEqual(diff.removed.sorted(), ["ai", "claude"])
-        XCTAssertEqual(Set(diff.added.map(\.name)), ["ai", "claude"])
-    }
-
-    func testOnlyTopLevelNamesParticipateInOrderAndRebuildDecisions() {
-        // Reordering the hidden members among themselves must not force a
-        // native rebuild: neither has (or will have) a real `NSStatusItem`,
-        // so there is nothing for AppKit to reorder.
-        let old = PinchosConfig(items: [item("claude"), item("codex"), group("ai", members: ["claude", "codex"])])
-        let new = PinchosConfig(items: [item("codex"), item("claude"), group("ai", members: ["codex", "claude"])])
-
-        let diff = ConfigDiffEngine.diff(old: old, new: new)
-
-        XCTAssertFalse(diff.orderChanged)
-        XCTAssertFalse(diff.requiresNativeRebuild)
-        XCTAssertEqual(diff.changed.map(\.name), ["ai"])
-    }
-
-    func testNestedGroupBecomingAMemberIsRecreatedLikeAnyOtherVisibilityChange() {
-        let old = PinchosConfig(items: [
-            item("claude"),
-            group("assistants", members: ["claude"])
-        ])
-        let new = PinchosConfig(items: [
-            item("claude"),
-            group("assistants", members: ["claude"]),
-            group("everything", members: ["assistants"])
-        ])
-
-        let diff = ConfigDiffEngine.diff(old: old, new: new)
-
-        XCTAssertEqual(diff.removed, ["assistants"])
-        XCTAssertEqual(Set(diff.added.map(\.name)), ["assistants", "everything"])
-    }
 }

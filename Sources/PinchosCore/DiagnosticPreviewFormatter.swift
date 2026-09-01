@@ -17,9 +17,9 @@ public struct DiagnosticPreview: Equatable, Sendable {
 }
 
 /// Bounds and sanitizes retained command output before it is projected into
-/// an AppKit menu title. Pinchos can retain up to `max_output`
-/// bytes of stdout/stderr per stream (independently of this formatter -- see
-/// `OutputMemoryBudget`), but "available to diagnostics" must not mean
+/// an AppKit menu title. Pinchos retains bounded stdout/stderr output per
+/// stream (independently of this formatter -- see `OutputMemoryBudget`), but
+/// "available to diagnostics" must not mean
 /// "laid out as one `NSMenuItem` title": opening the lifecycle menu has to
 /// cost a bounded amount of formatting/layout work regardless of how large a
 /// command's retained output is. The complete retained text is always still
@@ -56,7 +56,7 @@ public enum DiagnosticPreviewFormatter {
         /// row (embedded line breaks are visibly escaped, never real
         /// newlines), short enough that opening the menu never measures/
         /// lays out more than a small, fixed amount of text no matter how
-        /// large `max_output` is configured. A handful of source lines are
+        /// large command output is retained. A handful of source lines are
         /// still allowed through before the line cap itself contributes to
         /// truncation, so short multi-line output (e.g. three lines of
         /// pretty-printed status) is not needlessly reduced to one line;

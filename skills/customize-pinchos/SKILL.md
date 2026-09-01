@@ -1,16 +1,21 @@
 ---
 name: customize-pinchos
-description: Help users create, review, troubleshoot, and safely change Pinchos TOML configurations, including command items, groups, actions, triggers, scheduler limits, and structured output.
+description: Help users create, review, troubleshoot, and safely change the canonical read-only Pinchos 0.1 TOML configuration.
 ---
 
 # Customize Pinchos
 
-Use this skill when a user wants to add, edit, review, or troubleshoot a Pinchos menu-bar item or group.
+Use this skill when a user wants to add, edit, review, or troubleshoot a Pinchos menu-bar item.
 Invoke it explicitly with `$customize-pinchos` when you want this workflow for a request.
 
 This skill guides an AI agent.
 Pinchos does not load skills or recipes at runtime.
-Pinchos runs configured shell commands with the user's permissions, and those commands are not sandboxed.
+Pinchos runs configured shell commands and menu actions with the user's permissions, and those commands are not sandboxed.
+
+The 0.1 contract is intentionally breaking and read-only.
+Pinchos never rewrites the user's TOML during normal operation.
+Only `run`, `interval`, `timeout`, `format`, `symbol`, `icon`, and `menu` are supported item keys.
+The old type/action/info, group, trigger, notification, structured-output, visibility-policy, scheduler, shell, environment, output-bound, error-policy, freshness-policy, config-mutation, and launchd-service syntax is rejected.
 
 ## Workflow
 
