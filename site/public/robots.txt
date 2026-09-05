@@ -1,0 +1,6 @@
+User-agent: *
+Allow: /
+
+Disallow: /pinchos/design-system/
+
+Sitemap: https://douglasjarquin.github.io/pinchos/sitemap.xml
