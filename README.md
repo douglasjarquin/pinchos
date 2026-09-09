@@ -71,7 +71,13 @@ separator = true
 ```
 
 This example calls [`remainder`](https://github.com/douglasjarquin/remainder) directly for the Codex `default` profile's account-scoped `weekly` remaining percentage and pace.
-Install the approved standalone Remainder release once, place its executable on the `PATH` inherited by Pinchos, and record the resolved path and release version before activating the configuration:
+It was verified against Remainder `v0.1.0` for macOS Apple Silicon (`darwin_arm64`).
+Use Remainder `v0.1.0`'s immutable-tagged [standalone release recipe](https://github.com/douglasjarquin/remainder/blob/v0.1.0/docs/release.md) for the one-time download, selected-archive checksum verification, and extraction into a versioned directory you choose.
+The selected archive digest is `a754ec5c7656d70487dc0ce41fdeb35d5d5cb1e1bc97fa83205fc15bed70bbf6`.
+The extracted arm64 executable digest is `e45c1cbd65010f615679cbb9b1d9f88cd30fc3ae36a76a997d839b43598a6fc6`.
+Keep that chosen versioned directory in the `PATH` Pinchos inherits, and record its absolute executable path before activating the configuration.
+Keep the versioned executable available while restoring the previous configuration or `PATH` for rollback.
+Record the resolved path and release version before activating the configuration:
 
 ```sh
 command -v remainder
@@ -90,7 +96,7 @@ An explicit zero remains a successful exhausted value; unknown, expired, wrong-a
 Pinchos preserves the last successful primary value with a warning marker after a failed attempt, and its diagnostics expose the last attempt, last success, exit status, and error.
 Pinchos does not currently carry Remainder's original observation timestamp through the scalar output or age a successful primary value solely because sleep or a missed timer delayed the next attempt.
 Dynamic and manual-only submenu rows likewise do not expose the provider observation age.
-Those are explicit freshness-affordance follow-ups in [issue #181](https://github.com/douglasjarquin/pinchos/issues/181); the nominal bound must not be presented as a hard maximum until they are resolved.
+Those are explicit freshness-affordance follow-ups in [issue #123](https://github.com/douglasjarquin/pinchos/issues/123); the nominal bound must not be presented as a hard maximum until they are resolved.
 
 To roll back, restore the previously reviewed [`quota-axi`](https://github.com/kunchenguid/quota-axi) commands in the four `run` entries while keeping the item, labels, order, symbol, cache durations, and actions unchanged.
 Pinchos will live-reload that edit and will not uninstall either executable.
