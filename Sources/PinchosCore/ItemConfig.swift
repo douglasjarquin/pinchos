@@ -141,7 +141,7 @@ public struct RecoveryMenu: Equatable, Sendable {
 public enum ExampleConfig {
     public static let text = """
     [item.codex]
-    run = "quota-axi --provider codex --json | jq -r '.providers[0].windows[] | select(.label==\\\"week\\\") | .percentRemaining'"
+    run = "remainder value --provider codex --profile default --window weekly --scope account --field remaining --cache auto --max-age 5s --freshness fresh"
     interval = "5m"
     timeout = "15s"
     format = "{output}"
@@ -149,17 +149,17 @@ public enum ExampleConfig {
 
     [[item.codex.menu]]
     label = "Usage"
-    run = "quota-axi --provider codex --json | jq -r '.providers[0].windows[] | select(.label==\\\"week\\\") | .percentRemaining'"
+    run = "remainder value --provider codex --profile default --window weekly --scope account --field remaining --cache auto --max-age 5s --freshness fresh"
     cache = "5m"
 
     [[item.codex.menu]]
     label = "Pace"
-    run = "quota-axi --provider codex --json | jq -r '.providers[0].windows[] | select(.label==\\\"week\\\") | .pace.status'"
+    run = "remainder value --provider codex --profile default --window weekly --scope account --field pace --cache auto --max-age 5s --freshness fresh"
     cache = "5m"
 
     [[item.codex.menu]]
     label = "Refresh"
-    run = "quota-axi --provider codex --json | jq -r '.providers[0].windows[] | select(.label==\\\"week\\\") | .percentRemaining'"
+    run = "remainder value --provider codex --profile default --window weekly --scope account --field remaining --cache auto --max-age 5s --freshness fresh"
     cache = "5m"
     action = "open https://chatgpt.com/codex"
 

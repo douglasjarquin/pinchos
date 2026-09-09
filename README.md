@@ -40,7 +40,7 @@ The canonical source is [`example/pinchos.toml`](example/pinchos.toml).
 
 ```toml
 [item.codex]
-run = "quota-axi --provider codex --json | jq -r '.providers[0].windows[] | select(.label==\"week\") | .percentRemaining'"
+run = "remainder value --provider codex --profile default --window weekly --scope account --field remaining --cache auto --max-age 5s --freshness fresh"
 interval = "5m"
 timeout = "15s"
 format = "{output}"
@@ -48,17 +48,17 @@ symbol = "terminal"
 
 [[item.codex.menu]]
 label = "Usage"
-run = "quota-axi --provider codex --json | jq -r '.providers[0].windows[] | select(.label==\"week\") | .percentRemaining'"
+run = "remainder value --provider codex --profile default --window weekly --scope account --field remaining --cache auto --max-age 5s --freshness fresh"
 cache = "5m"
 
 [[item.codex.menu]]
 label = "Pace"
-run = "quota-axi --provider codex --json | jq -r '.providers[0].windows[] | select(.label==\"week\") | .pace.status'"
+run = "remainder value --provider codex --profile default --window weekly --scope account --field pace --cache auto --max-age 5s --freshness fresh"
 cache = "5m"
 
 [[item.codex.menu]]
 label = "Refresh"
-run = "quota-axi --provider codex --json | jq -r '.providers[0].windows[] | select(.label==\"week\") | .percentRemaining'"
+run = "remainder value --provider codex --profile default --window weekly --scope account --field remaining --cache auto --max-age 5s --freshness fresh"
 cache = "5m"
 action = "open https://chatgpt.com/codex"
 
@@ -69,6 +69,32 @@ action = "open https://chatgpt.com/codex"
 [[item.codex.menu]]
 separator = true
 ```
+
+This example calls [`remainder`](https://github.com/douglasjarquin/remainder) directly for the Codex `default` profile's account-scoped `weekly` remaining percentage and pace.
+Install the approved standalone Remainder release once, place its executable on the `PATH` inherited by Pinchos, and record the resolved path and release version before activating the configuration:
+
+```sh
+command -v remainder
+remainder --version
+```
+
+Pinchos does not install Remainder during a refresh or menu opening.
+This path does not require Sum, Herdr, `jq`, or a Go toolchain.
+It does not embed credentials, select another account, prompt for authentication from a menu opening, or enable a paid provider route.
+
+Each scalar read asks Remainder for fresh evidence and permits reuse of an original provider observation for at most five seconds.
+Pinchos refreshes the primary display every five minutes and keeps the dynamic rows for five minutes, while Remainder's process-safe cache can coalesce the nearby remaining and pace reads.
+The nominal original-observation age bound is therefore five minutes plus Remainder's five-second reuse window plus command execution and scheduler delay.
+An explicit zero remains a successful exhausted value; unknown, expired, wrong-account, missing-auth, nonzero-exit, and timeout outcomes remain failures rather than becoming numeric zero or empty success.
+
+Pinchos preserves the last successful primary value with a warning marker after a failed attempt, and its diagnostics expose the last attempt, last success, exit status, and error.
+Pinchos does not currently carry Remainder's original observation timestamp through the scalar output or age a successful primary value solely because sleep or a missed timer delayed the next attempt.
+Dynamic and manual-only submenu rows likewise do not expose the provider observation age.
+Those are explicit freshness-affordance follow-ups in [issue #181](https://github.com/douglasjarquin/pinchos/issues/181); the nominal bound must not be presented as a hard maximum until they are resolved.
+
+To roll back, restore the previously reviewed [`quota-axi`](https://github.com/kunchenguid/quota-axi) commands in the four `run` entries while keeping the item, labels, order, symbol, cache durations, and actions unchanged.
+Pinchos will live-reload that edit and will not uninstall either executable.
+`quota-axi` remains an independent, attributed quota tool and is still used by the separate optional recipe catalog.
 
 Items appear in declaration order.
 The supported item keys are `run`, `interval`, `timeout`, `format`, `symbol`, `icon`, and `menu`.
