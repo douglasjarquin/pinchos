@@ -71,10 +71,23 @@ separator = true
 ```
 
 This example calls [`remainder`](https://github.com/douglasjarquin/remainder) directly for the Codex `default` profile's account-scoped `weekly` remaining percentage and pace.
-It was verified against Remainder `v0.1.0` for macOS Apple Silicon (`darwin_arm64`).
-Use Remainder `v0.1.0`'s immutable-tagged [standalone release recipe](https://github.com/douglasjarquin/remainder/blob/v0.1.0/docs/release.md) for the one-time download, selected-archive checksum verification, and extraction into a versioned directory you choose.
-The selected archive digest is `a754ec5c7656d70487dc0ce41fdeb35d5d5cb1e1bc97fa83205fc15bed70bbf6`.
-The extracted arm64 executable digest is `e45c1cbd65010f615679cbb9b1d9f88cd30fc3ae36a76a997d839b43598a6fc6`.
+It was verified against immutable Remainder `v0.2.1` for macOS Apple Silicon (`darwin_arm64`).
+Use Remainder `v0.2.1`'s immutable-tagged [standalone release recipe](https://github.com/douglasjarquin/remainder/blob/v0.2.1/docs/release.md) for the one-time download, selected-archive checksum verification, and extraction into a versioned directory you choose.
+The exact [macOS Apple Silicon archive](https://github.com/douglasjarquin/remainder/releases/download/v0.2.1/remainder_v0.2.1_darwin_arm64.tar.gz) has SHA-256 `84f3b21f3a0a30068644e4c6f229af1ec7b183744be30f10c379fe514921af95`.
+Download the archive and `SHA256SUMS`, select exactly one matching archive entry, verify it, and then extract it:
+
+```sh
+asset=remainder_v0.2.1_darwin_arm64.tar.gz
+release=https://github.com/douglasjarquin/remainder/releases/download/v0.2.1
+curl --fail --location --output "$asset" "$release/$asset"
+curl --fail --location --output SHA256SUMS "$release/SHA256SUMS"
+awk -v name="$asset" '$2 == name { print; count++ } END { if (count != 1) exit 1 }' SHA256SUMS > "$asset.sha256"
+shasum -a 256 -c "$asset.sha256"
+tar -xzf "$asset"
+```
+
+After the extracted binary passes `--version` and `--help`, copy it to a versioned directory such as `~/.local/opt/remainder/v0.2.1/remainder`.
+The extracted executable SHA-256 is `8f1a4fd0ce7e1466055e733512b41cbd0bcd25ccba0ac125b4f13b58d578d886`.
 Keep that chosen versioned directory in the `PATH` Pinchos inherits, and record its absolute executable path before activating the configuration.
 Keep the versioned executable available while restoring the previous configuration or `PATH` for rollback.
 Record the resolved path and release version before activating the configuration:
