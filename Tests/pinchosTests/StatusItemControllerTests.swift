@@ -559,10 +559,6 @@ final class StatusItemControllerTests: XCTestCase {
         XCTAssertTrue(beta !== factory.created[2])
         XCTAssertEqual(factory.created[2].config.name, "gamma")
         XCTAssertFalse(factory.created[2].initiallyVisible)
-        // prepare-update and prepare-removal are fanned out via `withTaskGroup`
-        // (see LifecycleSettlement.swift), so they may log in either order;
-        // only the deterministic, sequentially-driven suffix
-        // (commit-removal, commit-update, activate) has a fixed order.
         XCTAssertEqual(Set(factory.eventLog.events.prefix(2)), [
             "prepare-update:alpha",
             "prepare-removal:beta"
