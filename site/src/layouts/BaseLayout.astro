@@ -8,11 +8,35 @@ interface Props {
   description: string;
   docs?: boolean;
   recipes?: boolean;
+  noindex?: boolean;
 }
 
-const { title, description, docs = false, recipes = false } = Astro.props;
+const { title, description, docs = false, recipes = false, noindex = false } = Astro.props;
 const canonical = new URL(Astro.url.pathname, Astro.site);
 const base = import.meta.env.BASE_URL.endsWith('/') ? import.meta.env.BASE_URL : `${import.meta.env.BASE_URL}/`;
+const siteUrl = new URL(base, 'https://douglasjarquin.github.io').href;
+const github = 'https://github.com/douglasjarquin/pinchos';
+const jsonLd = {
+  '@context': 'https://schema.org',
+  '@graph': [
+    {
+      '@type': 'WebSite',
+      name: 'pinchos',
+      url: siteUrl,
+      description: 'pinchos runs your commands and pins their output to the macOS menu bar.',
+    },
+    {
+      '@type': 'SoftwareApplication',
+      name: 'pinchos',
+      url: siteUrl,
+      description: 'pinchos runs the commands you give it and keeps their output close at hand.',
+      applicationCategory: 'macOS menu bar utility',
+      operatingSystem: 'macOS',
+      isAccessibleForFree: true,
+      sameAs: [github],
+    },
+  ],
+};
 ---
 
 <!doctype html>
@@ -21,6 +45,7 @@ const base = import.meta.env.BASE_URL.endsWith('/') ? import.meta.env.BASE_URL :
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width" />
     <meta name="description" content={description} />
+    {noindex && <meta name="robots" content="noindex,follow" />}
     <link rel="icon" href={`${base}favicon.svg`} />
     <link rel="canonical" href={canonical} />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
@@ -31,6 +56,7 @@ const base = import.meta.env.BASE_URL.endsWith('/') ? import.meta.env.BASE_URL :
     <meta property="og:type" content="website" />
     <meta property="og:url" content={canonical} />
     <title>{title}</title>
+    {!noindex && <script type="application/ld+json" set:html={JSON.stringify(jsonLd)} />}
   </head>
   <body>
     <div class="site-shell">

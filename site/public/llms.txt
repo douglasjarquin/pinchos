@@ -1,0 +1,33 @@
+# pinchos
+
+> pinchos runs the commands you give it and pins their output to the macOS menu bar.
+
+pinchos is a macOS menu bar utility. It runs the commands you give it and keeps their output close at hand. Use one plain-text item and an ordered submenu of values, cached reads, and actions.
+
+The 0.1 product is deliberately small: one command-backed item and an ordered native submenu of static values, cached values, actions, and separators.
+
+It is free, open source, and native AppKit. There is no Electron and no settings window.
+
+## Install
+
+Clone and build with the Swift toolchain:
+
+```
+git clone https://github.com/douglasjarquin/pinchos.git
+cd pinchos
+swift build -c release
+```
+
+The release executable is `.build/release/pinchos`. The README covers install, the canonical config format, and the menu-row contract:
+
+https://github.com/douglasjarquin/pinchos
+
+## Pages
+
+- Home: https://douglasjarquin.github.io/pinchos/
+- Recipes: https://douglasjarquin.github.io/pinchos/recipes/
+- Skills: https://douglasjarquin.github.io/pinchos/skills/
+
+## Source
+
+https://github.com/douglasjarquin/pinchos
