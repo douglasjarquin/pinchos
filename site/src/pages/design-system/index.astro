@@ -9,12 +9,13 @@ import '../../styles/docs.css';
 const colors = [
   ['Paper', '--color-paper', 'page background'],
   ['Paper Raised', '--color-paper-raised', 'alternate bands, chips'],
-  ['Ink', '--color-ink', 'text, charcoal band, code bg'],
+  ['Ink', '--color-ink', 'text, headings, mark sticks'],
   ['Ink Soft', '--color-ink-soft', 'body copy, secondary text'],
   ['Terracotta', '--color-terracotta', 'brand mark, large display accents'],
   ['Link Terracotta', '--color-link', 'links, buttons, focus'],
   ['Olive', '--color-olive', 'overlines, labels, mark'],
   ['Meta', '--color-meta', 'captions, meta lines, muted mono'],
+  ['Charcoal', '--color-charcoal', 'install band, code, mockup bar'],
 ];
 
 const typeRows = [
@@ -45,8 +46,8 @@ const spaces = [4, 8, 12, 16, 24, 32, 48, 64, 96];
     <section class="docs-section" aria-labelledby="principles-heading">
       <h2 id="principles-heading" class="serif-heading">1 · Principles</h2>
       <div class="principles-grid">
-        <p><strong>Paper, not chrome.</strong> Ivory background, ink text, hairline rules. No gradients, no glass, no dark mode in 0.1.</p>
-        <p><strong>The product is the only dark surface.</strong> Menu-bar mockups and code blocks sit on charcoal; nothing else does.</p>
+        <p><strong>Paper, not chrome.</strong> Ivory in light, warm espresso in dark. Ink text, hairline rules. No gradients, no glass. Appearance follows <code>prefers-color-scheme</code> with no toggle.</p>
+        <p><strong>Charcoal is for product and code.</strong> Menu-bar mockups, the install band, and code blocks sit on charcoal in both appearances.</p>
         <p><strong>One accent per block.</strong> Terracotta is interactive, olive is labels. Never both carrying meaning in the same block.</p>
         <p><strong>Write like a README.</strong> Matter-of-fact, lowercase “pinchos”, no exclamation marks, no superlatives.</p>
       </div>
@@ -82,7 +83,7 @@ const spaces = [4, 8, 12, 16, 24, 32, 48, 64, 96];
           <div class="color-card__body"><strong>{name}</strong><code>{token}</code><span>{role}</span></div>
         </div>)}
       </div>
-      <p class="docs-note">Contrast: Ink on Paper 12.1:1. Link terracotta on Paper is approximately 4.7:1; brand terracotta is decorative or large-display only. Olive is for overlines and marks, never body copy. Derive any new shade from these hues.</p>
+      <p class="docs-note">Contrast: Ink on Paper 12.1:1 in light. Tokens remap under <code>prefers-color-scheme: dark</code> so body copy, links, and captions stay AA on espresso paper. Link terracotta on Paper is approximately 4.7:1 in light; brand terracotta is decorative or large-display only. Olive is for overlines and marks, never body copy. Derive any new shade from these hues.</p>
     </section>
 
     <section class="docs-section" aria-labelledby="type-heading">
@@ -109,7 +110,7 @@ const spaces = [4, 8, 12, 16, 24, 32, 48, 64, 96];
           <div class="overline">rules</div>
           <div>container <code>max-width 1080</code>, side padding 32 · section rhythm 72-96 · gaps from the scale only</div>
           <div>radii: 8 buttons · 10 chips/cards · 12 code &amp; mockups — nothing rounder</div>
-          <div>borders <code>1px rgba(43,42,40,.14)</code> · one shadow, product mockups only</div>
+          <div>borders <code>1px var(--color-rule)</code> · one shadow, product mockups only</div>
           <div>alternate bands: Paper → Paper Raised → Charcoal, at most one charcoal band per page</div>
         </div>
       </div>

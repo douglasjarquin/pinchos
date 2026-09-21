@@ -40,7 +40,7 @@
   padding-inline: var(--space-1);
   overflow-x: auto;
   border-radius: var(--mockup-menu-bar-radius);
-  background: var(--color-ink);
+  background: var(--color-charcoal);
   box-shadow: var(--shadow-product);
   color: var(--color-dark-copy);
   font-family: var(--mockup-menu-font);
@@ -56,7 +56,7 @@
 
 .interactive-menu .menu-bar:hover,
 .interactive-menu .menu-disclosure[open] .menu-bar {
-  background: var(--color-ink-soft);
+  background: var(--color-charcoal-hover);
 }
 
 .interactive-menu .menu-bar span {
@@ -141,7 +141,7 @@
   padding: var(--space-4);
   border: var(--mockup-menu-border-width) solid var(--color-rule);
   border-radius: var(--radius-panel);
-  background: var(--color-ink);
+  background: var(--color-charcoal);
   color: var(--color-dark-copy);
   font-family: var(--font-mono);
   font-size: var(--mockup-menu-config-size);

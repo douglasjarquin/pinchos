@@ -30,10 +30,12 @@ The signature moment is the real DOM menu-bar mockup: the only glossy charcoal s
 | `--color-meta-readable` | `#6E685F` | Small caption text requiring AA contrast |
 | `--color-dark-copy` | `#F2EDE3` | Text on the charcoal band |
 | `--color-dark-prompt` | `#E29B7B` | Shell prompt on charcoal |
+| `--color-charcoal` | `#2B2A28` | Install band, code blocks, mockup bar |
 | `--color-rule` | `rgba(43, 42, 40, .14)` | Hairline rules and borders |
 
 The page uses paper, paper raised, and one charcoal band in that order.
 Olive never carries body copy meaning.
+Appearance follows `prefers-color-scheme` with no toggle: `color-scheme: light dark` on `:root`/`html`, and page tokens remap under `prefers-color-scheme: dark` to a warm espresso/ivory palette. `--color-charcoal` and the `--color-dark-*` band tokens stay dark in both appearances so the install band, code blocks, and mockup bar remain charcoal.
 
 ## 3. Typography
 
@@ -128,7 +130,7 @@ All motion is disabled under `prefers-reduced-motion: reduce`.
 
 Use hairline rules and tonal shifts as the primary surface language.
 Only the product mockup receives the documented shadow.
-There are no gradients, glass effects, decorative blobs, or dark page surfaces outside the product/code band.
+There are no gradients, glass effects, or decorative blobs. Charcoal is reserved for the install band, code, and product mockup bar.
 
 ## 8. Accessibility constraints and accepted debt
 

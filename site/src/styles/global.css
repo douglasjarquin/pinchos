@@ -1,6 +1,7 @@
 @import './tokens.css';
 
 html {
+  color-scheme: light dark;
   scroll-behavior: smooth;
 }
 
@@ -23,7 +24,7 @@ a {
 }
 
 a:hover {
-  color: #96422B;
+  color: var(--color-link-hover);
 }
 
 a:focus-visible,
@@ -35,7 +36,7 @@ input:focus-visible,
 }
 
 ::selection {
-  background: rgba(196, 89, 58, 0.22);
+  background: var(--color-selection);
 }
 
 .site-shell {
@@ -153,12 +154,12 @@ input:focus-visible,
 
 .button--primary {
   padding: 13px 22px;
-  background: var(--color-link-readable);
+  background: var(--color-button-fill);
   color: var(--color-dark-copy);
 }
 
 .button--primary:hover {
-  background: #8E3B27;
+  background: var(--color-button-fill-hover);
   color: var(--color-dark-copy);
 }
 
@@ -169,7 +170,7 @@ input:focus-visible,
 }
 
 .button--secondary:hover {
-  background: rgba(177, 78, 51, 0.08);
+  background: var(--color-link-fill);
 }
 
 .text-link {
@@ -188,7 +189,7 @@ input:focus-visible,
   overflow-x: auto;
   overflow-wrap: anywhere;
   border-radius: var(--radius-panel);
-  background: var(--color-ink);
+  background: var(--color-charcoal);
   color: var(--color-dark-copy);
   font-family: var(--font-mono);
   font-size: 13.5px;
