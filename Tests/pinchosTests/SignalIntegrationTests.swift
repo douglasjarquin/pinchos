@@ -255,8 +255,8 @@ final class SignalIntegrationTests: XCTestCase {
     private func pinchosExecutable() throws -> URL {
         let root = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
         let candidates = [
-            root.appendingPathComponent(".build/arm64-apple-macosx/release/pinchos"),
-            root.appendingPathComponent(".build/arm64-apple-macosx/debug/pinchos")
+            root.appendingPathComponent(".build/release/pinchos"),
+            root.appendingPathComponent(".build/debug/pinchos")
         ]
         if let executable = candidates.first(where: { FileManager.default.isExecutableFile(atPath: $0.path) }) {
             return executable
