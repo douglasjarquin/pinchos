@@ -1,4 +1,5 @@
 :root {
+  color-scheme: light dark;
   --color-paper: #F2EDE3;
   --color-paper-raised: #F8F3E8;
   --color-paper-field: #FBF8F0;
@@ -7,12 +8,23 @@
   --color-terracotta: #C4593A;
   --color-link: #B14E33;
   --color-link-readable: #A94A30;
+  --color-link-hover: #96422B;
+  --color-link-fill: rgba(177, 78, 51, 0.08);
   --color-olive: #6B7F3E;
   --color-olive-readable: #526631;
   --color-meta: #8A8377;
   --color-meta-readable: #6E685F;
   --color-dark-copy: #F2EDE3;
+  --color-dark-copy-muted: rgba(242, 237, 227, 0.72);
   --color-dark-prompt: #E29B7B;
+  --color-dark-rule: rgba(242, 237, 227, 0.14);
+  --color-charcoal: #2B2A28;
+  --color-charcoal-hover: #5C574E;
+  --color-button-fill: #A94A30;
+  --color-button-fill-hover: #8E3B27;
+  --color-selection: rgba(196, 89, 58, 0.22);
+  --color-field-border: rgba(43, 42, 40, 0.3);
+  --color-code-inset: rgba(0, 0, 0, 0.32);
   --color-rule: rgba(43, 42, 40, 0.14);
   --color-rule-soft: rgba(43, 42, 40, 0.08);
   --space-1: 4px;
@@ -88,4 +100,30 @@
   --mockup-menu-static-shadow: 0 18px 44px rgba(43, 42, 40, 0.28), 0 0 0 1px rgba(0, 0, 0, 0.09);
   --container-landing: 1080px;
   --container-docs: 1040px;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    color-scheme: dark;
+    --color-paper: #1E1B18;
+    --color-paper-raised: #26231F;
+    --color-paper-field: #2C2924;
+    --color-ink: #F2EDE3;
+    --color-ink-soft: #C9C2B6;
+    --color-link: #E08A6C;
+    --color-link-readable: #E8A48A;
+    --color-link-hover: #F0B49A;
+    --color-link-fill: rgba(224, 138, 108, 0.16);
+    --color-olive-readable: #B5C47E;
+    --color-meta: #9A9388;
+    --color-meta-readable: #B8B1A5;
+    --color-rule: rgba(242, 237, 227, 0.14);
+    --color-rule-soft: rgba(242, 237, 227, 0.08);
+    --color-charcoal: #12110F;
+    --color-charcoal-hover: #3A3834;
+    --color-field-border: rgba(242, 237, 227, 0.28);
+    --color-selection: rgba(224, 138, 108, 0.32);
+    --color-code-inset: rgba(0, 0, 0, 0.4);
+    --shadow-product: 0 10px 30px rgba(0, 0, 0, 0.45);
+  }
 }

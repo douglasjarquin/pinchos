@@ -21,7 +21,7 @@
   width: 100%;
   min-height: 42px;
   padding: 10px 12px;
-  border: 1px solid rgba(43, 42, 40, 0.3);
+  border: 1px solid var(--color-field-border);
   border-radius: var(--radius-button);
   background: var(--color-paper-field);
   color: var(--color-ink);
