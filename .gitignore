@@ -7,3 +7,4 @@
 # no-mistakes/evidence; do not commit it on code branches.
 .no-mistakes/evidence/
 .omo/
+.artifacts/

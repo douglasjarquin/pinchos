@@ -1,6 +1,24 @@
 # Verification
 
-There is no bundled verify wrapper in this repository. The Swift checks below are the ones [`.github/workflows/verify.yml`](.github/workflows/verify.yml) runs on `macos-14`. Site steps apply only when `site/` or `recipes/` changed.
+The canonical entrypoint is `mise run verify`; the fenced `verify` block below is the machine-readable contract.
+The Swift checks it runs are the ones [`.github/workflows/verify.yml`](.github/workflows/verify.yml) runs on `macos-14`.
+Site steps apply only when `site/` or `recipes/` changed.
+
+```verify
+entrypoint = "mise run verify"
+feature_maps = "docs/features/README.md"
+artifacts = ".artifacts/verification"
+evidence = ".artifacts/evidence"
+task_owner = "."
+timeout_seconds = 3600
+
+[requires]
+commands = ["git", "mise", "swift"]
+
+[freshness]
+inputs = ["Package.swift", "Sources"]
+outputs = [".build/release/pinchos"]
+```
 
 ## Setup
 
