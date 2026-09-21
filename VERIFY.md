@@ -26,7 +26,7 @@ macOS 14+ with a Swift toolchain that can build this package (`swift-tools-versi
 
 Optional: install [mise](https://mise.jdx.dev) and run `mise install` if you want the tasks in `mise.toml` (Node 24 and Aube 2.1 are pinned there for the site only).
 
-Swift work does not use a root `package.json`. Do not add one.
+Swift work does not use a root package.json file. Do not add one.
 
 ## Readiness
 
@@ -78,7 +78,7 @@ mise run site:build
 
 ## Isolation
 
-Checks run in this checkout. SwiftPM writes to `.build/` (gitignored). Tests do not need a logged-in GUI session, Screen Recording permission, or a user's `~/.config/pinchos` file.
+Checks run in this checkout. SwiftPM writes to `.build/` (gitignored). Tests do not need a logged-in GUI session, Screen Recording permission, or a user's ~/.config/pinchos file.
 
 ## Artifacts
 
