@@ -1,6 +1,24 @@
 # Verification
 
-There is no bundled verify wrapper in this repository. The Swift checks below are the ones [`.github/workflows/verify.yml`](.github/workflows/verify.yml) runs on `macos-14`. Site steps apply only when `site/` or `recipes/` changed.
+The canonical entrypoint is `mise run verify`; the fenced `verify` block below is the machine-readable contract.
+The Swift checks it runs are the ones [`.github/workflows/verify.yml`](.github/workflows/verify.yml) runs on `macos-14`.
+Site steps apply only when `site/` or `recipes/` changed.
+
+```verify
+entrypoint = "mise run verify"
+feature_maps = "docs/features/README.md"
+artifacts = ".artifacts/verification"
+evidence = ".artifacts/evidence"
+task_owner = "."
+timeout_seconds = 3600
+
+[requires]
+commands = ["git", "mise", "swift"]
+
+[freshness]
+inputs = ["Package.swift", "Sources"]
+outputs = [".build/release/pinchos"]
+```
 
 ## Setup
 
@@ -8,7 +26,7 @@ macOS 14+ with a Swift toolchain that can build this package (`swift-tools-versi
 
 Optional: install [mise](https://mise.jdx.dev) and run `mise install` if you want the tasks in `mise.toml` (Node 24 and Aube 2.1 are pinned there for the site only).
 
-Swift work does not use a root `package.json`. Do not add one.
+Swift work does not use a root package.json file. Do not add one.
 
 ## Readiness
 
@@ -60,7 +78,7 @@ mise run site:build
 
 ## Isolation
 
-Checks run in this checkout. SwiftPM writes to `.build/` (gitignored). Tests do not need a logged-in GUI session, Screen Recording permission, or a user's `~/.config/pinchos` file.
+Checks run in this checkout. SwiftPM writes to `.build/` (gitignored). Tests do not need a logged-in GUI session, Screen Recording permission, or a user's ~/.config/pinchos file.
 
 ## Artifacts
 
