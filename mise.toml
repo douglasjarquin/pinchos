@@ -10,6 +10,10 @@ run = "swift build -c release"
 description = "Run the Swift package tests"
 run = "swift test"
 
+[tasks.verify]
+description = "Run the canonical verification checks from VERIFY.md"
+run = "swift build && swift test && swift build -c release"
+
 [tasks."site:install"]
 description = "Install site dependencies with Aube"
 run = "aube -C site install"
