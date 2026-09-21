@@ -15,10 +15,11 @@ Until that release is published both install methods below fail closed on a miss
 curl -fsSL https://douglasjarquin.github.io/pinchos/install.sh | bash
 ```
 
-The script refuses non-macOS and non-arm64 hosts, downloads `Pinchos-<version>-macos-arm64.zip` from GitHub Releases, verifies the published SHA-256 sidecar and the bundle's Developer ID signature, and installs `Pinchos.app` into `/Applications` (or `~/Applications` when `/Applications` is not writable; override with `PINCHOS_INSTALL_DIR`).
+The script refuses non-macOS, non-arm64, and pre-macOS 14 hosts, downloads `Pinchos-<version>-macos-arm64.zip` from GitHub Releases, and verifies the published SHA-256 sidecar.
+Before anything is installed it runs a real Gatekeeper assessment (`spctl --assess`) plus a Developer ID authority check, so an unsigned, ad hoc-signed, or non-notarized artifact fails closed - `codesign --verify` alone would accept ad hoc signatures.
+It then installs `Pinchos.app` into `/Applications` (or `~/Applications` when `/Applications` is not writable; override with `PINCHOS_INSTALL_DIR`), staging the new bundle beside the target and swapping so a failed copy never leaves a partial install.
 Pin a release with `PINCHOS_VERSION=0.1.0`.
 Re-running the script upgrades in place.
-It keeps the macOS quarantine attribute deliberately: published releases are notarized, so Gatekeeper accepts the app on first launch with no extra steps.
 The script source is [`site/public/install.sh`](site/public/install.sh), served by the project site.
 
 ### Homebrew

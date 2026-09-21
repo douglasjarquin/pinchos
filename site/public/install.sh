@@ -5,7 +5,8 @@
 #   curl -fsSL https://douglasjarquin.github.io/pinchos/install.sh | bash
 #
 # Downloads a published GitHub release artifact, verifies its published
-# SHA-256 checksum and Developer ID signature, and installs Pinchos.app.
+# SHA-256 checksum, and installs Pinchos.app only after a real Gatekeeper
+# assessment (Developer ID signature plus notarization).
 #
 # Environment:
 #   PINCHOS_VERSION      Version to install (default: latest release), e.g. 0.1.0
@@ -22,13 +23,19 @@ app_name="Pinchos.app"
 info() { printf '%s\n' "$*"; }
 fail() { printf 'install: error: %s\n' "$*" >&2; exit 1; }
 
-# Release policy (issue #15): macOS arm64 only, no Intel or Rosetta build.
-[ "$(uname -s)" = "Darwin" ] || fail "Pinchos is a macOS app; this host reports $(uname -s)."
-[ "$(uname -m)" = "arm64" ] || fail "Pinchos releases are Apple Silicon (arm64) only; this host reports $(uname -m)."
-
-for tool in curl shasum ditto codesign; do
+for tool in uname sw_vers curl shasum ditto codesign spctl grep pgrep; do
   command -v "$tool" >/dev/null 2>&1 || fail "required tool not found on PATH: $tool"
 done
+
+# Release policy (issue #15): macOS 14+ on arm64 only; no Intel or Rosetta build.
+[ "$(uname -s)" = "Darwin" ] || fail "Pinchos is a macOS app; this host reports $(uname -s)."
+[ "$(uname -m)" = "arm64" ] || fail "Pinchos releases are Apple Silicon (arm64) only; this host reports $(uname -m)."
+macos_major="$(sw_vers -productVersion)"
+macos_major="${macos_major%%.*}"
+case "$macos_major" in
+  ''|*[!0-9]*) fail "could not parse macOS version from sw_vers." ;;
+esac
+[ "$macos_major" -ge 14 ] || fail "Pinchos requires macOS 14 or later; this host reports $(sw_vers -productVersion)."
 
 version="${PINCHOS_VERSION:-}"
 if [ -z "$version" ]; then
@@ -50,6 +57,8 @@ trap 'rm -rf "$tmp_dir"' EXIT
 info "Downloading Pinchos v$version ($artifact)..."
 curl -fL --progress-bar -o "$tmp_dir/$artifact" "$base_url/$artifact" \
   || fail "download failed: $base_url/$artifact (release may not exist yet)"
+# The sidecar contract (issue #15 pipeline): literal `shasum -a 256 <zip>`
+# output, i.e. "<64-hex>  <zip name>", verifiable with `shasum -a 256 -c`.
 curl -fsSL -o "$tmp_dir/$artifact.sha256" "$base_url/$artifact.sha256" \
   || fail "checksum file missing at $base_url/$artifact.sha256; refusing to install an unverified artifact."
 
@@ -59,12 +68,21 @@ info "Verifying SHA-256 checksum..."
 info "Extracting..."
 mkdir -p "$tmp_dir/extract"
 ditto -x -k "$tmp_dir/$artifact" "$tmp_dir/extract"
-[ -d "$tmp_dir/extract/$app_name" ] || fail "archive did not contain $app_name."
+app_src="$tmp_dir/extract/$app_name"
+[ -d "$app_src" ] || fail "archive did not contain $app_name."
 
-# Releases are Developer ID signed and notarized; fail closed on anything else
-# rather than installing unsigned code that presents as a release.
-codesign --verify --deep --strict "$tmp_dir/extract/$app_name" \
-  || fail "signature verification failed for $app_name; refusing to install an unsigned or tampered bundle."
+info "Verifying signature and notarization..."
+# codesign --verify alone accepts ad hoc signatures ("signed by someone"), so
+# assert the Developer ID authority and run a real Gatekeeper assessment;
+# anything unsigned, ad hoc, self-signed, or not notarized fails closed here.
+codesign --verify --deep --strict "$app_src" \
+  || fail "signature verification failed for $app_name; refusing to install a tampered bundle."
+# No `grep -q`: it exits on first match and pipefail then reports codesign's
+# SIGPIPE as failure. Plain grep reads all input and prints the matched line.
+codesign -dvv "$app_src" 2>&1 | grep "Authority=Developer ID Application:" \
+  || fail "$app_name is not signed with a Developer ID Application certificate; refusing to install an ad hoc or self-signed artifact."
+spctl --assess --type execute -vv "$app_src" \
+  || fail "Gatekeeper assessment failed for $app_name (not notarized); refusing to install."
 
 if [ -n "${PINCHOS_INSTALL_DIR:-}" ]; then
   install_dir="$PINCHOS_INSTALL_DIR"
@@ -77,14 +95,25 @@ mkdir -p "$install_dir" || fail "cannot create install directory $install_dir."
 target="$install_dir/$app_name"
 [ -w "$install_dir" ] || fail "install directory is not writable: $install_dir (set PINCHOS_INSTALL_DIR)."
 
+# Stage beside the target and swap, so a failed copy never leaves a partial
+# or missing install. Same-directory moves are atomic on one volume.
+staging="$install_dir/.${app_name}.tmp-$$"
+rm -rf "$staging"
+ditto "$app_src" "$staging" || fail "could not stage $app_name into $install_dir."
+old=""
 if [ -d "$target" ]; then
-  rm -rf "$target" || fail "could not replace existing $target."
+  old="$install_dir/.${app_name}.old-$$"
+  mv "$target" "$old" || { rm -rf "$staging"; fail "could not move existing $target aside."; }
 fi
-ditto "$tmp_dir/extract/$app_name" "$target" || fail "could not install to $target."
+if ! mv "$staging" "$target"; then
+  [ -z "$old" ] || mv "$old" "$target" 2>/dev/null || true
+  fail "could not install $app_name to $target."
+fi
+[ -z "$old" ] || rm -rf "$old"
 
-# The quarantine attribute is kept deliberately: the published app is
-# notarized, so Gatekeeper accepts it on first launch. Removing quarantine
-# would skip that check for no benefit.
+# The install-time `spctl` assessment above is what enforces Gatekeeper
+# policy on this path: curl does not set com.apple.quarantine, so Gatekeeper
+# would not assess this app at first launch on its own.
 cli="$target/Contents/MacOS/pinchos"
 config_path="$("$cli" config-path)" || fail "installed app failed its CLI smoke check."
 
