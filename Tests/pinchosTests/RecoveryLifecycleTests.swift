@@ -598,7 +598,10 @@ final class RecoveryLifecycleTests: XCTestCase {
         ))
         item.commitPreparedUpdate()
 
-        try await Task.sleep(for: .seconds(1))
+        let settleDeadline = Date().addingTimeInterval(3)
+        while Date() < settleDeadline, item.menuRowRefreshTaskCountForTesting != 0 {
+            try await Task.sleep(for: .milliseconds(10))
+        }
         XCTAssertEqual(item.menuRowRefreshTaskCountForTesting, 0)
     }
 
