@@ -201,9 +201,11 @@ final class RecoveryLifecycleTests: XCTestCase {
             try? FileManager.default.removeItem(at: marker)
         }
 
-        item.refreshNow()
-        let success = try await waitForRuntimeSnapshot(item) { snapshot in
-            snapshot.lastUpdatedAt != nil
+        let success = try await waitForAcceptedRefresh(item) { snapshot in
+            snapshot.status == .fresh
+                && snapshot.fullOutput == "good\n"
+                && snapshot.lastExecution?.exitCode == 0
+                && snapshot.lastUpdatedAt != nil
         }
         let firstAttempt = try XCTUnwrap(success.lastAttemptedAt)
         let firstUpdate = try XCTUnwrap(success.lastUpdatedAt)
@@ -211,9 +213,13 @@ final class RecoveryLifecycleTests: XCTestCase {
         XCTAssertEqual(success.fullOutput, "good\n")
         XCTAssertEqual(success.lastExecution?.exitCode, 0)
 
-        item.refreshNow()
-        let failure = try await waitForRuntimeSnapshot(item) { snapshot in
-            snapshot.status == .error && snapshot.lastAttemptedAt != firstAttempt
+        let failure = try await waitForAcceptedRefresh(item) { snapshot in
+            snapshot.status == .error
+                && snapshot.lastAttemptedAt != firstAttempt
+                && snapshot.lastUpdatedAt == firstUpdate
+                && snapshot.fullOutput == "good\n"
+                && snapshot.lastExecution?.exitCode == 7
+                && snapshot.errorSummary == "transient diagnostic"
         }
         XCTAssertGreaterThan(try XCTUnwrap(failure.lastAttemptedAt), firstAttempt)
         XCTAssertEqual(failure.lastUpdatedAt, firstUpdate)
@@ -221,9 +227,12 @@ final class RecoveryLifecycleTests: XCTestCase {
         XCTAssertEqual(failure.lastExecution?.exitCode, 7)
         XCTAssertEqual(failure.errorSummary, "transient diagnostic")
 
-        item.refreshNow()
-        let recovery = try await waitForRuntimeSnapshot(item) { snapshot in
-            snapshot.status == .fresh && snapshot.fullOutput == "recovered\n"
+        let recovery = try await waitForAcceptedRefresh(item) { snapshot in
+            snapshot.status == .fresh
+                && snapshot.fullOutput == "recovered\n"
+                && snapshot.lastAttemptedAt != failure.lastAttemptedAt
+                && (snapshot.lastUpdatedAt ?? .distantPast) > firstUpdate
+                && snapshot.lastExecution?.exitCode == 0
         }
         XCTAssertGreaterThan(try XCTUnwrap(recovery.lastAttemptedAt), try XCTUnwrap(failure.lastAttemptedAt))
         XCTAssertGreaterThan(try XCTUnwrap(recovery.lastUpdatedAt), firstUpdate)
@@ -931,6 +940,37 @@ final class RecoveryLifecycleTests: XCTestCase {
             try? await Task.sleep(for: .milliseconds(10))
         }
         return kill(pid, 0) == -1 && errno == ESRCH
+    }
+
+    /// Polls until `predicate` matches, issuing another refresh only while the
+    /// previous request was coalesced and never started a new attempt.
+    @MainActor
+    private func waitForAcceptedRefresh(
+        _ item: ManagedItem,
+        matching predicate: (ItemRuntimeSnapshot) -> Bool
+    ) async throws -> ItemRuntimeSnapshot {
+        let before = await item.runtimeSnapshot().lastAttemptedAt
+        var accepted = false
+        let deadline = Date().addingTimeInterval(3)
+        while Date() < deadline {
+            let snapshot = await item.runtimeSnapshot()
+            if !accepted, snapshot.lastAttemptedAt != before {
+                accepted = true
+            }
+            if predicate(snapshot) {
+                return snapshot
+            }
+            if !accepted {
+                item.refreshNow()
+                await Task.yield()
+            }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        throw NSError(
+            domain: "RecoveryLifecycleTests",
+            code: 9,
+            userInfo: [NSLocalizedDescriptionKey: "runtime snapshot did not reach the expected state"]
+        )
     }
 
     @MainActor
