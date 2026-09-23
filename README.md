@@ -1,60 +1,46 @@
 # pinchos
 
+## What it is
+
 Pinchos runs shell commands and pins their latest values to the macOS menu bar.
+
 The 0.1 product is deliberately small: one command-backed item and an ordered native submenu of static values, cached values, actions, and separators.
 
-## Install
+Release tags, signing, and the first release are in [docs/pinchos/install.md](docs/pinchos/install.md).
 
-Pinchos releases are signed, notarized `Pinchos.app` builds for Apple Silicon (arm64) Macs on macOS 14+.
-Release tags are `vMAJOR.MINOR.PATCH`; `v0.1.0` is the first release and its signing/notarization pipeline is tracked in issue [#15](https://github.com/douglasjarquin/pinchos/issues/15).
-Until that release is published both install methods below fail closed on a missing artifact or checksum; build from source in the meantime.
+## Features
 
-### Install script
+* **Menu bar item.** One command-backed item shows the latest value. Keys, order, and the submenu model are in [docs/pinchos/configuration.md](docs/pinchos/configuration.md).
+
+* **Native submenu.** Static values, cached values, actions, and separators, in declaration order. Row rules are in [docs/pinchos/configuration.md](docs/pinchos/configuration.md).
+
+* **Checked-in example.** The example item shells out for one Codex reading. Download, checksum, freshness, and rollback are in [docs/pinchos/example-setup.md](docs/pinchos/example-setup.md).
+
+* **CLI.** `init`, `validate`, `doctor`, `run`, `config-path`, and `open-config`. What each one does is in [docs/pinchos/cli.md](docs/pinchos/cli.md).
+
+* **Live reload.** Valid edits apply incrementally. A malformed file leaves the last known-good items running. Recovery and the removed 0.1 syntax are in [docs/pinchos/runtime.md](docs/pinchos/runtime.md).
+
+* **Bounded execution.** Output tails share one process-wide memory budget, and sessions share one scheduler. Safety rules are in [docs/pinchos/runtime.md](docs/pinchos/runtime.md).
+
+## Quick Start
+
+### Requirements
+
+Pinchos releases target Apple Silicon (arm64) Macs on macOS 14+.
+
+The project is pure Swift Package Manager and has no Xcode project. Until `v0.1.0` is published, the install script and Homebrew cask fail closed on a missing artifact or checksum; build from source in the meantime.
+
+### Install
 
 ```sh
 curl -fsSL https://douglasjarquin.github.io/pinchos/install.sh | bash
 ```
 
-The script refuses non-macOS, non-arm64, and pre-macOS 14 hosts, downloads `Pinchos-<version>-macos-arm64.zip` from GitHub Releases, and verifies the published SHA-256 sidecar.
-Before anything is installed it runs a real Gatekeeper assessment (`spctl --assess`) plus a Developer ID authority check, so an unsigned, ad hoc-signed, or non-notarized artifact fails closed - `codesign --verify` alone would accept ad hoc signatures.
-It then installs `Pinchos.app` into `/Applications` (or `~/Applications` when `/Applications` is not writable; override with `PINCHOS_INSTALL_DIR`), staging the new bundle beside the target and swapping so a failed copy never leaves a partial install.
-Pin a release with `PINCHOS_VERSION=0.1.0`.
-Re-running the script upgrades in place.
-The script source is [`site/public/install.sh`](site/public/install.sh), served by the project site.
+The script refuses non-macOS, non-arm64, and pre-macOS 14 hosts, downloads the release zip, and verifies the published SHA-256 sidecar.
 
-### Homebrew
+`PINCHOS_VERSION`, `PINCHOS_INSTALL_DIR`, Homebrew, the local build, and the Gatekeeper check are in [docs/pinchos/install.md](docs/pinchos/install.md).
 
-This repository is the Homebrew tap.
-Because it is not named `homebrew-pinchos`, tap it with an explicit URL rather than the `user/repo` shortcut:
-
-```sh
-brew tap douglasjarquin/pinchos https://github.com/douglasjarquin/pinchos
-brew trust douglasjarquin/pinchos
-brew install --cask pinchos
-```
-
-Current Homebrew refuses casks from untrusted third-party taps; `brew trust` records your decision to run this tap's cask code.
-
-The cask ([`Casks/pinchos.rb`](Casks/pinchos.rb)) installs `Pinchos.app` into `/Applications` and links its `pinchos` CLI onto your `PATH`.
-It pins an exact version and SHA-256 per release and refuses non-arm64 Macs.
-
-- **Upgrade:** `brew update && brew upgrade --cask pinchos`.
-- **Uninstall:** `brew uninstall --cask pinchos` removes the app and CLI link only; your config is left in place.
-
-### Build from source
-
-Pinchos is a pure Swift Package Manager project with no Xcode project.
-
-```sh
-swift build -c release
-swift test
-```
-
-The release executable is `.build/release/pinchos`.
-`scripts/package-app.sh` assembles an unsigned `Pinchos.app` from it for local bundle smoke testing (`scripts/smoke-app-bundle.sh`).
-That unsigned bundle is not a distributable artifact: Gatekeeper will block it on other Macs, and the release pipeline in issue [#15](https://github.com/douglasjarquin/pinchos/issues/15) fails closed rather than publish one.
-
-## Quick start
+### First run
 
 ```sh
 .build/release/pinchos init
@@ -63,143 +49,47 @@ That unsigned bundle is not a distributable artifact: Gatekeeper will block it o
 .build/release/pinchos run codex
 ```
 
-`init` creates the resolved configuration directory and writes the checked-in example only when no configuration exists.
-`validate` parses the file without running commands.
-`doctor` checks the configured command and icon prerequisites without running the command.
-`run <item>` executes one item for scriptable verification.
-`config-path` prints the resolved path and `open-config` opens it in the default application.
+`init` writes the checked-in example only when no configuration exists. The other commands are in [docs/pinchos/cli.md](docs/pinchos/cli.md).
 
-## Configuration
+## How it works
 
-Pinchos reads `$XDG_CONFIG_HOME/pinchos/pinchos.toml` when `XDG_CONFIG_HOME` is non-empty.
-Otherwise it reads `~/.config/pinchos/pinchos.toml`.
-The config watcher reloads this file after changes, but normal operation never rewrites it.
-
-The canonical source is [`example/pinchos.toml`](example/pinchos.toml).
-
-```toml
-[item.codex]
-run = "remainder value --provider codex --profile default --window weekly --scope account --field remaining --cache auto --max-age 5s --freshness fresh"
-interval = "5m"
-timeout = "15s"
-format = "{output}"
-symbol = "terminal"
-
-[[item.codex.menu]]
-label = "Usage"
-run = "remainder value --provider codex --profile default --window weekly --scope account --field remaining --cache auto --max-age 5s --freshness fresh"
-cache = "5m"
-
-[[item.codex.menu]]
-label = "Pace"
-run = "remainder value --provider codex --profile default --window weekly --scope account --field pace --cache auto --max-age 5s --freshness fresh"
-cache = "5m"
-
-[[item.codex.menu]]
-label = "Refresh"
-run = "remainder value --provider codex --profile default --window weekly --scope account --field remaining --cache auto --max-age 5s --freshness fresh"
-cache = "5m"
-action = "open https://chatgpt.com/codex"
-
-[[item.codex.menu]]
-label = "Open Codex"
-action = "open https://chatgpt.com/codex"
-
-[[item.codex.menu]]
-separator = true
+```
+pinchos.toml
+ │  declaration order
+ ▼
+scheduler and source cache
+ │
+ └─ menu bar item and native submenu
 ```
 
-This example calls [`remainder`](https://github.com/douglasjarquin/remainder) directly for the Codex `default` profile's account-scoped `weekly` remaining percentage and pace.
-It was verified against immutable Remainder `v0.2.1` for macOS Apple Silicon (`darwin_arm64`).
-Use Remainder `v0.2.1`'s immutable-tagged [standalone release recipe](https://github.com/douglasjarquin/remainder/blob/v0.2.1/docs/release.md) for the one-time download, selected-archive checksum verification, and extraction into a versioned directory you choose.
-The exact [macOS Apple Silicon archive](https://github.com/douglasjarquin/remainder/releases/download/v0.2.1/remainder_v0.2.1_darwin_arm64.tar.gz) has SHA-256 `84f3b21f3a0a30068644e4c6f229af1ec7b183744be30f10c379fe514921af95`.
-Download the archive and `SHA256SUMS`, select exactly one matching archive entry, verify it, and then extract it:
+Opening a menu is synchronous and never executes a command. Actions execute only when selected.
 
-```sh
-asset=remainder_v0.2.1_darwin_arm64.tar.gz
-release=https://github.com/douglasjarquin/remainder/releases/download/v0.2.1
-curl --fail --location --output "$asset" "$release/$asset"
-curl --fail --location --output SHA256SUMS "$release/SHA256SUMS"
-awk -v name="$asset" '$2 == name { print; count++ } END { if (count != 1) exit 1 }' SHA256SUMS > "$asset.sha256"
-shasum -a 256 -c "$asset.sha256"
-tar -xzf "$asset"
-```
+Commands and actions are unsandboxed code executed with the user's permissions. Review executables, arguments, paths, network destinations, credentials, and write targets before placing them in TOML.
 
-After the extracted binary passes `--version` and `--help`, copy it to a versioned directory such as `~/.local/opt/remainder/v0.2.1/remainder`.
-The extracted executable SHA-256 is `8f1a4fd0ce7e1466055e733512b41cbd0bcd25ccba0ac125b4f13b58d578d886`.
-Keep that chosen versioned directory in the `PATH` Pinchos inherits, and record its absolute executable path before activating the configuration.
-Keep the versioned executable available while restoring the previous configuration or `PATH` for rollback.
-Record the resolved path and release version before activating the configuration:
+Bounds, reload, recovery, and the rejected development syntax are in [docs/pinchos/runtime.md](docs/pinchos/runtime.md).
 
-```sh
-command -v remainder
-remainder --version
-```
+## Documentation
 
-Pinchos does not install Remainder during a refresh or menu opening.
-This path does not require Sum, Herdr, `jq`, or a Go toolchain.
-It does not embed credentials, select another account, prompt for authentication from a menu opening, or enable a paid provider route.
+* [docs/pinchos/install.md](docs/pinchos/install.md) — release install, Homebrew, and building from source.
 
-Each scalar read asks Remainder for fresh evidence and permits reuse of an original provider observation for at most five seconds.
-Pinchos refreshes the primary display every five minutes and keeps the dynamic rows for five minutes, while Remainder's process-safe cache can coalesce the nearby remaining and pace reads.
-The nominal original-observation age bound is therefore five minutes plus Remainder's five-second reuse window plus command execution and scheduler delay.
-An explicit zero remains a successful exhausted value; unknown, expired, wrong-account, missing-auth, nonzero-exit, and timeout outcomes remain failures rather than becoming numeric zero or empty success.
+* [docs/pinchos/cli.md](docs/pinchos/cli.md) — `init`, `validate`, `doctor`, `run`, `config-path`, and `open-config`.
 
-Pinchos preserves the last successful primary value with a warning marker after a failed attempt, and its diagnostics expose the last attempt, last success, exit status, and error.
-Pinchos does not currently carry Remainder's original observation timestamp through the scalar output or age a successful primary value solely because sleep or a missed timer delayed the next attempt.
-Dynamic and manual-only submenu rows likewise do not expose the provider observation age.
-Those are explicit freshness-affordance follow-ups in [issue #123](https://github.com/douglasjarquin/pinchos/issues/123); the nominal bound must not be presented as a hard maximum until they are resolved.
+* [docs/pinchos/configuration.md](docs/pinchos/configuration.md) — config path, item keys, and menu rows.
 
-To roll back, restore the previously reviewed [`quota-axi`](https://github.com/kunchenguid/quota-axi) commands in the four `run` entries while keeping the item, labels, order, symbol, cache durations, and actions unchanged.
-Pinchos will live-reload that edit and will not uninstall either executable.
-`quota-axi` remains an independent, attributed quota tool and is still used by the separate optional recipe catalog.
+* [docs/pinchos/example-setup.md](docs/pinchos/example-setup.md) — the checked-in Codex example, checksums, freshness, and rollback.
 
-Items appear in declaration order.
-The supported item keys are `run`, `interval`, `timeout`, `format`, `symbol`, `icon`, and `menu`.
-`symbol` is a macOS SF Symbol name.
-`icon` is a local image path.
-The two icon keys are mutually exclusive.
+* [docs/pinchos/runtime.md](docs/pinchos/runtime.md) — output bounds, reload, recovery, and removed syntax.
 
-Every non-separator menu row needs a non-empty `label`.
-Use `value` for static text, `run` for a cached command value, and `action` for a clickable command.
-A row may combine `run` and `action`.
-`cache` is optional for a dynamic row; when present, it controls the row's freshness interval, while an omitted value makes the row manual-only.
-`separator = true` cannot be combined with any other row key.
+* [docs/pinchos/architecture.md](docs/pinchos/architecture.md) — modules, tests, and manual QA.
 
-Opening a menu is synchronous and never executes a command.
-Unavailable cached rows request a background refresh while keeping menu construction immediate.
-Actions execute only when selected.
-Equivalent primary and menu commands share one source and cache within a controller.
+* [example/pinchos.toml](example/pinchos.toml) — canonical configuration.
 
-## Runtime safety
+* [docs/manual-qa](docs/manual-qa) — manual QA evidence.
 
-All command output is retained in bounded tails with one process-wide memory budget.
-Command sessions use one process-wide scheduler and cannot overlap on the same source.
-Timeout, reload, removal, quit, SIGTERM, and SIGINT settle owned process groups through the shared lifecycle deadline.
-Menu and diagnostics previews sanitize control characters and are bounded independently from retained output.
-Command diagnostics remain bounded and available for troubleshooting.
+## Contributing
 
-Commands and actions are unsandboxed code executed with the user's permissions.
-Review executables, arguments, paths, network destinations, credentials, and write targets before placing them in TOML.
+Human-authored pull requests target `main`. The workflow and checks are in [CONTRIBUTING.md](CONTRIBUTING.md).
 
-## Live reload and recovery
+## License
 
-Valid changes apply incrementally while preserving unchanged source/cache identity.
-Added, removed, changed, and reordered items are reconciled under one concurrent lifecycle deadline.
-Malformed configuration leaves the last known-good items running and exposes recovery actions for creating, opening, reloading, or quitting.
-
-## Removed development syntax
-
-The 0.1 release is intentionally breaking because the earlier development schema never shipped.
-`type`, legacy `action` and `info` tables, groups, item triggers, notifications, structured output, visibility flags, scheduler settings, shell/environment overrides, output bounds, error policies, freshness policies, config mutation, and launchd service commands are rejected.
-There are no compatibility aliases or migration writers.
-
-## Architecture
-
-- `Sources/PinchosCore` contains TOML parsing, the config diff, bounded command execution, the scheduler, source/cache actors, formatting, and diagnostics.
-- `Sources/pinchos` contains AppKit ownership, menu projection, live reload coordination, recovery, signals, and shutdown.
-- `Tests/PinchosCoreTests` covers parser, source/cache, scheduler, process, output, and formatting contracts.
-- `Tests/pinchosTests` covers AppKit-headless lifecycle, menus, reload, recovery, signals, and CLI behavior.
-
-Manual QA evidence belongs under [`docs/manual-qa`](docs/manual-qa).
-The current headless environment cannot grant the one-time macOS Screen Recording and Accessibility permissions required for real screenshots.
+Pinchos is licensed under the [MIT License](LICENSE).
