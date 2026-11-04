@@ -2,9 +2,11 @@
 
 Pinchos's pitch is efficiency: native `NSStatusItem`s, no runtime bloat, idle physical
 footprint under ~15MB for the flagship three-item workload, and effectively zero idle
-CPU between ticks (see [README.md](../README.md)). This document defines the benchmark
-profiles that back those claims, what's enforced automatically today, and how to run a
-controlled measurement locally. It tracks [issue #55](https://github.com/douglasjarquin/pinchos/issues/55).
+CPU between ticks. Those absolute numbers are the P1 budget in this document, with
+evidence in [`docs/manual-qa/0.1.0-evidence.md`](manual-qa/0.1.0-evidence.md).
+This document defines the benchmark profiles that back those claims, what's enforced
+automatically today, and how to run a controlled measurement locally. It tracks
+[issue #55](https://github.com/douglasjarquin/pinchos/issues/55).
 
 ## Two enforcement tiers
 
@@ -17,7 +19,7 @@ runner to runner. Pinchos therefore splits performance evidence into two tiers:
    timer" or "retained output never exceeds its fixed per-runner byte budget." Enforced by
    `.github/workflows/verify.yml` (`swift build`, `swift test`, `swift build -c release`).
 2. **Wall-clock/RSS/wakeup budgets, run manually on a controlled machine.** These are the
-   absolute product claims (the "under 15MB" line in the README). They're measured with
+   absolute product claims (the P1 "under 15MB" line below). They're measured with
    the real release binary using `footprint`'s `phys_footprint` (Apple's own private-memory
    metric — see the note in [`docs/manual-qa/0.1.0-evidence.md`](manual-qa/0.1.0-evidence.md) on
    why this is preferred over `ps` RSS), run repeatedly, and compared against both an
@@ -42,8 +44,8 @@ any single sample.
 | **P4** | Simultaneous bounded stdout/stderr at multiple rates | Throughput, bytes copied, peak memory, truncation correctness, event-loop responsiveness | Superlinear output-tail copying / unbounded buffers (#50, #53) |
 | **P5** | Large config parse/apply, incremental edits, add/remove/reorder, many active commands during quit/signal | Main-thread stalls, reload latency, shutdown latency | Off-main-thread parse violations and lifecycle latency that scales with runner count (#52, #54) |
 
-P0–P1 are the profiles with the most direct product commitment (the README's "under 15MB
-/ effectively zero idle CPU" claim is specifically P1). P2/P3 characterize scaling
+P0–P1 are the profiles with the most direct product commitment (the P1 "under 15MB /
+effectively zero idle CPU" budget below). P2/P3 characterize scaling
 behavior rather than typical end-user UX. P4/P5 target specific known-risky subsystems
 (output draining, reload, shutdown) rather than a single number.
 
@@ -141,7 +143,7 @@ RSS with the example shape" — `phys_footprint: 14 MB`, under the 15MB bar.
 | P1 | `phys_footprint`, settled, 3 items @ 60s | < 15 MB |
 | P1 | Idle CPU between ticks | Effectively zero (no busy-poll; timer-driven only) |
 
-Only P1 has a ratified absolute budget today, matching the README's product claim. P0 and
+Only P1 has a ratified absolute budget today. P0 and
 P2–P5 are defined as profiles with metrics to collect, but don't yet have ratified
 absolute thresholds — establishing those (and the regression-percentage policy alongside
 them) requires the repeated-sample reference-hardware runs described above, and is

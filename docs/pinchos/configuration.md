@@ -54,7 +54,7 @@ A row may combine `run` and `action`.
 `cache` is optional for a dynamic row; when present, it controls the row's freshness interval, while an omitted value makes the row manual-only.
 `separator = true` cannot be combined with any other row key.
 
-Opening a menu is synchronous and never executes a command.
+Opening a menu is synchronous and never waits on a command.
 Unavailable cached rows request a background refresh while keeping menu construction immediate.
 Actions execute only when selected.
 Equivalent primary and menu commands share one source and cache within a controller.

@@ -84,9 +84,9 @@ The mobile breakpoint is 720px; grids collapse to one column and horizontal padd
 
 ### Product mockup
 
-- **Structure:** dark system-font menu bar, item labels and values, and a native-looking submenu with static rows, cached rows, actions, and separators.
+- **Structure:** dark system-font menu bar, item labels and values, and a native-looking submenu with cached rows, actions, and separators.
 - **Variants:** landing hero and docs component specimen.
-- **States:** the landing demo presents the canonical Codex item with cached Usage and Pace rows, an action, a separator, and a config disclosure; opening the menu never executes a command.
+- **States:** the landing demo presents the canonical Codex item with cached Usage and Pace rows, a run-plus-action Refresh row, an Open Codex action, a separator, and a config disclosure; opening the menu does not wait on a command.
 - **Accessibility:** `figure` has a meaningful label, menu rows remain selectable text, the action is a keyboard-reachable button, the config disclosure is keyboard reachable, and the example explains its read-only boundary.
 - **Motion:** no idle motion; the landing demo uses instantaneous state changes and the existing 150ms color/background feedback for controls.
 
