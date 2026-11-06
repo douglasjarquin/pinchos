@@ -62,7 +62,7 @@ scheduler and source cache
  └─ menu bar item and native submenu
 ```
 
-Opening a menu is synchronous and never executes a command. Actions execute only when selected.
+Opening a menu is synchronous and never waits on a command. Unavailable cached rows request a background refresh while keeping menu construction immediate. Actions execute only when selected.
 
 Commands and actions are unsandboxed code executed with the user's permissions. Review executables, arguments, paths, network destinations, credentials, and write targets before placing them in TOML.
 
