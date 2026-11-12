@@ -45,7 +45,7 @@ final class SignalIntegrationTests: XCTestCase {
 
         let launchedProcess = Process()
         process = launchedProcess
-        launchedProcess.executableURL = try pinchosExecutable()
+        launchedProcess.executableURL = try PinchosTestExecutable.resolve()
         launchedProcess.arguments = ["doctor"]
         var environment = ProcessInfo.processInfo.environment
         environment["XDG_CONFIG_HOME"] = root.path
@@ -97,7 +97,7 @@ final class SignalIntegrationTests: XCTestCase {
 
         let launchedProcess = Process()
         process = launchedProcess
-        launchedProcess.executableURL = try pinchosExecutable()
+        launchedProcess.executableURL = try PinchosTestExecutable.resolve()
         var environment = ProcessInfo.processInfo.environment
         environment["XDG_CONFIG_HOME"] = root.path
         environment["PINCHOS_MARKER"] = markerURL.path
@@ -158,7 +158,7 @@ final class SignalIntegrationTests: XCTestCase {
         """#.write(to: configURL, atomically: true, encoding: .utf8)
 
         let process = Process()
-        process.executableURL = try pinchosExecutable()
+        process.executableURL = try PinchosTestExecutable.resolve()
         process.arguments = ["run", "normal"]
         var environment = ProcessInfo.processInfo.environment
         environment["XDG_CONFIG_HOME"] = root.path
@@ -208,7 +208,7 @@ final class SignalIntegrationTests: XCTestCase {
 
         let launchedProcess = Process()
         process = launchedProcess
-        launchedProcess.executableURL = try pinchosExecutable()
+        launchedProcess.executableURL = try PinchosTestExecutable.resolve()
         launchedProcess.arguments = ["run", "long"]
         var environment = ProcessInfo.processInfo.environment
         environment["XDG_CONFIG_HOME"] = root.path
@@ -250,22 +250,6 @@ final class SignalIntegrationTests: XCTestCase {
         XCTAssertTrue(waitUntilGroupGone(groupID), "owned process group \(groupID) survived signal cleanup")
         XCTAssertEqual(launchedProcess.terminationReason, .exit)
         XCTAssertEqual(launchedProcess.terminationStatus, expectedExitCode)
-    }
-
-    private func pinchosExecutable() throws -> URL {
-        let root = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
-        let candidates = [
-            root.appendingPathComponent(".build/release/pinchos"),
-            root.appendingPathComponent(".build/debug/pinchos")
-        ]
-        if let executable = candidates.first(where: { FileManager.default.isExecutableFile(atPath: $0.path) }) {
-            return executable
-        }
-        throw NSError(
-            domain: "SignalIntegrationTests",
-            code: 1,
-            userInfo: [NSLocalizedDescriptionKey: "could not locate the Pinchos executable in .build"]
-        )
     }
 
     private func waitForPID(at url: URL) throws -> pid_t {

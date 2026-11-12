@@ -1,8 +1,9 @@
 # Verification
 
 The canonical entrypoint is `mise run verify`; the fenced `verify` block below is the machine-readable contract.
-The Swift checks it runs are the ones [`.github/workflows/verify.yml`](.github/workflows/verify.yml) runs on `macos-14`.
-Site steps apply only when `site/` or `recipes/` changed.
+The Swift checks it runs are the ones [`.github/workflows/verify.yml`](.github/workflows/verify.yml) runs on GitHub's `macos-26` runner image.
+That runner image is distinct from the macOS 14 deployment minimum in `Package.swift`.
+The workflow runs on pull requests and on pushes to `main`. Site steps apply only when `site/` or `recipes/` changed.
 
 ```verify
 entrypoint = "mise run verify"
@@ -34,7 +35,7 @@ Swift work does not use a root package.json file. Do not add one.
 
 ## Automated checks
 
-From the repository root, matching **Verify changes**:
+From the repository root, `mise run verify` matches **Verify changes**:
 
 ```sh
 swift build
@@ -49,7 +50,9 @@ mise run test    # swift test
 mise run build   # swift build -c release
 ```
 
-`mise run build` does not run the debug `swift build` CI also performs. `swift test` rebuilds the debug target only. Some integration tests prefer `.build/release/pinchos` when that file already exists, so rebuild release if a leftover binary is present.
+`mise run verify` is those three Swift commands. Neither mise nor CI retries failing product tests. `mise run build` does not run the debug `swift build` CI also performs. `swift test` rebuilds the debug target only.
+
+Executable-level tests always launch `.build/debug/pinchos` (the stable SwiftPM debug symlink `swift test` rebuilds for this checkout). A leftover `.build/release/pinchos` is never selected. Fresh and reused checkouts follow that same rule. CI plants a failing leftover-release stub before `swift test` so a regression cannot pass silently; `mise run verify` relies on the same helper and does not plant a stub.
 
 ## Scenarios
 
@@ -78,7 +81,7 @@ mise run site:build
 
 ## Isolation
 
-Checks run in this checkout. SwiftPM writes to `.build/` (gitignored). Tests do not need a logged-in GUI session, Screen Recording permission, or a user's ~/.config/pinchos file.
+Checks run in this checkout. SwiftPM writes to `.build/` (gitignored). Executable-level tests launch this checkout's `.build/debug/pinchos`, never a leftover release artifact. Tests do not need a logged-in GUI session, Screen Recording permission, or a user's ~/.config/pinchos file.
 
 ## Artifacts
 

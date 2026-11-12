@@ -15,7 +15,7 @@ Human pull requests target `main` through ordinary GitHub PRs: fork, branch, com
 
 ## Verification
 
-Follow [VERIFY.md](VERIFY.md) before you open a pull request or ask for review. CI's **Verify changes** workflow repeats the Swift build and test steps on `macos-14`; local runs should match those commands.
+Follow [VERIFY.md](VERIFY.md) before you open a pull request or ask for review. CI's **Verify changes** workflow repeats the Swift build and test steps on GitHub's `macos-26` runner image; local runs should match those commands. macOS 14 remains the supported deployment minimum in `Package.swift`; do not treat the CI runner image as that floor.
 
 If you change `site/` or `recipes/`, also run the site steps in VERIFY.md.
 
@@ -26,8 +26,8 @@ Pinchos is a Swift Package Manager macOS menu-bar app. There is no Xcode project
 - `Package.swift` uses `swift-tools-version: 5.10` and macOS 14.
 - `Sources/PinchosCore` is UI-free. `Sources/pinchos` is AppKit wiring and the CLI.
 - `swift test` covers `Tests/PinchosCoreTests` and `Tests/pinchosTests`.
-- `swift build` and `swift build -c release` are the debug and release builds. The release executable is `.build/release/pinchos`.
-- `mise.toml` wraps the same Swift commands (`mise run test`, `mise run build`) and the site tasks (`site:install`, `site:dev`, `site:build`, `site:preview`).
+- `swift build` and `swift build -c release` are the debug and release builds. The release executable is `.build/release/pinchos`. Executable-level tests launch `.build/debug/pinchos`; see [VERIFY.md](VERIFY.md) for that contract.
+- `mise.toml` wraps the same Swift commands (`mise run verify`, `mise run test`, `mise run build`) and the site tasks (`site:install`, `site:dev`, `site:build`, `site:preview`).
 - Item TOML keys, CLI subcommands, and architecture notes live in [README.md](README.md). Keep public `ItemConfig` fields aligned with that list.
 - Manual QA writeups belong under `docs/manual-qa/`.
 

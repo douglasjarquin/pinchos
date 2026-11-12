@@ -26,6 +26,33 @@ jobs:
       - uses: actions/checkout@v4
       - name: swift build
         run: swift build
+      - name: Plant leftover release binary
+        run: |
+          set -euo pipefail
+          DEBUG_BIN="${PWD}/.build/debug/pinchos"
+          RELEASE_BIN="${PWD}/.build/release/pinchos"
+          test -x "$DEBUG_BIN"
+          mkdir -p .build/release
+          cat > "$RELEASE_BIN" <<'EOF'
+          #!/bin/sh
+          echo "stale leftover .build/release/pinchos must not be selected by tests" >&2
+          exit 99
+          EOF
+          chmod +x "$RELEASE_BIN"
+          ls -l "$DEBUG_BIN" "$RELEASE_BIN"
+          python3 - <<'PY'
+          import os
+          root = os.getcwd()
+          debug = os.path.join(root, ".build", "debug", "pinchos")
+          release = os.path.join(root, ".build", "release", "pinchos")
+          print(f"debug={debug} executable={os.access(debug, os.X_OK)}")
+          print(f"release={release} executable={os.access(release, os.X_OK)}")
+          if not os.access(debug, os.X_OK):
+              raise SystemExit("debug binary missing after swift build")
+          if not os.access(release, os.X_OK):
+              raise SystemExit("leftover release stub was not planted")
+          print("contract=select_.build/debug/pinchos_ignore_leftover_release")
+          PY
       - name: swift test
         run: swift test
       - name: swift build (release)
