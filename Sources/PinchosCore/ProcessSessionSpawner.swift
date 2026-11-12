@@ -121,10 +121,9 @@ extension SupervisorProcessSession {
     }
 
     private static func makeEnvironment(_ configured: [String: String]) throws -> [UnsafeMutablePointer<CChar>?] {
-        let merged = ProcessInfo.processInfo.environment.merging(configured) { _, value in value }
         var entries = [UnsafeMutablePointer<CChar>?]()
-        for key in merged.keys.sorted() {
-            guard let entry = strdup("\(key)=\(merged[key]!)") else {
+        for key in configured.keys.sorted() {
+            guard let entry = strdup("\(key)=\(configured[key]!)") else {
                 freeEnvironment(entries)
                 throw LaunchError.posix(ENOMEM, context: "unable to construct supervisor environment")
             }

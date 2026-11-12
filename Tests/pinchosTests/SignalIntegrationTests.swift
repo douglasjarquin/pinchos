@@ -92,7 +92,7 @@ final class SignalIntegrationTests: XCTestCase {
         [item.gui]
         interval = "manual"
         timeout = "1h"
-        run = "(trap '' TERM INT; while :; do sleep 1; done) & child_pid=$!; printf '%s' \"$child_pid\" > \"$PINCHOS_MARKER\"; wait \"$child_pid\""
+        run = "(trap '' TERM INT; while :; do sleep 1; done) & child_pid=$!; printf '%s' \"$child_pid\" > '\#(markerURL.path)'; wait \"$child_pid\""
         """#.write(to: configURL, atomically: true, encoding: .utf8)
 
         let launchedProcess = Process()
@@ -100,7 +100,6 @@ final class SignalIntegrationTests: XCTestCase {
         launchedProcess.executableURL = try PinchosTestExecutable.resolve()
         var environment = ProcessInfo.processInfo.environment
         environment["XDG_CONFIG_HOME"] = root.path
-        environment["PINCHOS_MARKER"] = markerURL.path
         launchedProcess.environment = environment
         launchedProcess.standardOutput = FileHandle.nullDevice
         launchedProcess.standardError = FileHandle.nullDevice
@@ -203,7 +202,7 @@ final class SignalIntegrationTests: XCTestCase {
 
         try #"""
         [item.long]
-        run = "(trap '' TERM INT; while :; do sleep 1; done) & child_pid=$!; printf '%s' \"$child_pid\" > \"$PINCHOS_MARKER\"; wait \"$child_pid\""
+        run = "(trap '' TERM INT; while :; do sleep 1; done) & child_pid=$!; printf '%s' \"$child_pid\" > '\#(markerURL.path)'; wait \"$child_pid\""
         """#.write(to: configURL, atomically: true, encoding: .utf8)
 
         let launchedProcess = Process()
@@ -212,7 +211,6 @@ final class SignalIntegrationTests: XCTestCase {
         launchedProcess.arguments = ["run", "long"]
         var environment = ProcessInfo.processInfo.environment
         environment["XDG_CONFIG_HOME"] = root.path
-        environment["PINCHOS_MARKER"] = markerURL.path
         launchedProcess.environment = environment
         launchedProcess.standardOutput = FileHandle.nullDevice
         launchedProcess.standardError = FileHandle.nullDevice

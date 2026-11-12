@@ -60,4 +60,5 @@ Commands and actions are unsandboxed code run with the user's permissions, so in
 Use `pinchos validate`, `pinchos doctor`, and `pinchos run <item>` against an isolated configuration before changing the live file.
 
 The old development keys and modules are intentionally unsupported.
+Commands run under the internal execution policy in `docs/pinchos/runtime.md` (system plus Apple Silicon Homebrew PATH, HOME as the working directory, a small inherited-key set).
 Do not add `type`, `action`, `info`, groups, triggers, notifications, structured output, visibility flags, scheduler settings, shell/environment overrides, output bounds, error policies, freshness policies, config mutation, or launchd service commands.

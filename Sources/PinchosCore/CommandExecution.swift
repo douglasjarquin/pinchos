@@ -463,6 +463,7 @@ private enum CommandExecutionEngine {
         shell: [String],
         workingDirectory: String?,
         environment: [String: String],
+        policy: CommandExecutionPolicy,
         timeout: TimeInterval,
         maxOutputBytes: Int,
         controller: ProcessGroupController,
@@ -476,6 +477,7 @@ private enum CommandExecutionEngine {
                     shell: shell,
                     workingDirectory: workingDirectory,
                     environment: environment,
+                    policy: policy,
                     timeout: timeout,
                     maxOutputBytes: maxOutputBytes,
                     controller: controller,
@@ -494,6 +496,7 @@ private enum CommandExecutionEngine {
         shell: [String],
         workingDirectory: String?,
         environment: [String: String],
+        policy: CommandExecutionPolicy,
         timeout: TimeInterval,
         maxOutputBytes: Int,
         controller: ProcessGroupController,
@@ -501,6 +504,8 @@ private enum CommandExecutionEngine {
         race: EventRace
     ) async -> CommandExecutionResult {
         let startedAt = DispatchTime.now().uptimeNanoseconds
+        let resolvedWorkingDirectory = workingDirectory ?? policy.workingDirectory
+        let resolvedEnvironment = policy.environment(overlay: environment)
         guard let shellExecutable = shell.first, !shellExecutable.isEmpty else {
             return launchFailure(
                 "shell argument vector must include an executable",
@@ -517,16 +522,14 @@ private enum CommandExecutionEngine {
                 startedAt: startedAt
             )
         }
-        if let workingDirectory {
-            var isDirectory = ObjCBool(false)
-            guard FileManager.default.fileExists(atPath: workingDirectory, isDirectory: &isDirectory), isDirectory.boolValue else {
-                return launchFailure(
-                    "working directory cannot be resolved: \(workingDirectory)",
-                    maxOutputBytes: maxOutputBytes,
-                    outputBudget: outputBudget,
-                    startedAt: startedAt
-                )
-            }
+        var isDirectory = ObjCBool(false)
+        guard FileManager.default.fileExists(atPath: resolvedWorkingDirectory, isDirectory: &isDirectory), isDirectory.boolValue else {
+            return launchFailure(
+                "working directory cannot be resolved: \(resolvedWorkingDirectory)",
+                maxOutputBytes: maxOutputBytes,
+                outputBudget: outputBudget,
+                startedAt: startedAt
+            )
         }
         if let invalidEnvironmentName = environment.keys.sorted().first(where: { !isValidEnvironmentName($0) }) {
             return launchFailure(
@@ -591,14 +594,15 @@ private enum CommandExecutionEngine {
                 stdoutWrite: stdoutFileDescriptors[1],
                 stderrRead: stderrFileDescriptors[0],
                 stderrWrite: stderrFileDescriptors[1],
-                environment: environment
+                environment: resolvedEnvironment
             )
             controller.install(session: session)
             processID = try spawn(
                 command: command,
                 shell: shell,
-                workingDirectory: workingDirectory,
-                environment: environment,
+                workingDirectory: resolvedWorkingDirectory,
+                overlayEnvironment: environment,
+                spawnEnvironment: resolvedEnvironment,
                 processGroupID: session.processGroupID,
                 stdoutRead: stdoutFileDescriptors[0],
                 stdoutWrite: stdoutFileDescriptors[1],
@@ -740,8 +744,9 @@ private enum CommandExecutionEngine {
     private static func spawn(
         command: String,
         shell: [String],
-        workingDirectory: String?,
-        environment: [String: String],
+        workingDirectory: String,
+        overlayEnvironment: [String: String],
+        spawnEnvironment: [String: String],
         processGroupID: pid_t,
         stdoutRead: Int32,
         stdoutWrite: Int32,
@@ -757,12 +762,10 @@ private enum CommandExecutionEngine {
         var fileActions: posix_spawn_file_actions_t?
         try check(posix_spawn_file_actions_init(&fileActions))
         defer { posix_spawn_file_actions_destroy(&fileActions) }
-        if let workingDirectory {
-            let status = workingDirectory.withCString {
-                posix_spawn_file_actions_addchdir_np(&fileActions, $0)
-            }
-            try check(status, context: "unable to set working directory '\(workingDirectory)'")
+        let chdirStatus = workingDirectory.withCString {
+            posix_spawn_file_actions_addchdir_np(&fileActions, $0)
         }
+        try check(chdirStatus, context: "unable to set working directory '\(workingDirectory)'")
         try check(posix_spawn_file_actions_adddup2(&fileActions, stdoutWrite, STDOUT_FILENO))
         try check(posix_spawn_file_actions_adddup2(&fileActions, stderrWrite, STDERR_FILENO))
         try check(posix_spawn_file_actions_addclose(&fileActions, stdoutRead))
@@ -780,7 +783,7 @@ private enum CommandExecutionEngine {
             }
             arguments.append(argumentCopy)
         }
-        let effectiveCommand = commandWithConfiguredEnvironment(command: command, environment: environment)
+        let effectiveCommand = commandWithConfiguredEnvironment(command: command, environment: overlayEnvironment)
         guard let commandCopy = strdup(effectiveCommand) else {
             for argument in arguments {
                 if let argument { free(argument) }
@@ -795,11 +798,8 @@ private enum CommandExecutionEngine {
             }
         }
 
-        let mergedEnvironment = ProcessInfo.processInfo.environment.merging(environment) { _, configured in
-            configured
-        }
-        var environmentEntries = mergedEnvironment.keys.sorted().map { key in
-            strdup("\(key)=\(mergedEnvironment[key]!)")
+        var environmentEntries = spawnEnvironment.keys.sorted().map { key in
+            strdup("\(key)=\(spawnEnvironment[key]!)")
         }
         guard environmentEntries.allSatisfy({ $0 != nil }) else {
             for value in environmentEntries {
@@ -1049,6 +1049,7 @@ public actor CommandRunner {
     private let shell: [String]
     private let workingDirectory: String?
     private let environment: [String: String]
+    private let policy: CommandExecutionPolicy
     private let timeout: TimeInterval
     private let maxOutputBytes: Int
     private let outputBudget: OutputMemoryBudget
@@ -1082,7 +1083,7 @@ public actor CommandRunner {
         let controller: ProcessGroupController
     }
 
-    public init(command: String, timeout: TimeInterval) {
+    public init(command: String, timeout: TimeInterval, policy: CommandExecutionPolicy = .current) {
         self.init(
             command: command,
             timeout: timeout,
@@ -1090,7 +1091,8 @@ public actor CommandRunner {
             shell: Self.defaultShell,
             workingDirectory: nil,
             environment: [:],
-            outputBudget: .shared
+            outputBudget: .shared,
+            policy: policy
         )
     }
 
@@ -1100,7 +1102,8 @@ public actor CommandRunner {
         maxOutputBytes: Int,
         shell: [String] = CommandRunner.defaultShell,
         workingDirectory: String? = nil,
-        environment: [String: String] = [:]
+        environment: [String: String] = [:],
+        policy: CommandExecutionPolicy = .current
     ) {
         self.init(
             command: command,
@@ -1109,7 +1112,8 @@ public actor CommandRunner {
             shell: shell,
             workingDirectory: workingDirectory,
             environment: environment,
-            outputBudget: .shared
+            outputBudget: .shared,
+            policy: policy
         )
     }
 
@@ -1121,7 +1125,8 @@ public actor CommandRunner {
             shell: Self.defaultShell,
             workingDirectory: nil,
             environment: [:],
-            outputBudget: outputBudget
+            outputBudget: outputBudget,
+            policy: .current
         )
     }
 
@@ -1137,7 +1142,8 @@ public actor CommandRunner {
         shell: [String],
         workingDirectory: String?,
         environment: [String: String],
-        outputBudget: OutputMemoryBudget
+        outputBudget: OutputMemoryBudget,
+        policy: CommandExecutionPolicy
     ) {
         precondition(timeout > 0, "command timeout must be positive")
         precondition(maxOutputBytes > 0, "maximum command output must be positive")
@@ -1145,6 +1151,7 @@ public actor CommandRunner {
         self.shell = shell
         self.workingDirectory = workingDirectory
         self.environment = environment
+        self.policy = policy
         self.timeout = timeout
         self.maxOutputBytes = maxOutputBytes
         self.outputBudget = outputBudget
@@ -1171,6 +1178,7 @@ public actor CommandRunner {
         let shell = self.shell
         let workingDirectory = self.workingDirectory
         let environment = self.environment
+        let policy = self.policy
         let timeout = self.timeout
         let maxOutputBytes = self.maxOutputBytes
         let outputBudget = self.outputBudget
@@ -1181,6 +1189,7 @@ public actor CommandRunner {
                     shell: shell,
                     workingDirectory: workingDirectory,
                     environment: environment,
+                    policy: policy,
                     timeout: timeout,
                     maxOutputBytes: maxOutputBytes,
                     controller: controller,

@@ -44,6 +44,8 @@ Download, checksum, freshness, and rollback for this example are in [docs/pincho
 
 Items appear in declaration order.
 The supported item keys are `run`, `interval`, `timeout`, `format`, `symbol`, `icon`, and `menu`.
+There are no per-item `shell`, `env`, or `cwd` keys.
+Commands run under the internal execution policy in [runtime.md](runtime.md).
 `symbol` is a macOS SF Symbol name.
 `icon` is a local image path.
 The two icon keys are mutually exclusive.

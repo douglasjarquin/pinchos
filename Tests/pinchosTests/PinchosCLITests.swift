@@ -374,6 +374,84 @@ final class PinchosCLITests: XCTestCase {
         XCTAssertTrue(capture.stdout.contains("tool with spaces"))
     }
 
+    func testDoctorResolvesHomebrewToolsUnderLaunchdPATHWithoutDumpingSecrets() async throws {
+        let root = try makeRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let configURL = root.appendingPathComponent("pinchos/pinchos.toml")
+        try FileManager.default.createDirectory(at: configURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+        let brew = "/opt/homebrew/bin/brew"
+        let jq = "/opt/homebrew/bin/jq"
+        let tool = FileManager.default.isExecutableFile(atPath: jq) ? "jq"
+            : FileManager.default.isExecutableFile(atPath: brew) ? "brew"
+            : "ls"
+        try """
+        [item.tools]
+        run = "\(tool) --help"
+        """.write(to: configURL, atomically: true, encoding: .utf8)
+        let secret = "pinchos-doctor-secret-\(UUID().uuidString)"
+        let policy = CommandExecutionPolicy(inheritedEnvironment: [
+            "PATH": "/usr/bin:/bin:/usr/sbin:/sbin",
+            "HOME": NSHomeDirectory(),
+            "PINCHOS_SECRET": secret,
+            "AWS_SECRET_ACCESS_KEY": secret
+        ])
+        let capture = CLIOutputCapture()
+        let cli = PinchosCLI(
+            configPath: configURL.path,
+            output: capture.output,
+            executionPolicy: policy
+        )
+
+        let doctorCode = await cli.run(arguments: ["doctor"])
+
+        XCTAssertEqual(doctorCode, 0)
+        XCTAssertTrue(capture.stdout.contains("[PASS] item.tools.run"))
+        XCTAssertTrue(capture.stdout.contains("PATH uses system plus Apple Silicon Homebrew"))
+        if tool == "jq" {
+            XCTAssertTrue(capture.stdout.contains(jq))
+        } else if tool == "brew" {
+            XCTAssertTrue(capture.stdout.contains(brew))
+        }
+        let combined = capture.stdout + capture.stderr
+        XCTAssertFalse(combined.contains(secret))
+        XCTAssertFalse(combined.contains("AWS_SECRET_ACCESS_KEY"))
+        XCTAssertFalse(combined.contains("PINCHOS_SECRET="))
+        XCTAssertFalse(combined.contains("/usr/bin:/bin:/usr/sbin:/sbin"))
+    }
+
+    func testDoctorReportsAbsentToolsHelpfullyWithoutExecutingOrDumpingSecrets() async throws {
+        let root = try makeRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let configURL = root.appendingPathComponent("pinchos/pinchos.toml")
+        try FileManager.default.createDirectory(at: configURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try """
+        [item.missing]
+        run = "definitely_missing_pinchos_command_125"
+        """.write(to: configURL, atomically: true, encoding: .utf8)
+        let secret = "pinchos-doctor-absent-secret-\(UUID().uuidString)"
+        let policy = CommandExecutionPolicy(inheritedEnvironment: [
+            "PATH": "/opt/homebrew/bin:/usr/bin:/bin",
+            "HOME": NSHomeDirectory(),
+            "PINCHOS_SECRET": secret
+        ])
+        let capture = CLIOutputCapture()
+        let cli = PinchosCLI(
+            configPath: configURL.path,
+            output: capture.output,
+            executionPolicy: policy
+        )
+
+        let doctorCode = await cli.run(arguments: ["doctor"])
+
+        XCTAssertEqual(doctorCode, 4)
+        XCTAssertTrue(capture.stdout.contains("[FAIL] item.missing.run"))
+        XCTAssertTrue(capture.stdout.contains("definitely_missing_pinchos_command_125"))
+        XCTAssertTrue(capture.stdout.contains("system plus Apple Silicon Homebrew"))
+        let combined = capture.stdout + capture.stderr
+        XCTAssertFalse(combined.contains(secret))
+        XCTAssertFalse(combined.contains("PINCHOS_SECRET"))
+    }
+
     func testDoctorChecksCommandAfterEnvironmentAssignments() async throws {
         let root = try makeRoot()
         defer { try? FileManager.default.removeItem(at: root) }
