@@ -31,6 +31,25 @@ It does not make Finder and Terminal identical arbitrary user environments.
 Missing tools are reported as not found on that PATH.
 Doctor output does not dump the inherited environment or secret values.
 
+## Refresh Now, retries, and coalescing
+
+Refresh Now requests every distinct value source the selected Pincho uses, including manual submenu rows with no `cache` interval.
+It never executes action rows.
+Equivalent primary and submenu commands share one source, so one request does not multiply identical executions.
+
+Opening a menu is synchronous and never waits on a refresh.
+Fresh values do not refresh on open.
+Stale values, failed refreshes that still have a last-good value, and failed refreshes with no value may request a background retry only after **30 seconds** have elapsed since the last attempt (`CommandSource.retryInterval`).
+That cadence is fixed; there is no TOML key for it.
+Explicit Refresh Now bypasses the delay.
+Manual submenu values use the same cadence after an initial failure; success stays manual-only until Refresh Now.
+
+Each source has at most one active refresh.
+Additional callers join that execution instead of stacking waiters.
+`requestRefresh()` during an in-flight run records at most one follow-up.
+Reload, removal, and shutdown cancel obsolete work and cannot execute stale actions.
+Last-good values, FIFO scheduler admission, process limits, and cancellation stay as they are.
+
 ## Live reload and recovery
 
 Valid changes apply incrementally while preserving unchanged source/cache identity.

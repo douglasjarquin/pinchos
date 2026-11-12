@@ -31,6 +31,7 @@ final class ManagedItem: ManagedItemLifecycle {
     private var menuRowCachedValues: [Int: String] = [:]
     private var menuRowLastAttemptedAt: [Int: Date] = [:]
     private var menuRowLastSuccessfulAt: [Int: Date] = [:]
+    private var menuRowStates: [Int: CachedValueState] = [:]
     private var menuRowRefreshTasks: [Int: Task<Void, Never>] = [:]
     private var menuRowRefreshTokens: [Int: UUID] = [:]
     private var menuRowTimerTokens: [Int: CommandScheduler.ItemToken] = [:]
@@ -376,6 +377,9 @@ final class ManagedItem: ManagedItemLifecycle {
             ).mapValues(\.source)
             menuRowSourceLeases = pendingUpdate.menuRowSourceLeases ?? [:]
             menuRowCachedValues.removeAll()
+            menuRowLastAttemptedAt.removeAll()
+            menuRowLastSuccessfulAt.removeAll()
+            menuRowStates.removeAll()
             startMenuRowSources()
         }
         applyIcon()
@@ -401,6 +405,12 @@ final class ManagedItem: ManagedItemLifecycle {
         }
         configurationGeneration &+= 1
         cancelRefreshTimer()
+        cancelMenuRowTimers()
+        for task in menuRowRefreshTasks.values {
+            task.cancel()
+        }
+        menuRowRefreshTasks.removeAll()
+        menuRowRefreshTokens.removeAll()
         pendingRefreshPermitTask?.cancel()
         for task in pendingActionPermitTasks.values {
             task.cancel()
@@ -583,12 +593,22 @@ final class ManagedItem: ManagedItemLifecycle {
             self.menuRowRefreshTokens[index] = nil
             self.menuRowRefreshTasks[index] = nil
             guard !self.isRetired, self.configurationGeneration == generation else { return }
+            self.applyMenuRowCachedValue(cached, from: source)
+        }
+    }
+
+    private func applyMenuRowCachedValue(_ cached: CachedValue, from source: CommandSource) {
+        for (index, rowSource) in menuRowSources where rowSource === source {
+            if let lastAttemptedAt = cached.lastAttemptedAt {
+                menuRowLastAttemptedAt[index] = lastAttemptedAt
+            }
             if let value = cached.value {
-                self.menuRowCachedValues[index] = lastTrimmedLine(of: value)
+                menuRowCachedValues[index] = lastTrimmedLine(of: value)
             }
             if let lastSuccessfulAt = cached.lastSuccessfulAt {
-                self.menuRowLastSuccessfulAt[index] = lastSuccessfulAt
+                menuRowLastSuccessfulAt[index] = lastSuccessfulAt
             }
+            menuRowStates[index] = cached.state
         }
     }
 
@@ -651,6 +671,9 @@ final class ManagedItem: ManagedItemLifecycle {
 
     func refreshNow() {
         requestRefresh()
+        for index in menuRowSources.keys.sorted() {
+            requestMenuRowRefresh(at: index)
+        }
     }
 
     /// Requests a refresh, coalescing with any refresh already queued for the
@@ -777,22 +800,41 @@ final class ManagedItem: ManagedItemLifecycle {
     var menuRowRefreshTaskCountForTesting: Int { menuRowRefreshTasks.count }
 
     private func requestMenuRowRefreshIfNeeded(at index: Int) {
-        guard menuRows[index].run != nil,
+        guard menuRows.indices.contains(index),
+              menuRows[index].run != nil,
               menuRowRefreshTasks[index] == nil
         else { return }
-        let now = now()
-        if menuRowCachedValues[index] == nil {
-            guard menuRowLastAttemptedAt[index] == nil
-                || menuRows[index].cache.map({ now.timeIntervalSince(menuRowLastAttemptedAt[index]!) >= $0 }) == true
-            else { return }
-            requestMenuRowRefresh(at: index)
-            return
-        }
-        guard let cache = menuRows[index].cache,
-              let lastSuccessfulAt = menuRowLastSuccessfulAt[index],
-              now.timeIntervalSince(lastSuccessfulAt) >= cache
-        else { return }
+        let snapshot = menuRowCachedSnapshot(at: index)
+        guard CommandSource.isAutomaticRefreshDue(snapshot: snapshot, now: now()) else { return }
         requestMenuRowRefresh(at: index)
+    }
+
+    private func menuRowCachedSnapshot(at index: Int) -> CachedValue {
+        let value = menuRowCachedValues[index]
+        let lastAttemptedAt = menuRowLastAttemptedAt[index]
+        let lastSuccessfulAt = menuRowLastSuccessfulAt[index]
+        let state: CachedValueState
+        if menuRowStates[index] == .error {
+            state = .error
+        } else if lastAttemptedAt == nil && value == nil {
+            state = .unavailable
+        } else if value == nil {
+            state = .error
+        } else if let cache = menuRows[index].cache,
+                  let lastSuccessfulAt,
+                  now().timeIntervalSince(lastSuccessfulAt) >= cache {
+            state = .stale
+        } else if menuRowStates[index] == .stale {
+            state = .stale
+        } else {
+            state = .fresh
+        }
+        return CachedValue(
+            value: value,
+            state: state,
+            lastAttemptedAt: lastAttemptedAt,
+            lastSuccessfulAt: lastSuccessfulAt
+        )
     }
 
     func menuRowSnapshot(at index: Int) async -> CommandRunnerSnapshot? {

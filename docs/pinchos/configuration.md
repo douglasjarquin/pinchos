@@ -59,6 +59,8 @@ A row may combine `run` and `action`.
 `separator = true` cannot be combined with any other row key.
 
 Opening a menu is synchronous and never waits on a command.
-Unavailable cached rows request a background refresh while keeping menu construction immediate.
+Unavailable, stale, or failed cached rows may request a background refresh after a fixed 30-second retry cadence, documented in [runtime.md](runtime.md).
+Fresh values do not refresh on open.
+Refresh Now requests every distinct value source for the selected item, including manual rows with no `cache` interval, and never runs action commands.
 Actions execute only when selected.
 Equivalent primary and menu commands share one source and cache within a controller.
