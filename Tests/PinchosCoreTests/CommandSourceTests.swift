@@ -286,6 +286,44 @@ final class CommandSourceTests: XCTestCase {
         XCTAssertEqual(diagnosticsAfter.activeSessions, 0)
     }
 
+    func testCancellingLastJoinerWhileDescendantLingersNeitherSpinsNorDropsResult() async throws {
+        let pidFile = FileManager.default.temporaryDirectory
+            .appendingPathComponent("source-linger-\(UUID().uuidString)")
+        let command = "(sleep 0.8; printf late) & printf '%s' \"$!\" > '\(pidFile.path)'; exit 0"
+        let runner = CommandRunner(command: command, timeout: 5)
+        let source = CommandSource(
+            configuration: CommandSourceConfiguration(command: command, timeout: 5),
+            scheduler: CommandScheduler(maxActiveSessions: 1),
+            runner: runner
+        )
+        defer {
+            if let text = try? String(contentsOf: pidFile, encoding: .utf8),
+               let pid = Int32(text.trimmingCharacters(in: .whitespacesAndNewlines)) {
+                kill(pid, SIGKILL)
+            }
+            try? FileManager.default.removeItem(at: pidFile)
+        }
+
+        let refresh = Task { await source.refresh() }
+        try await waitUntil {
+            let snapshot = await runner.snapshot()
+            return snapshot.isRunning && snapshot.lastExecution?.terminalReason == .exited(code: 0)
+        }
+        refresh.cancel()
+        let cancelled = await refresh.value
+        XCTAssertEqual(cancelled.state, .refreshing)
+
+        let cpuBefore = processCPUSeconds()
+        try await Task.sleep(for: .milliseconds(200))
+        let cpuDelta = processCPUSeconds() - cpuBefore
+        XCTAssertLessThan(cpuDelta, 0.15, "lingering settlement busy-spun after the last joiner cancelled")
+
+        try await waitUntil { await source.snapshot().state == .fresh }
+        let cached = await source.snapshot()
+        XCTAssertEqual(cached.value, "late")
+        XCTAssertEqual(cached.state, .fresh)
+    }
+
     func testRefreshPublishesBoundedCachedValueAndTerminalState() async {
         let (source, _, _) = source(outcomes: [.completed(success)])
 
@@ -601,5 +639,13 @@ final class CommandSourceTests: XCTestCase {
             now: clock.date
         )
         XCTAssertTrue(dueAfterCadence)
+    }
+
+    private func processCPUSeconds() -> Double {
+        var usage = rusage()
+        getrusage(RUSAGE_SELF, &usage)
+        let user = Double(usage.ru_utime.tv_sec) + Double(usage.ru_utime.tv_usec) / 1_000_000
+        let system = Double(usage.ru_stime.tv_sec) + Double(usage.ru_stime.tv_usec) / 1_000_000
+        return user + system
     }
 }

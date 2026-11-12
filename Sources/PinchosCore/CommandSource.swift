@@ -149,12 +149,19 @@ public actor CommandSource {
     private var runnerStarted = false
     private var generation: UInt64 = 0
     /// At most one in-flight execution. Additional `refresh()` callers join
-    /// this task instead of appending waiters. Cancelling the last joiner
-    /// cancels a queued permit wait; a command that already started still
-    /// records its result in the shared cache.
+    /// this task instead of appending waiters. Cancelling the last joiner of
+    /// a flight that has not reached the runner cancels the queued permit
+    /// wait. A command that already started is left running so lingering
+    /// settlement can sleep instead of busy-spin, and still records its
+    /// result in the shared cache.
     private var inFlight: Task<CachedValue, Never>?
     private var inFlightID: UUID?
-    private var joiners: [UUID: RefreshJoinerSlot] = [:]
+    private var joiners: [UUID: RefreshJoiner] = [:]
+
+    private struct RefreshJoiner {
+        let flightID: UUID
+        let slot: RefreshJoinerSlot
+    }
 
     public init(
         configuration: CommandSourceConfiguration,
@@ -213,18 +220,21 @@ public actor CommandSource {
     public func refresh() async -> CachedValue {
         if Task.isCancelled { return snapshot() }
         let work: Task<CachedValue, Never>
-        if let inFlight, !inFlight.isCancelled || runnerStarted {
+        let flightID: UUID
+        if let inFlight, let currentFlightID = inFlightID, !inFlight.isCancelled || runnerStarted {
             work = inFlight
+            flightID = currentFlightID
         } else {
-            let flightID = UUID()
-            let task = Task { await self.performExclusiveRefresh(flightID: flightID) }
+            let newFlightID = UUID()
+            let task = Task { await self.performExclusiveRefresh(flightID: newFlightID) }
             inFlight = task
-            inFlightID = flightID
+            inFlightID = newFlightID
             work = task
+            flightID = newFlightID
         }
         let joinerID = UUID()
         let slot = RefreshJoinerSlot()
-        joiners[joinerID] = slot
+        joiners[joinerID] = RefreshJoiner(flightID: flightID, slot: slot)
         Task {
             let value = await work.value
             await self.finishJoiner(joinerID, value: value)
@@ -293,18 +303,17 @@ public actor CommandSource {
     }
 
     private func finishJoiner(_ joinerID: UUID, value: CachedValue) {
-        guard let slot = joiners.removeValue(forKey: joinerID) else { return }
-        slot.resume(value)
+        guard let joiner = joiners.removeValue(forKey: joinerID) else { return }
+        joiner.slot.resume(value)
     }
 
     private func cancelJoiner(_ joinerID: UUID) {
-        guard let slot = joiners.removeValue(forKey: joinerID) else { return }
-        slot.resume(snapshot())
-        guard joiners.isEmpty else { return }
+        guard let joiner = joiners.removeValue(forKey: joinerID) else { return }
+        joiner.slot.resume(snapshot())
+        let hasPeer = joiners.values.contains { $0.flightID == joiner.flightID }
+        guard !hasPeer, inFlightID == joiner.flightID, !runnerStarted else { return }
         inFlight?.cancel()
-        if !runnerStarted {
-            generation &+= 1
-        }
+        generation &+= 1
     }
 
     public func cancel() async {
