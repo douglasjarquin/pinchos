@@ -28,6 +28,11 @@ private final class NoopStatusItemMenuDelegate: StatusItemMenuDelegate {
 }
 
 final class RecoveryLifecycleTests: XCTestCase {
+    /// How long a poll waits for a condition before failing. Polls return as
+    /// soon as the condition holds, so this only bounds a real failure; it is
+    /// generous because the full suite runs process-spawning tests back to back.
+    private let pollTimeout: TimeInterval = 10
+
     /// A fresh `CommandScheduler` per test (rather than `.shared`) so
     /// diagnostics assertions like "no timer got registered" can't be
     /// polluted by another test's items.
@@ -592,7 +597,7 @@ final class RecoveryLifecycleTests: XCTestCase {
         }
 
         item.activate()
-        let firstDeadline = Date().addingTimeInterval(2)
+        let firstDeadline = Date().addingTimeInterval(pollTimeout)
         while Date() < firstDeadline {
             if (try? String(contentsOf: marker)) == "started" { break }
             try await Task.sleep(for: .milliseconds(10))
@@ -897,7 +902,7 @@ final class RecoveryLifecycleTests: XCTestCase {
 
     @MainActor
     private func waitForExecution(_ item: ManagedItem) async throws -> CommandRunnerSnapshot {
-        let deadline = Date().addingTimeInterval(2)
+        let deadline = Date().addingTimeInterval(pollTimeout)
         while Date() < deadline {
             let snapshot = await item.runnerSnapshot()
             if snapshot.lastExecution != nil {
@@ -914,7 +919,7 @@ final class RecoveryLifecycleTests: XCTestCase {
 
     @MainActor
     private func waitForPID(at url: URL) async throws -> Int32 {
-        let deadline = Date().addingTimeInterval(2)
+        let deadline = Date().addingTimeInterval(pollTimeout)
         while Date() < deadline {
             if let value = try? String(contentsOf: url),
                 let pid = Int32(value.trimmingCharacters(in: .whitespacesAndNewlines))
@@ -932,7 +937,7 @@ final class RecoveryLifecycleTests: XCTestCase {
 
     @MainActor
     private func waitUntilGone(_ pid: Int32) async -> Bool {
-        let deadline = Date().addingTimeInterval(2)
+        let deadline = Date().addingTimeInterval(pollTimeout)
         while Date() < deadline {
             if kill(pid, 0) == -1, errno == ESRCH {
                 return true
@@ -978,7 +983,7 @@ final class RecoveryLifecycleTests: XCTestCase {
         _ item: ManagedItem,
         matching predicate: (ItemRuntimeSnapshot) -> Bool
     ) async throws -> ItemRuntimeSnapshot {
-        let deadline = Date().addingTimeInterval(2)
+        let deadline = Date().addingTimeInterval(pollTimeout)
         while Date() < deadline {
             let snapshot = await item.runtimeSnapshot()
             if predicate(snapshot) {
@@ -995,7 +1000,7 @@ final class RecoveryLifecycleTests: XCTestCase {
 
     @MainActor
     private func waitForRunning(_ item: ManagedItem) async throws {
-        let deadline = Date().addingTimeInterval(2)
+        let deadline = Date().addingTimeInterval(pollTimeout)
         while Date() < deadline {
             if await item.runnerSnapshot().isRunning {
                 return
@@ -1011,7 +1016,7 @@ final class RecoveryLifecycleTests: XCTestCase {
 
     @MainActor
     private func waitForSkippedRefresh(_ item: ManagedItem) async throws -> CommandRunnerSnapshot {
-        let deadline = Date().addingTimeInterval(2)
+        let deadline = Date().addingTimeInterval(pollTimeout)
         while Date() < deadline {
             let snapshot = await item.runnerSnapshot()
             if snapshot.skippedRefreshes > 0 {
@@ -1028,7 +1033,7 @@ final class RecoveryLifecycleTests: XCTestCase {
 
     @MainActor
     private func waitForMenuRowRunning(_ item: ManagedItem, at index: Int) async throws {
-        let deadline = Date().addingTimeInterval(2)
+        let deadline = Date().addingTimeInterval(pollTimeout)
         while Date() < deadline {
             if await item.menuRowSnapshot(at: index)?.isRunning == true {
                 return
@@ -1044,7 +1049,7 @@ final class RecoveryLifecycleTests: XCTestCase {
 
     @MainActor
     private func waitForMenuRowSkipped(_ item: ManagedItem, at index: Int) async throws -> CommandRunnerSnapshot {
-        let deadline = Date().addingTimeInterval(2)
+        let deadline = Date().addingTimeInterval(pollTimeout)
         while Date() < deadline {
             if let snapshot = await item.menuRowSnapshot(at: index), snapshot.skippedRefreshes > 0 {
                 return snapshot
@@ -1060,7 +1065,7 @@ final class RecoveryLifecycleTests: XCTestCase {
 
     @MainActor
     private func waitForMenuRowExecution(_ item: ManagedItem, at index: Int) async throws -> CommandRunnerSnapshot {
-        let deadline = Date().addingTimeInterval(2)
+        let deadline = Date().addingTimeInterval(pollTimeout)
         while Date() < deadline {
             if let snapshot = await item.menuRowSnapshot(at: index), snapshot.lastExecution != nil {
                 return snapshot
@@ -1076,7 +1081,7 @@ final class RecoveryLifecycleTests: XCTestCase {
 
     @MainActor
     private func waitForIdle(_ item: ManagedItem) async throws {
-        let deadline = Date().addingTimeInterval(2)
+        let deadline = Date().addingTimeInterval(pollTimeout)
         while Date() < deadline {
             if !(await item.runnerSnapshot().isRunning) {
                 return
