@@ -55,11 +55,8 @@ final class ManagedItem: ManagedItemLifecycle {
     private var pendingActionPermitTasks: [Int: Task<Void, Never>] = [:]
     private weak var menuDelegate: StatusItemMenuDelegate?
     private let now: () -> Date
-    private var isActive = true
+    private var lifecycle: Lifecycle = .live
     private var configurationGeneration = 0
-    private var isPreparingUpdate = false
-    private var pendingUpdate: PendingUpdate?
-    private var isPreparingRemoval = false
     private var pendingRefreshInvocations = 0
     private var refreshInvocationsDrained: CheckedContinuation<Void, Never>?
     private var pendingActionInvocations = 0
@@ -92,6 +89,28 @@ final class ManagedItem: ManagedItemLifecycle {
     /// `settleConcurrently` whenever a `prepareUpdate`/`prepareRemoval`
     /// cancellation phase misses its shared deadline.
     var lifecycleSettlementTimeoutHandlerForTesting: (([LifecycleSettlementTimeout]) -> Void)?
+
+    /// Where this item is in its lifecycle. Only `live` accepts new work
+    /// (refreshes, menu-row refreshes, actions, clicks); every other
+    /// non-retired case still lets work that was already accepted settle.
+    /// A prepared update exists only inside `updateReady`.
+    private enum Lifecycle {
+        case live
+        case preparingUpdate
+        case updateReady(PendingUpdate)
+        case preparingRemoval
+        case retired
+    }
+
+    private var isLive: Bool {
+        if case .live = lifecycle { return true }
+        return false
+    }
+
+    private var isRetired: Bool {
+        if case .retired = lifecycle { return true }
+        return false
+    }
 
     private struct PendingUpdate {
         let commandConfig: CommandItemConfig
@@ -165,7 +184,7 @@ final class ManagedItem: ManagedItemLifecycle {
     }
 
     func activate() {
-        guard isActive else { return }
+        guard !isRetired else { return }
         setVisibility(true)
         startTimer()
         startMenuRowSources()
@@ -197,11 +216,11 @@ final class ManagedItem: ManagedItemLifecycle {
         config: ItemConfig,
         deadline: ContinuousClock.Instant = LifecycleDeadline.makeInstant()
     ) async {
-        guard isActive, !isPreparingRemoval, pendingUpdate == nil else { return }
+        guard isLive else { return }
+        lifecycle = .preparingUpdate
         let newCommandConfig = config
 
         let previousConfig = self.commandConfig
-        isPreparingUpdate = true
 
         let runnerConfigurationChanged = previousConfig.run != newCommandConfig.run
             || previousConfig.timeout != newCommandConfig.timeout
@@ -215,7 +234,7 @@ final class ManagedItem: ManagedItemLifecycle {
 
         // Quiesce every runner whose configuration is changing before this
         // function awaits anything: `configurationGeneration` has already
-        // been bumped for the primary runner and `isPreparingUpdate` was set
+        // been bumped for the primary runner and the item left `live`
         // above, so no new scheduled/manual/click/action work can start
         // against the old runners from this point on. Cancellation requests
         // for all of them are then fired and awaited concurrently under one
@@ -304,7 +323,10 @@ final class ManagedItem: ManagedItemLifecycle {
             }
         )
 
-        pendingUpdate = PendingUpdate(
+        // Removal may have begun while this update was settling; it owns the
+        // item from then on, so the prepared update is dropped.
+        guard case .preparingUpdate = lifecycle else { return }
+        lifecycle = .updateReady(PendingUpdate(
             commandConfig: newCommandConfig,
             primarySource: replacementPrimarySource,
             menuRowRunners: replacementMenuRowRunners,
@@ -314,12 +336,14 @@ final class ManagedItem: ManagedItemLifecycle {
             menuRowsChanged: menuRowsChanged,
             timerNeedsRestart: timerNeedsRestart,
             presentationNeedsUpdate: presentationNeedsUpdate
-        )
+        ))
     }
 
     func commitPreparedUpdate() {
-        guard isActive, let pendingUpdate else { return }
-        self.pendingUpdate = nil
+        guard case .updateReady(let pendingUpdate) = lifecycle else { return }
+        // The item stays in `updateReady` until the new configuration is fully
+        // installed, so restarting menu-row sources below registers their
+        // timers without starting an immediate refresh.
         commandConfig = pendingUpdate.commandConfig
         if let primarySource = pendingUpdate.primarySource {
             self.primarySource = primarySource
@@ -347,12 +371,16 @@ final class ManagedItem: ManagedItemLifecycle {
             lastSuccessfulTitle = lastSuccessfulOutput.map { applyFormat(commandConfig.format, output: lastTrimmedLine(of: $0)) }
             requestPresentationUpdate()
         }
-        isPreparingUpdate = false
+        lifecycle = .live
     }
 
     func prepareRemoval(deadline: ContinuousClock.Instant = LifecycleDeadline.makeInstant()) async {
-        guard isActive, !isPreparingRemoval else { return }
-        isPreparingRemoval = true
+        switch lifecycle {
+        case .live, .preparingUpdate, .updateReady:
+            lifecycle = .preparingRemoval
+        case .preparingRemoval, .retired:
+            return
+        }
         configurationGeneration &+= 1
         cancelRefreshTimer()
         pendingRefreshPermitTask?.cancel()
@@ -386,9 +414,8 @@ final class ManagedItem: ManagedItemLifecycle {
     }
 
     func commitRemoval() {
-        guard isActive else { return }
-        isActive = false
-        isPreparingRemoval = false
+        guard case .preparingRemoval = lifecycle else { return }
+        lifecycle = .retired
         if let statusItem {
             NSStatusBar.system.removeStatusItem(statusItem)
         }
@@ -520,7 +547,7 @@ final class ManagedItem: ManagedItemLifecycle {
     }
 
     private func requestMenuRowRefresh(at index: Int, source: CommandSource? = nil) {
-        guard isActive, !isPreparingUpdate, !isPreparingRemoval,
+        guard isLive,
               menuRows.indices.contains(index),
               let source = source ?? menuRowSources[index],
               menuRowRefreshTasks[index] == nil
@@ -536,7 +563,7 @@ final class ManagedItem: ManagedItemLifecycle {
             else { return }
             self.menuRowRefreshTokens[index] = nil
             self.menuRowRefreshTasks[index] = nil
-            guard self.isActive, self.configurationGeneration == generation else { return }
+            guard !self.isRetired, self.configurationGeneration == generation else { return }
             if let value = cached.value {
                 self.menuRowCachedValues[index] = lastTrimmedLine(of: value)
             }
@@ -611,7 +638,7 @@ final class ManagedItem: ManagedItemLifecycle {
     /// primary source. The source owns scheduler admission and holds its
     /// permit until the complete process session settles.
     private func requestRefresh() {
-        guard isActive, !isPreparingUpdate, !isPreparingRemoval else { return }
+        guard isLive else { return }
         guard pendingRefreshPermitTask == nil else {
             recordCoalesced()
             Task { await primarySource.recordSkippedRefresh() }
@@ -635,13 +662,13 @@ final class ManagedItem: ManagedItemLifecycle {
     }
 
     private func refresh() async {
-        guard isActive, !isPreparingUpdate, !isPreparingRemoval else { return }
+        guard isLive else { return }
         let generation = configurationGeneration
         lastAttemptedAt = now()
         let cached = await primarySource.refresh()
-        guard isActive, generation == configurationGeneration else { return }
+        guard !isRetired, generation == configurationGeneration else { return }
         guard let execution = cached.lastExecution else { return }
-        guard isActive, generation == configurationGeneration else { return }
+        guard !isRetired, generation == configurationGeneration else { return }
         lastSuccessfulOutput = cached.value
         lastAttemptedAt = cached.lastAttemptedAt
         lastUpdatedAt = cached.lastSuccessfulAt
@@ -652,7 +679,7 @@ final class ManagedItem: ManagedItemLifecycle {
             )
         }
         let runnerSnapshot = await primarySource.runnerSnapshot()
-        guard isActive, generation == configurationGeneration else { return }
+        guard !isRetired, generation == configurationGeneration else { return }
         let snapshot = makeRuntimeSnapshot(runnerSnapshot)
         renderPresentation(snapshot)
     }
@@ -665,7 +692,7 @@ final class ManagedItem: ManagedItemLifecycle {
 
     private func updatePresentation() async {
         let runnerSnapshot = await primarySource.runnerSnapshot()
-        guard isActive else { return }
+        guard !isRetired else { return }
         let snapshot = makeRuntimeSnapshot(runnerSnapshot)
         renderPresentation(snapshot)
     }
@@ -761,7 +788,7 @@ final class ManagedItem: ManagedItemLifecycle {
     }
 
     func invokeMenuRow(at index: Int) {
-        guard isActive, !isPreparingUpdate, !isPreparingRemoval,
+        guard isLive,
             menuRows.indices.contains(index),
             menuRows[index].action != nil,
             let menuRowRunner = menuRowRunners[index]
@@ -814,7 +841,7 @@ final class ManagedItem: ManagedItemLifecycle {
         if let testGate {
             await testGate()
         }
-        guard isActive, !isPreparingUpdate, !isPreparingRemoval, currentRunner(self) === runner else {
+        guard isLive, currentRunner(self) === runner else {
             return
         }
         onStart?(self)
@@ -825,7 +852,7 @@ final class ManagedItem: ManagedItemLifecycle {
     /// Both left- and right-click reveal the lifecycle menu, matching how
     /// other menu bar items behave.
     @objc private func handleClick() {
-        guard isActive, !isPreparingUpdate, !isPreparingRemoval else { return }
+        guard isLive else { return }
         guard let statusItem else { return }
         menuDelegate?.showLifecycleMenu(for: statusItem)
     }
