@@ -131,6 +131,35 @@ final class CommandRunnerTests: XCTestCase {
         _ = await runner.finishActiveRun()
     }
 
+    func testRecordingASkippedRefreshAfterDescendantsExitDoesNotStartARun() async throws {
+        let runs = temporaryURL("skip-accounting-runs")
+        defer { try? FileManager.default.removeItem(at: runs) }
+        let runner = CommandRunner(
+            command: "echo run >> '\(runs.path)'; (sleep 0.3) & exit 0",
+            timeout: 5,
+            maxOutputBytes: 64
+        )
+
+        guard case .completed = await runner.runIfIdle() else {
+            return XCTFail("expected the shell to complete")
+        }
+        let lingering = await runner.snapshot()
+        XCTAssertTrue(lingering.isRunning, "the backgrounded child should keep the run lingering")
+
+        // Let the descendant exit without anything settling the run, so the
+        // skip is recorded at the moment the runner could settle to idle.
+        try await Task.sleep(nanoseconds: 700_000_000)
+        await runner.recordSkippedRefresh()
+        try await Task.sleep(nanoseconds: 300_000_000)
+
+        let recordedRuns = try String(contentsOf: runs, encoding: .utf8)
+            .split(separator: "\n")
+        XCTAssertEqual(recordedRuns.count, 1, "recording a skipped refresh launched the command again")
+        let snapshot = await runner.snapshot()
+        XCTAssertEqual(snapshot.skippedRefreshes, 1)
+        XCTAssertFalse(snapshot.isRunning)
+    }
+
     func testBeginIfIdleDuringCancellationIsSkipped() async throws {
         let escapedPID = temporaryURL("cancelling-escapee")
         defer { try? FileManager.default.removeItem(at: escapedPID) }
@@ -157,6 +186,32 @@ final class CommandRunnerTests: XCTestCase {
         XCTAssertFalse(snapshot.isRunning)
         let restarted = await runner.beginIfIdle()
         XCTAssertTrue(restarted, "a finished cancellation returns the runner to idle")
+    }
+
+    func testAwaitSettledExecutionDuringCancellationWaitsForTheCancelledResult() async throws {
+        let escapedPID = temporaryURL("settle-during-cancel-escapee")
+        defer { try? FileManager.default.removeItem(at: escapedPID) }
+        let runner = CommandRunner(command: try escapedShellCommand(pidFile: escapedPID), timeout: 30, maxOutputBytes: 64)
+        let runTask = Task { await runner.runIfIdle() }
+        let escaped = try await waitForPID(at: escapedPID)
+        defer { kill(escaped, SIGKILL) }
+
+        let cancellation = Task { await runner.cancelActive() }
+        try await Task.sleep(nanoseconds: 50_000_000)
+        let returned = ReturnCounter()
+        let settled = Task { () -> CommandExecution? in
+            let execution = await runner.awaitSettledExecution()
+            returned.increment()
+            return execution
+        }
+        try await Task.sleep(nanoseconds: 200_000_000)
+        XCTAssertEqual(returned.count, 0, "awaitSettledExecution returned before the in-flight cancellation recorded its result")
+
+        kill(escaped, SIGKILL)
+        await cancellation.value
+        _ = await runTask.value
+        let execution = await settled.value
+        XCTAssertEqual(execution?.terminalReason, .cancelled)
     }
 
     func testConcurrentCancelActiveCallsCancelTheRunOnce() async throws {

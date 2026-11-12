@@ -1294,6 +1294,13 @@ public actor CommandRunner {
         await cancel(endingIn: .idle)
     }
 
+    /// Counts a refresh that was coalesced into the run already in flight.
+    /// Only counts: recording a skip never starts a run, even when the busy
+    /// run could settle to idle at this moment.
+    public func recordSkippedRefresh() async {
+        skippedRefreshes += 1
+    }
+
     public func snapshot() async -> CommandRunnerSnapshot {
         await settleLingeringProcess()
         let isRunning: Bool
