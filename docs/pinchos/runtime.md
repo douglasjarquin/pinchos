@@ -57,7 +57,8 @@ Last-good values, FIFO scheduler admission, process limits, and cancellation sta
 Valid changes apply incrementally while preserving unchanged source/cache identity.
 Added, removed, changed, and reordered items are reconciled under one concurrent lifecycle deadline.
 After a reload commits, a cached menu row whose source is new or changed refreshes once immediately.
-A row whose source the registry kept does not refresh on commit; it keeps its last settled value and the 30-second retry gate.
+A retained cached row with no carried value is requested the same way, so a first attempt cancelled while still queued is not stranded until the cache timer.
+A row whose source the registry kept and that already has a settled value does not refresh on commit; it keeps that value and the 30-second retry gate.
 A new or changed manual row does not run on commit; it first runs on the next menu open, Refresh Now, or equivalent explicit request.
 Malformed configuration leaves the last known-good items running and exposes recovery actions for creating, opening, reloading, or quitting.
 

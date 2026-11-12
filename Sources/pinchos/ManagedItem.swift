@@ -356,9 +356,10 @@ final class ManagedItem: ManagedItemLifecycle {
         guard case .updateReady(let pendingUpdate) = lifecycle else { return }
         // The item stays in `updateReady` until the new configuration is fully
         // installed. `requestMenuRowRefresh` no-ops until `.live`, so new or
-        // changed cached rows are requested after that flip. Manual rows wait
-        // for the next menu open. Rows whose source the registry kept are
-        // seeded instead of refreshed.
+        // changed cached rows are requested after that flip. A retained cached
+        // row with no carried value is requested too: its first attempt may
+        // have been cancelled while still queued. Manual rows wait for the
+        // next menu open. Retained rows that already have a cache are seeded.
         commandConfig = pendingUpdate.commandConfig
         if let primarySource = pendingUpdate.primarySource {
             self.primarySource = primarySource
@@ -390,10 +391,12 @@ final class ManagedItem: ManagedItemLifecycle {
             menuRowCaches = carried
             cancelMenuRowTimers()
             for (index, _) in incomingSources {
-                if retainedIndexes.contains(index) {
-                    seedMenuRowCache(at: index)
-                } else if menuRows[index].cache != nil {
+                let shouldRefreshAfterLive = menuRows[index].cache != nil
+                    && (!retainedIndexes.contains(index) || carried[index] == nil)
+                if shouldRefreshAfterLive {
                     rowsToRefreshAfterLive.append(index)
+                } else if retainedIndexes.contains(index) {
+                    seedMenuRowCache(at: index)
                 }
                 registerMenuRowTimer(at: index, initialDelay: menuRows[index].cache ?? 0)
             }

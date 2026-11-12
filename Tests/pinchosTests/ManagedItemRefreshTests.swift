@@ -628,6 +628,54 @@ final class ManagedItemRefreshTests: XCTestCase {
     }
 
     @MainActor
+    func testSecondReloadRefreshesCachedRowWhoseFirstAttemptWasStillQueued() async throws {
+        let log = path("queued-second-reload.log")
+        let scheduler = CommandScheduler(maxActiveSessions: 1)
+        try await scheduler.acquirePermit()
+        let cached = counting(log, output: "cached")
+        let item = makeItem(
+            config: ItemConfig(
+                name: "item",
+                run: "printf primary",
+                interval: .manual,
+                menu: []
+            ),
+            scheduler: scheduler
+        )
+
+        await item.prepareUpdate(config: ItemConfig(
+            name: "item",
+            run: "printf primary",
+            interval: .manual,
+            menu: [MenuRowConfig(label: "Cached", run: cached, cache: 60)]
+        ))
+        item.commitPreparedUpdate()
+        let queued = await waitUntil { await scheduler.diagnostics().queuedSessions == 1 }
+        XCTAssertTrue(queued, "first reload did not queue the new cached row behind the occupied permit")
+        XCTAssertEqual(lineCount(log), 0)
+
+        await item.prepareUpdate(config: ItemConfig(
+            name: "item",
+            run: "printf primary",
+            interval: .manual,
+            menu: [
+                MenuRowConfig(label: "Cached", run: cached, cache: 60),
+                MenuRowConfig(label: "Other", run: "printf other")
+            ]
+        ))
+        item.commitPreparedUpdate()
+
+        await scheduler.releasePermit()
+        let ran = await waitUntil { self.lineCount(log) == 1 }
+        XCTAssertTrue(ran, "cached row stranded after a second reload cancelled its queued first attempt")
+        let idle = await waitForMenuRowIdle(item)
+        XCTAssertTrue(idle)
+        try? await Task.sleep(for: .milliseconds(200))
+        XCTAssertEqual(lineCount(log), 1, "cached row ran more than once after the second reload")
+        XCTAssertEqual(item.menuRowValue(at: 0), "cached")
+    }
+
+    @MainActor
     func testStartupRefreshesPrimaryAndCachedRowOnce() async throws {
         let primaryLog = path("startup-primary.log")
         let rowLog = path("startup-row.log")
