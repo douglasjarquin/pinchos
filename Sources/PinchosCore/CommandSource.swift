@@ -102,6 +102,39 @@ public struct SystemCommandSourceClock: CommandSourceClock {
     public func now() -> Date { Date() }
 }
 
+/// Single-resume slot so a joiner can return as soon as it is cancelled
+/// without racing the shared refresh task's completion.
+private final class RefreshJoinerSlot: @unchecked Sendable {
+    private let lock = NSLock()
+    private var continuation: CheckedContinuation<CachedValue, Never>?
+    private var result: CachedValue?
+
+    func install(_ continuation: CheckedContinuation<CachedValue, Never>) {
+        lock.lock()
+        if let result {
+            lock.unlock()
+            continuation.resume(returning: result)
+            return
+        }
+        self.continuation = continuation
+        lock.unlock()
+    }
+
+    func resume(_ value: CachedValue) {
+        lock.lock()
+        if let continuation {
+            self.continuation = nil
+            lock.unlock()
+            continuation.resume(returning: value)
+            return
+        }
+        if result == nil {
+            result = value
+        }
+        lock.unlock()
+    }
+}
+
 public actor CommandSource {
     /// Automatic retries of a failed or stale source wait this long after the
     /// last attempt settled before menu-open may start more work.
@@ -116,8 +149,12 @@ public actor CommandSource {
     private var runnerStarted = false
     private var generation: UInt64 = 0
     /// At most one in-flight execution. Additional `refresh()` callers join
-    /// this task instead of appending waiters.
+    /// this task instead of appending waiters. The shared task is cancelled
+    /// when every joiner has cancelled, so a cancelled caller can abort a
+    /// queued `acquirePermit()` without waiting for the command.
     private var inFlight: Task<CachedValue, Never>?
+    private var inFlightID: UUID?
+    private var joiners: [UUID: RefreshJoinerSlot] = [:]
 
     public init(
         configuration: CommandSourceConfiguration,
@@ -154,10 +191,11 @@ public actor CommandSource {
     }
 
     /// Whether an automatic refresh should start now. Explicit Refresh Now
-    /// bypasses this gate. Fresh values never auto-refresh; stale, failed
-    /// (with or without a last-good value), and never-attempted sources are
-    /// due only after `retryInterval` has elapsed since the last attempt
-    /// settled, not since it was admitted or started.
+    /// bypasses this gate. Fresh values never auto-refresh. Never-attempted
+    /// sources are due immediately. Stale and failed sources (with or
+    /// without a last-good value) are due only after `retryInterval` has
+    /// elapsed since the last attempt settled, not since it was admitted
+    /// or started.
     public static func isAutomaticRefreshDue(
         snapshot: CachedValue,
         now: Date,
@@ -173,12 +211,31 @@ public actor CommandSource {
     }
 
     public func refresh() async -> CachedValue {
-        if let inFlight {
-            return await inFlight.value
+        if Task.isCancelled { return snapshot() }
+        let work: Task<CachedValue, Never>
+        if let inFlight, !inFlight.isCancelled {
+            work = inFlight
+        } else {
+            let flightID = UUID()
+            let task = Task { await self.performExclusiveRefresh(flightID: flightID) }
+            inFlight = task
+            inFlightID = flightID
+            work = task
         }
-        let task = Task { await self.performExclusiveRefresh() }
-        inFlight = task
-        return await task.value
+        let joinerID = UUID()
+        let slot = RefreshJoinerSlot()
+        joiners[joinerID] = slot
+        Task {
+            let value = await work.value
+            await self.finishJoiner(joinerID, value: value)
+        }
+        return await withTaskCancellationHandler {
+            await withCheckedContinuation { continuation in
+                slot.install(continuation)
+            }
+        } onCancel: {
+            Task { await self.cancelJoiner(joinerID) }
+        }
     }
 
     private func performRefresh() async -> CachedValue {
@@ -225,9 +282,27 @@ public actor CommandSource {
         return snapshot()
     }
 
-    private func performExclusiveRefresh() async -> CachedValue {
-        defer { inFlight = nil }
+    private func performExclusiveRefresh(flightID: UUID) async -> CachedValue {
+        defer {
+            if inFlightID == flightID {
+                inFlight = nil
+                inFlightID = nil
+            }
+        }
         return await performRefresh()
+    }
+
+    private func finishJoiner(_ joinerID: UUID, value: CachedValue) {
+        guard let slot = joiners.removeValue(forKey: joinerID) else { return }
+        slot.resume(value)
+    }
+
+    private func cancelJoiner(_ joinerID: UUID) {
+        guard let slot = joiners.removeValue(forKey: joinerID) else { return }
+        slot.resume(snapshot())
+        guard joiners.isEmpty else { return }
+        generation &+= 1
+        inFlight?.cancel()
     }
 
     public func cancel() async {

@@ -182,6 +182,50 @@ final class CommandSourceTests: XCTestCase {
         XCTAssertEqual(diagnostics.queuedSessions, 0)
     }
 
+    func testCancellingLastRefreshJoinerAbortsQueuedPermitAndDoesNotRun() async throws {
+        let scheduler = CommandScheduler(maxActiveSessions: 1)
+        try await scheduler.acquirePermit()
+        let runner = FakeSourceRunner(outcomes: [.completed(success)])
+        let source = CommandSource(
+            configuration: CommandSourceConfiguration(command: "ignored", timeout: 1),
+            scheduler: scheduler,
+            runner: runner
+        )
+
+        let refresh = Task { await source.refresh() }
+        try await waitUntil { await scheduler.diagnostics().queuedSessions == 1 }
+        refresh.cancel()
+        _ = await refresh.value
+        await scheduler.releasePermit()
+        try await Task.sleep(for: .milliseconds(50))
+
+        let runCount = await runner.runCount
+        XCTAssertEqual(runCount, 0)
+        let diagnostics = await scheduler.diagnostics()
+        XCTAssertEqual(diagnostics.queuedSessions, 0)
+        XCTAssertEqual(diagnostics.activeSessions, 0)
+    }
+
+    func testCancellingOneJoinerLeavesSharedRefreshRunning() async throws {
+        let (source, runner, _) = source(
+            outcomes: [.completed(success)],
+            holdUntilReleased: true
+        )
+
+        let first = Task { await source.refresh() }
+        await runner.waitUntilRunStarts()
+        let second = Task { await source.refresh() }
+        first.cancel()
+        _ = await first.value
+        let runCountWhileHeld = await runner.runCount
+        XCTAssertEqual(runCountWhileHeld, 1)
+        await runner.release()
+        let secondValue = await second.value
+        let runCount = await runner.runCount
+        XCTAssertEqual(secondValue.value, "72%\n")
+        XCTAssertEqual(runCount, 1)
+    }
+
     func testRefreshPublishesBoundedCachedValueAndTerminalState() async {
         let (source, _, _) = source(outcomes: [.completed(success)])
 

@@ -313,6 +313,132 @@ final class ManagedItemRefreshTests: XCTestCase {
     }
 
     @MainActor
+    func testIntervalReloadCancelsQueuedPrimaryRefreshWithoutRunningCommand() async throws {
+        let log = path("interval-reload.log")
+        let scheduler = CommandScheduler(maxActiveSessions: 1)
+        try await scheduler.acquirePermit()
+        let command = "printf 'x\\n' >> '\(log.path)'; printf ran"
+        let item = makeItem(
+            config: ItemConfig(name: "item", run: command, interval: .scheduled(60)),
+            scheduler: scheduler
+        )
+
+        item.refreshNow()
+        let queued = await waitUntil { await scheduler.diagnostics().queuedSessions == 1 }
+        XCTAssertTrue(queued, "primary refresh did not wait on the occupied scheduler permit")
+
+        let started = ContinuousClock.now
+        await item.prepareUpdate(
+            config: ItemConfig(name: "item", run: command, interval: .scheduled(120)),
+            deadline: ContinuousClock.now.advanced(by: .seconds(2))
+        )
+        let elapsed = ContinuousClock.now - started
+        XCTAssertLessThan(elapsed, Duration.milliseconds(500), "interval reload drained by waiting on the queued command")
+        XCTAssertEqual(lineCount(log), 0)
+
+        await scheduler.releasePermit()
+        try? await Task.sleep(for: .milliseconds(200))
+        XCTAssertEqual(lineCount(log), 0, "interval reload still ran the queued command")
+        item.commitPreparedUpdate()
+        XCTAssertEqual(lineCount(log), 0)
+    }
+
+    @MainActor
+    func testIntervalReloadKeepsInFlightMenuRowAttemptForRetryGate() async throws {
+        let log = path("row-generation.log")
+        let clock = TestItemClock()
+        let scheduler = CommandScheduler(maxActiveSessions: 1)
+        try await scheduler.acquirePermit()
+        let row = "printf 'x\\n' >> '\(log.path)'; exit 1"
+        let menu = [MenuRowConfig(label: "Broken", run: row, cache: 60)]
+        let item = makeItem(
+            config: ItemConfig(
+                name: "item",
+                run: "printf primary",
+                interval: .scheduled(60),
+                menu: menu
+            ),
+            clock: clock,
+            scheduler: scheduler
+        )
+
+        _ = item.menuRowValue(at: 0)
+        let queued = await waitUntil { await scheduler.diagnostics().queuedSessions == 1 }
+        XCTAssertTrue(queued)
+
+        await item.prepareUpdate(
+            config: ItemConfig(
+                name: "item",
+                run: "printf primary",
+                interval: .scheduled(120),
+                menu: menu
+            ),
+            deadline: ContinuousClock.now.advanced(by: .seconds(2))
+        )
+        item.commitPreparedUpdate()
+
+        await scheduler.releasePermit()
+        let first = await waitUntil { self.lineCount(log) == 1 }
+        XCTAssertTrue(first)
+        let idle = await waitForMenuRowIdle(item)
+        XCTAssertTrue(idle)
+
+        for _ in 0..<8 {
+            _ = item.menuRowValue(at: 0)
+        }
+        XCTAssertEqual(
+            lineCount(log),
+            1,
+            "interval reload dropped the in-flight row attempt so the next open retried immediately"
+        )
+    }
+
+    @MainActor
+    func testPrimaryRefreshMirrorsSharedSourceIntoMenuRowGateAndValue() async throws {
+        let log = path("shared-primary.log")
+        let clock = TestItemClock()
+        let command = failAfterFirstSuccess(log: log, output: "good")
+        let item = makeItem(
+            config: ItemConfig(
+                name: "item",
+                run: command,
+                interval: .manual,
+                menu: [MenuRowConfig(label: "Same", run: command, cache: 60)]
+            ),
+            clock: clock
+        )
+
+        item.refreshNow()
+        let first = await waitUntil {
+            await item.runtimeSnapshot().fullOutput == "good" && item.menuRowValue(at: 0) == "good"
+        }
+        XCTAssertTrue(first)
+        let idleAfterSuccess = await waitForMenuRowIdle(item)
+        XCTAssertTrue(idleAfterSuccess)
+        XCTAssertEqual(lineCount(log), 1)
+
+        clock.date = clock.date.addingTimeInterval(61)
+        item.refreshPrimaryForTesting()
+        let failed = await waitUntil {
+            self.lineCount(log) == 2 && item.menuRowCachedValueForTesting(at: 0)?.state == .error
+        }
+        XCTAssertTrue(failed, "primary-only refresh did not mirror into the shared menu row")
+        let idleAfterPrimary = await waitForMenuRowIdle(item)
+        XCTAssertTrue(idleAfterPrimary)
+        XCTAssertEqual(item.menuRowValue(at: 0), "good")
+
+        for _ in 0..<8 {
+            _ = item.menuRowValue(at: 0)
+        }
+        XCTAssertEqual(
+            lineCount(log),
+            2,
+            "shared menu row did not inherit the primary's settled attempt and retried immediately"
+        )
+        XCTAssertEqual(item.menuRowRefreshTaskCountForTesting, 0)
+    }
+
+    @MainActor
     func testMenuRowValueDoesNotWaitOnASlowRefresh() async throws {
         let item = makeItem(config: ItemConfig(
             name: "item",

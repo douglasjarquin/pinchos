@@ -62,7 +62,7 @@ scheduler and source cache
  └─ menu bar item and native submenu
 ```
 
-Opening a menu is synchronous and never waits on a command. Unavailable, stale, or failed cached rows may request a background refresh after a fixed 30-second retry cadence. Refresh Now updates every distinct value source, including manual submenu rows, and never runs actions. Actions execute only when selected.
+Opening a menu is synchronous and never waits on a command. Never-attempted rows refresh in the background immediately. Stale or failed cached rows may request a background retry only after a fixed 30-second cadence from when the last attempt settled. Refresh Now updates every distinct value source, including manual submenu rows, and never runs actions. Actions execute only when selected.
 
 Commands and actions are unsandboxed code executed with the user's permissions. Review executables, arguments, paths, network destinations, credentials, and write targets before placing them in TOML.
 
