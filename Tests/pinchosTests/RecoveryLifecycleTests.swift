@@ -1668,3 +1668,151 @@ private actor CancellationRoleTracker {
         }
     }
 }
+
+@MainActor
+private final class RecoveryStatusItemHost: StatusItemHost {
+    private(set) var live: [NSStatusItem] = []
+
+    func makeStatusItem() -> NSStatusItem? {
+        let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
+        live.append(item)
+        return item
+    }
+
+    func removeStatusItem(_ statusItem: NSStatusItem) {
+        live.removeAll { $0 === statusItem }
+        NSStatusBar.system.removeStatusItem(statusItem)
+    }
+
+    func present(menu: NSMenu, on statusItem: NSStatusItem) {}
+}
+
+/// What the menu bar shows for configuration recovery, read through the
+/// controller's real entry points: the warning status item and the recovery
+/// row of the collapsed menu.
+@MainActor
+final class RecoveryPresentationTests: XCTestCase {
+    private struct Shown: Equatable {
+        var warningTitle: String
+        var menuTitles: [String]
+    }
+
+    private let missingActions = ["Create Example Config", "Open Config", "Open Config Directory", "Reload", "Quit"]
+    private let existingActions = ["Open Config", "Open Config Directory", "Reload", "Quit"]
+    private let warningTitle = "pinchos \u{26A0}\u{FE0E}"
+
+    private func makeController(configPath: String? = nil) -> (StatusItemController, RecoveryStatusItemHost) {
+        let host = RecoveryStatusItemHost()
+        let controller = StatusItemController(
+            configPath: configPath ?? "/tmp/pinchos-recovery-\(UUID().uuidString)/pinchos.toml",
+            onReload: {},
+            statusItemHost: host
+        )
+        addTeardownBlock { @MainActor in await controller.shutdown() }
+        return (controller, host)
+    }
+
+    /// Returns nil when no recovery UI is visible.
+    private func shown(_ controller: StatusItemController, _ host: RecoveryStatusItemHost) async throws -> Shown? {
+        let collapsed = await controller.makeCollapsedMenu()
+        guard let row = collapsed.items.first(where: { $0.title.hasPrefix("pinchos") }) else {
+            XCTAssertTrue(host.live.isEmpty, "warning item outlived the recovery row")
+            return nil
+        }
+        let warning = try XCTUnwrap(host.live.first, "recovery row without a warning item")
+        let warningTitle = try XCTUnwrap(warning.button?.title)
+        XCTAssertEqual(row.title, warningTitle)
+        let submenu = try XCTUnwrap(row.submenu)
+        return Shown(
+            warningTitle: warningTitle,
+            menuTitles: submenu.items.map { $0.isSeparatorItem ? "---" : $0.title }
+        )
+    }
+
+    private func configWithItems() -> PinchosConfig {
+        PinchosConfig(items: [ItemConfig(name: "clock", run: "echo clock", interval: .manual)])
+    }
+
+    func testEmptyConfigShowsRecoveryWithoutCreateAction() async throws {
+        let (controller, host) = makeController()
+        await controller.apply(config: PinchosConfig(items: []))
+
+        let shown = try await shown(controller, host)
+        XCTAssertEqual(shown, Shown(warningTitle: "pinchos", menuTitles: existingActions))
+    }
+
+    func testMissingConfigShowsRecoveryWithCreateAction() async throws {
+        let (controller, host) = makeController()
+        await controller.showMissingConfig()
+
+        let shown = try await shown(controller, host)
+        XCTAssertEqual(shown, Shown(warningTitle: "pinchos", menuTitles: missingActions))
+    }
+
+    func testParseErrorShowsMessageAndWarningTitle() async throws {
+        let (controller, host) = makeController()
+        await controller.showParseError("item.alpha: unknown key")
+
+        let shown = try await shown(controller, host)
+        XCTAssertEqual(shown, Shown(
+            warningTitle: warningTitle,
+            menuTitles: ["item.alpha: unknown key", "---"] + existingActions
+        ))
+    }
+
+    func testFailedRecoveryActionWhileConfigIsMissingKeepsMissingConfigActions() async throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("pinchos-recovery-blocked-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let blocker = root.appendingPathComponent("blocker")
+        try Data().write(to: blocker)
+        let (controller, host) = makeController(
+            configPath: blocker.appendingPathComponent("pinchos.toml").path
+        )
+        await controller.showMissingConfig()
+
+        let collapsed = await controller.makeCollapsedMenu()
+        let row = try XCTUnwrap(collapsed.items.first(where: { $0.title.hasPrefix("pinchos") }))
+        let create = try XCTUnwrap(row.submenu?.items.first(where: { $0.title == "Create Example Config" }))
+        XCTAssertTrue(NSApplication.shared.sendAction(create.action!, to: create.target, from: create))
+
+        let afterFailure = try await shown(controller, host)
+        let shown = try XCTUnwrap(afterFailure)
+        XCTAssertEqual(shown.warningTitle, warningTitle)
+        XCTAssertEqual(shown.menuTitles.count, missingActions.count + 2)
+        XCTAssertFalse(shown.menuTitles[0].isEmpty)
+        XCTAssertEqual(shown.menuTitles[1], "---")
+        XCTAssertEqual(Array(shown.menuTitles.dropFirst(2)), missingActions)
+    }
+
+    func testConfigWithItemsHidesRecoveryFromEveryVisibleCase() async throws {
+        let entries: [(String, (StatusItemController) async -> Void)] = [
+            ("empty config", { await $0.apply(config: PinchosConfig(items: [])) }),
+            ("missing config", { await $0.showMissingConfig() }),
+            ("parse error", { await $0.showParseError("broken") }),
+        ]
+        for (name, enter) in entries {
+            let (controller, host) = makeController()
+            await enter(controller)
+            let visible = try await shown(controller, host)
+            XCTAssertNotNil(visible, name)
+
+            await controller.apply(config: configWithItems())
+            let hidden = try await shown(controller, host)
+            XCTAssertNil(hidden, name)
+        }
+    }
+
+    func testParseErrorReplacesMissingConfig() async throws {
+        let (controller, host) = makeController()
+        await controller.showMissingConfig()
+        await controller.showParseError("broken")
+
+        let shown = try await shown(controller, host)
+        XCTAssertEqual(shown, Shown(
+            warningTitle: warningTitle,
+            menuTitles: ["broken", "---"] + existingActions
+        ))
+    }
+}
