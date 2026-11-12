@@ -583,17 +583,20 @@ final class ManagedItem: ManagedItemLifecycle {
         else { return }
         let generation = configurationGeneration
         let token = UUID()
-        menuRowLastAttemptedAt[index] = now()
         menuRowRefreshTokens[index] = token
         menuRowRefreshTasks[index] = Task { @MainActor [weak self, source] in
             let cached = await source.refresh()
             guard let self,
                   self.menuRowRefreshTokens[index] == token
             else { return }
+            guard !self.isRetired, self.configurationGeneration == generation else {
+                self.menuRowRefreshTokens[index] = nil
+                self.menuRowRefreshTasks[index] = nil
+                return
+            }
+            self.applyMenuRowCachedValue(cached, from: source)
             self.menuRowRefreshTokens[index] = nil
             self.menuRowRefreshTasks[index] = nil
-            guard !self.isRetired, self.configurationGeneration == generation else { return }
-            self.applyMenuRowCachedValue(cached, from: source)
         }
     }
 

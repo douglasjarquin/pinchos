@@ -104,7 +104,7 @@ public struct SystemCommandSourceClock: CommandSourceClock {
 
 public actor CommandSource {
     /// Automatic retries of a failed or stale source wait this long after the
-    /// last attempt before menu-open or `refreshIfDue()` may start more work.
+    /// last attempt settled before menu-open may start more work.
     /// Explicit `refresh()` / Refresh Now bypasses the delay.
     public static let retryInterval: TimeInterval = 30
 
@@ -118,9 +118,6 @@ public actor CommandSource {
     /// At most one in-flight execution. Additional `refresh()` callers join
     /// this task instead of appending waiters.
     private var inFlight: Task<CachedValue, Never>?
-    /// At most one follow-up after the in-flight execution, set by
-    /// `requestRefresh()` during a burst. Cleared when consumed or cancelled.
-    private var pendingRefresh = false
 
     public init(
         configuration: CommandSourceConfiguration,
@@ -159,7 +156,8 @@ public actor CommandSource {
     /// Whether an automatic refresh should start now. Explicit Refresh Now
     /// bypasses this gate. Fresh values never auto-refresh; stale, failed
     /// (with or without a last-good value), and never-attempted sources are
-    /// due only after `retryInterval` has elapsed since the last attempt.
+    /// due only after `retryInterval` has elapsed since the last attempt
+    /// settled, not since it was admitted or started.
     public static func isAutomaticRefreshDue(
         snapshot: CachedValue,
         now: Date,
@@ -174,10 +172,6 @@ public actor CommandSource {
         }
     }
 
-    public func isAutomaticRefreshDue() -> Bool {
-        Self.isAutomaticRefreshDue(snapshot: snapshot(), now: clock.now())
-    }
-
     public func refresh() async -> CachedValue {
         if let inFlight {
             return await inFlight.value
@@ -186,26 +180,6 @@ public actor CommandSource {
         inFlight = task
         return await task.value
     }
-
-    /// Starts a refresh if one is not already running. A burst while a
-    /// refresh is in flight records at most one follow-up instead of
-    /// stacking tasks.
-    public func requestRefresh() {
-        if inFlight != nil {
-            pendingRefresh = true
-            return
-        }
-        let task = Task { await self.performExclusiveRefresh() }
-        inFlight = task
-    }
-
-    public func refreshIfDue() async -> CachedValue {
-        guard isAutomaticRefreshDue() else { return snapshot() }
-        return await refresh()
-    }
-
-    var hasInFlightRefreshForTesting: Bool { inFlight != nil }
-    var hasPendingRefreshForTesting: Bool { pendingRefresh }
 
     private func performRefresh() async -> CachedValue {
         generation &+= 1
@@ -239,11 +213,12 @@ public actor CommandSource {
         else { return snapshot() }
 
         let successful = execution.terminalReason == .exited(code: 0)
+        let settledAt = clock.now()
         cachedValue = CachedValue(
             value: successful ? execution.stdout : cachedValue.value,
             state: successful ? .fresh : .error,
-            lastAttemptedAt: attemptedAt,
-            lastSuccessfulAt: successful ? clock.now() : cachedValue.lastSuccessfulAt,
+            lastAttemptedAt: settledAt,
+            lastSuccessfulAt: successful ? settledAt : cachedValue.lastSuccessfulAt,
             lastExecution: execution,
             diagnostic: successful ? nil : Self.diagnostic(for: execution)
         )
@@ -252,17 +227,11 @@ public actor CommandSource {
 
     private func performExclusiveRefresh() async -> CachedValue {
         defer { inFlight = nil }
-        var value = await performRefresh()
-        if pendingRefresh {
-            pendingRefresh = false
-            value = await performRefresh()
-        }
-        return value
+        return await performRefresh()
     }
 
     public func cancel() async {
         generation &+= 1
-        pendingRefresh = false
         inFlight?.cancel()
         await runner.cancelActive()
     }

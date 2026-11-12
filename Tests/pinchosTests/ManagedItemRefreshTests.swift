@@ -65,13 +65,14 @@ final class ManagedItemRefreshTests: XCTestCase {
     private func makeItem(
         config: ItemConfig,
         clock: TestItemClock = TestItemClock(),
+        scheduler: CommandScheduler = CommandScheduler(),
         sourceRegistry: CommandSourceRegistry = CommandSourceRegistry()
     ) -> ManagedItem {
         let item = ManagedItem(
             config: config,
             menuDelegate: RefreshTestMenuDelegate(),
             initiallyVisible: false,
-            scheduler: CommandScheduler(),
+            scheduler: scheduler,
             sourceRegistry: sourceRegistry,
             now: { clock.now() },
             statusItemFactory: { nil }
@@ -261,6 +262,54 @@ final class ManagedItemRefreshTests: XCTestCase {
         _ = item.menuRowValue(at: 0)
         let retried = await waitUntil { self.lineCount(log) == 2 }
         XCTAssertTrue(retried)
+    }
+
+    @MainActor
+    func testQueuedFailingRefreshDoesNotRetryOnReopenUntilCadenceAfterSettlement() async throws {
+        let log = path("queued-fail.log")
+        let clock = TestItemClock()
+        let scheduler = CommandScheduler(maxActiveSessions: 1)
+        try await scheduler.acquirePermit()
+        let item = makeItem(
+            config: ItemConfig(
+                name: "item",
+                run: "printf primary",
+                interval: .manual,
+                menu: [MenuRowConfig(
+                    label: "Broken",
+                    run: "printf 'x\\n' >> '\(log.path)'; exit 1",
+                    cache: 60
+                )]
+            ),
+            clock: clock,
+            scheduler: scheduler
+        )
+
+        _ = item.menuRowValue(at: 0)
+        let queued = await waitUntil { await scheduler.diagnostics().queuedSessions == 1 }
+        XCTAssertTrue(queued, "menu refresh did not wait on the occupied scheduler permit")
+
+        clock.date = clock.date.addingTimeInterval(CommandSource.retryInterval + 5)
+        await scheduler.releasePermit()
+        let first = await waitUntil { self.lineCount(log) == 1 }
+        XCTAssertTrue(first)
+        let idle = await waitForMenuRowIdle(item)
+        XCTAssertTrue(idle)
+
+        for _ in 0..<8 {
+            _ = item.menuRowValue(at: 0)
+        }
+        XCTAssertEqual(
+            lineCount(log),
+            1,
+            "reopens after a queued failure retried before the cadence from settlement"
+        )
+        XCTAssertEqual(item.menuRowRefreshTaskCountForTesting, 0)
+
+        clock.date = clock.date.addingTimeInterval(CommandSource.retryInterval)
+        _ = item.menuRowValue(at: 0)
+        let retried = await waitUntil { self.lineCount(log) == 2 }
+        XCTAssertTrue(retried, "automatic retry did not run after the cadence from settlement")
     }
 
     @MainActor

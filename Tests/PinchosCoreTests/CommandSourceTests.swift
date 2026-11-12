@@ -316,12 +316,12 @@ final class CommandSourceTests: XCTestCase {
 
         _ = await source.refresh()
         clock.date = clock.date.addingTimeInterval(10)
-        let due = await source.isAutomaticRefreshDue()
-        let ignored = await source.refreshIfDue()
+        let snapshot = await source.snapshot()
+        let due = CommandSource.isAutomaticRefreshDue(snapshot: snapshot, now: clock.date)
         let runCount = await runner.runCount
 
         XCTAssertFalse(due)
-        XCTAssertEqual(ignored.state, .fresh)
+        XCTAssertEqual(snapshot.state, .fresh)
         XCTAssertEqual(runCount, 1)
     }
 
@@ -336,14 +336,17 @@ final class CommandSourceTests: XCTestCase {
         _ = await source.refresh()
         clock.date = clock.date.addingTimeInterval(11)
         let stale = await source.snapshot()
-        let dueBeforeCadence = await source.isAutomaticRefreshDue()
+        let dueBeforeCadence = CommandSource.isAutomaticRefreshDue(snapshot: stale, now: clock.date)
         XCTAssertEqual(stale.state, .stale)
         XCTAssertFalse(dueBeforeCadence)
 
         clock.date = clock.date.addingTimeInterval(CommandSource.retryInterval - 11)
-        let dueAfterCadence = await source.isAutomaticRefreshDue()
+        let dueAfterCadence = CommandSource.isAutomaticRefreshDue(
+            snapshot: await source.snapshot(),
+            now: clock.date
+        )
         XCTAssertTrue(dueAfterCadence)
-        let refreshed = await source.refreshIfDue()
+        let refreshed = await source.refresh()
         let runCount = await runner.runCount
 
         XCTAssertEqual(refreshed.value, "stale-refresh\n")
@@ -365,16 +368,21 @@ final class CommandSourceTests: XCTestCase {
         XCTAssertEqual(failed.state, .error)
 
         clock.date = clock.date.addingTimeInterval(1)
-        let dueImmediately = await source.isAutomaticRefreshDue()
+        let dueImmediately = CommandSource.isAutomaticRefreshDue(
+            snapshot: await source.snapshot(),
+            now: clock.date
+        )
         XCTAssertFalse(dueImmediately)
-        _ = await source.refreshIfDue()
         let runCountAfterIgnored = await runner.runCount
         XCTAssertEqual(runCountAfterIgnored, 2)
 
         clock.date = clock.date.addingTimeInterval(CommandSource.retryInterval)
-        let dueAfterCadence = await source.isAutomaticRefreshDue()
+        let dueAfterCadence = CommandSource.isAutomaticRefreshDue(
+            snapshot: await source.snapshot(),
+            now: clock.date
+        )
         XCTAssertTrue(dueAfterCadence)
-        let recovered = await source.refreshIfDue()
+        let recovered = await source.refresh()
         let runCount = await runner.runCount
         XCTAssertEqual(recovered.value, "recovered\n")
         XCTAssertEqual(runCount, 3)
@@ -388,15 +396,18 @@ final class CommandSourceTests: XCTestCase {
         )
 
         let failed = await source.refresh()
-        let dueImmediately = await source.isAutomaticRefreshDue()
+        let dueImmediately = CommandSource.isAutomaticRefreshDue(snapshot: failed, now: clock.date)
         XCTAssertNil(failed.value)
         XCTAssertEqual(failed.state, .error)
         XCTAssertFalse(dueImmediately)
 
         clock.date = clock.date.addingTimeInterval(CommandSource.retryInterval)
-        let dueAfterCadence = await source.isAutomaticRefreshDue()
+        let dueAfterCadence = CommandSource.isAutomaticRefreshDue(
+            snapshot: await source.snapshot(),
+            now: clock.date
+        )
         XCTAssertTrue(dueAfterCadence)
-        let recovered = await source.refreshIfDue()
+        let recovered = await source.refresh()
         let runCount = await runner.runCount
         XCTAssertEqual(recovered.value, "72%\n")
         XCTAssertEqual(runCount, 2)
@@ -411,9 +422,11 @@ final class CommandSourceTests: XCTestCase {
 
         _ = await source.refresh()
         clock.date = clock.date.addingTimeInterval(CommandSource.retryInterval * 4)
-        let due = await source.isAutomaticRefreshDue()
+        let due = CommandSource.isAutomaticRefreshDue(
+            snapshot: await source.snapshot(),
+            now: clock.date
+        )
         XCTAssertFalse(due)
-        _ = await source.refreshIfDue()
         let runCount = await runner.runCount
         XCTAssertEqual(runCount, 1)
     }
@@ -440,59 +453,49 @@ final class CommandSourceTests: XCTestCase {
         XCTAssertEqual(maxActiveRuns, 1)
     }
 
-    func testSlowRefreshCoalescesRequestRefreshToOneFollowUp() async throws {
-        let (source, runner, _) = source(
-            outcomes: [.completed(success), .completed(execution("follow-up\n"))],
-            holdUntilReleased: true
-        )
-
-        let first = Task { await source.refresh() }
-        await runner.waitUntilRunStarts()
-        for _ in 0..<8 {
-            await source.requestRefresh()
-        }
-        let pendingDuringRun = await source.hasPendingRefreshForTesting
-        XCTAssertTrue(pendingDuringRun)
-        await runner.release()
-        try await waitUntil { await runner.runCount == 2 }
-        await runner.release()
-        _ = await first.value
-
-        let runCount = await runner.runCount
-        let maxActiveRuns = await runner.maxActiveRuns
-        let pendingAfter = await source.hasPendingRefreshForTesting
-        let cached = await source.snapshot()
-        XCTAssertEqual(runCount, 2)
-        XCTAssertEqual(maxActiveRuns, 1)
-        XCTAssertFalse(pendingAfter)
-        XCTAssertEqual(cached.value, "follow-up\n")
-    }
-
-    func testCancelDiscardsPendingFollowUpAndDoesNotLaunchIt() async throws {
+    func testQueuedFailingRefreshIsNotDueUntilRetryIntervalAfterSettlement() async throws {
+        let clock = TestSourceClock(Date(timeIntervalSince1970: 1_700_000_000))
         let scheduler = CommandScheduler(maxActiveSessions: 1)
         try await scheduler.acquirePermit()
-        let runner = FakeSourceRunner(outcomes: [.completed(success), .completed(execution("stale-follow-up\n"))])
+        let runner = FakeSourceRunner(outcomes: [.completed(failure)])
         let source = CommandSource(
-            configuration: CommandSourceConfiguration(command: "ignored", timeout: 1),
+            configuration: CommandSourceConfiguration(
+                command: "ignored",
+                timeout: 1,
+                maxOutputBytes: 1024
+            ),
             scheduler: scheduler,
+            clock: clock,
             runner: runner
         )
 
         let refresh = Task { await source.refresh() }
         try await waitUntil { await scheduler.diagnostics().queuedSessions == 1 }
-        await source.requestRefresh()
-        let pendingBeforeCancel = await source.hasPendingRefreshForTesting
-        XCTAssertTrue(pendingBeforeCancel)
 
-        await source.cancel()
+        clock.date = clock.date.addingTimeInterval(CommandSource.retryInterval + 5)
         await scheduler.releasePermit()
-        _ = await refresh.value
+        let failed = await refresh.value
+        let runCountAfterFailure = await runner.runCount
+        XCTAssertEqual(failed.state, .error)
+        XCTAssertEqual(runCountAfterFailure, 1)
 
-        let runCount = await runner.runCount
-        let pendingAfter = await source.hasPendingRefreshForTesting
-        let diagnostics = await scheduler.diagnostics()
-        XCTAssertEqual(runCount, 0)
-        XCTAssertFalse(pendingAfter)
-        XCTAssertEqual(diagnostics.queuedSessions, 0)
+        let dueOnCompletion = CommandSource.isAutomaticRefreshDue(snapshot: failed, now: clock.date)
+        XCTAssertFalse(dueOnCompletion, "queueing plus run time must not elapse the retry gate")
+
+        clock.date = clock.date.addingTimeInterval(CommandSource.retryInterval - 1)
+        let dueBeforeCadence = CommandSource.isAutomaticRefreshDue(
+            snapshot: await source.snapshot(),
+            now: clock.date
+        )
+        XCTAssertFalse(dueBeforeCadence)
+        let runCountBeforeCadence = await runner.runCount
+        XCTAssertEqual(runCountBeforeCadence, 1)
+
+        clock.date = clock.date.addingTimeInterval(1)
+        let dueAfterCadence = CommandSource.isAutomaticRefreshDue(
+            snapshot: await source.snapshot(),
+            now: clock.date
+        )
+        XCTAssertTrue(dueAfterCadence)
     }
 }

@@ -39,14 +39,15 @@ Equivalent primary and submenu commands share one source, so one request does no
 
 Opening a menu is synchronous and never waits on a refresh.
 Fresh values do not refresh on open.
-Stale values, failed refreshes that still have a last-good value, and failed refreshes with no value may request a background retry only after **30 seconds** have elapsed since the last attempt (`CommandSource.retryInterval`).
+Stale values, failed refreshes that still have a last-good value, and failed refreshes with no value may request a background retry only after **30 seconds** have elapsed since the last attempt settled (`CommandSource.retryInterval`).
+The gate uses completion time, not when the refresh was admitted or started, so a slow command or a long FIFO wait does not make the next menu open retry immediately.
 That cadence is fixed; there is no TOML key for it.
 Explicit Refresh Now bypasses the delay.
 Manual submenu values use the same cadence after an initial failure; success stays manual-only until Refresh Now.
 
-Each source has at most one active refresh.
-Additional callers join that execution instead of stacking waiters.
-`requestRefresh()` during an in-flight run records at most one follow-up.
+Each source has at most one in-flight refresh.
+Additional `refresh()` callers join that execution instead of stacking waiters.
+ManagedItem keeps at most one apply-task per menu row (`menuRowRefreshTasks`) and at most one primary refresh task (`pendingRefreshPermitTask`); extra Refresh Now clicks coalesce there.
 Reload, removal, and shutdown cancel obsolete work and cannot execute stale actions.
 Last-good values, FIFO scheduler admission, process limits, and cancellation stay as they are.
 
