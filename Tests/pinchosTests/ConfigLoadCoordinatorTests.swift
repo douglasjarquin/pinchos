@@ -37,6 +37,20 @@ private actor InvocationLog {
     }
 }
 
+private actor ConcurrencyTracker {
+    private var inFlight = 0
+    private(set) var maxInFlight = 0
+
+    func enter() {
+        inFlight += 1
+        maxInFlight = max(maxInFlight, inFlight)
+    }
+
+    func leave() {
+        inFlight -= 1
+    }
+}
+
 private func testConfig(_ name: String) -> PinchosConfig {
     PinchosConfig(items: [ItemConfig(name: name, run: "printf \(name)", interval: .manual)])
 }
@@ -217,6 +231,52 @@ final class ConfigLoadCoordinatorTests: XCTestCase {
         XCTAssertTrue(outcomes.isEmpty, "shutdown must discard the in-flight result and ignore all later requests")
         let applied = await coordinator.appliedCount
         XCTAssertEqual(applied, 0)
+    }
+
+    /// A load stays in flight until its result handler returns. Requests that arrive
+    /// while the handler is suspended coalesce into one later load for the last path,
+    /// so two loads (and two concurrent TOMLKit parses) never run side by side.
+    func testRequestsDuringSuspendedResultHandlerCoalesceIntoOneLaterLoad() async throws {
+        let recorder = ResultRecorder()
+        let invocations = InvocationLog()
+        let concurrency = ConcurrencyTracker()
+        let handlerGate = Gate()
+        let intermediateGate = Gate()
+        let coordinator = ConfigLoadCoordinator(
+            loader: { path in
+                await invocations.record(path)
+                await concurrency.enter()
+                if path == "intermediate" {
+                    await intermediateGate.wait()
+                }
+                await concurrency.leave()
+                return .success(testConfig(path))
+            },
+            resultHandler: { outcome in
+                await recorder.record(outcome)
+                if outcome == .success(testConfig("first")) {
+                    await handlerGate.wait()
+                }
+            }
+        )
+
+        await coordinator.requestLoad(path: "first")
+        _ = try await waitForOutcomes(recorder, count: 1)
+
+        // The handler for "first" is now suspended on the gate.
+        await coordinator.requestLoad(path: "intermediate")
+        await coordinator.requestLoad(path: "last")
+        await handlerGate.open()
+
+        let outcomes = try await waitForOutcomes(recorder, count: 2)
+        await intermediateGate.open()
+        try await Task.sleep(for: .milliseconds(50))
+
+        XCTAssertEqual(outcomes, [.success(config("first")), .success(config("last"))])
+        let paths = await invocations.paths
+        XCTAssertEqual(paths, ["first", "last"], "requests during the handler must coalesce into one later load for the last path")
+        let maxInFlight = await concurrency.maxInFlight
+        XCTAssertEqual(maxInFlight, 1, "two loads must never be in flight together")
     }
 
     /// `requestLoad` must return as soon as it hands work off, without waiting for the
