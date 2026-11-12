@@ -473,6 +473,8 @@ final class ManagedItemRefreshTests: XCTestCase {
             ]
         ))
         item.commitPreparedUpdate()
+        let seeded = await waitForMenuRowIdle(item)
+        XCTAssertTrue(seeded)
 
         for _ in 0..<8 {
             _ = item.menuRowValue(at: 0)
@@ -483,6 +485,58 @@ final class ManagedItemRefreshTests: XCTestCase {
             "an unchanged row lost its retry gate across a menu edit and re-ran immediately"
         )
         XCTAssertEqual(item.menuRowValue(at: 0), "kept")
+        XCTAssertEqual(item.menuRowRefreshTaskCountForTesting, 0)
+    }
+
+    @MainActor
+    func testInFlightKeptRowAttemptSeedsCacheAfterMenuEdit() async throws {
+        let log = path("inflight-edit.log")
+        let started = path("inflight-edit.started")
+        let clock = TestItemClock()
+        let kept = "printf 'x' > '\(started.path)'; sleep 0.4; printf 'x\\n' >> '\(log.path)'; printf good"
+        let item = makeItem(
+            config: ItemConfig(
+                name: "item",
+                run: "printf primary",
+                interval: .manual,
+                menu: [
+                    MenuRowConfig(label: "Kept", run: kept, cache: 60),
+                    MenuRowConfig(label: "Other", run: "printf other", cache: 60)
+                ]
+            ),
+            clock: clock
+        )
+
+        _ = item.menuRowValue(at: 0)
+        let began = await waitUntil { self.exists(started) }
+        XCTAssertTrue(began)
+
+        await item.prepareUpdate(config: ItemConfig(
+            name: "item",
+            run: "printf primary",
+            interval: .manual,
+            menu: [
+                MenuRowConfig(label: "Kept", run: kept, cache: 60),
+                MenuRowConfig(label: "Other", run: "printf other-new", cache: 60)
+            ]
+        ))
+        item.commitPreparedUpdate()
+        XCTAssertEqual(lineCount(log), 0, "commit waited on the in-flight kept-row command")
+
+        let seeded = await waitUntil(timeout: 3) {
+            self.lineCount(log) == 1 && item.menuRowCachedValueForTesting(at: 0)?.state == .fresh
+        }
+        XCTAssertTrue(seeded, "kept row did not seed the settled attempt after the menu edit")
+        XCTAssertEqual(item.menuRowValue(at: 0), "good")
+
+        for _ in 0..<8 {
+            _ = item.menuRowValue(at: 0)
+        }
+        XCTAssertEqual(
+            lineCount(log),
+            1,
+            "a never-attempted row that succeeded during a menu edit reran on the next open"
+        )
         XCTAssertEqual(item.menuRowRefreshTaskCountForTesting, 0)
     }
 

@@ -318,8 +318,19 @@ public actor CommandSource {
 
     public func cancel() async {
         generation &+= 1
-        inFlight?.cancel()
+        if !runnerStarted {
+            inFlight?.cancel()
+        }
         await runner.cancelActive()
+    }
+
+    /// Waits for an in-flight refresh to settle, or returns the current
+    /// snapshot. Does not start a refresh and does not count as a joiner.
+    public func waitForIdleValue() async -> CachedValue {
+        if let inFlight {
+            return await inFlight.value
+        }
+        return snapshot()
     }
 
     public func runnerSnapshot() async -> CommandRunnerSnapshot {

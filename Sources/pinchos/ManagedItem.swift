@@ -371,7 +371,10 @@ final class ManagedItem: ManagedItemLifecycle {
                 clock: sourceClock
             ).mapValues(\.source)
             var carried: [Int: CachedValue] = [:]
+            var retainedIndexes: [Int] = []
             for (newIndex, newSource) in incomingSources {
+                guard menuRowSources.contains(where: { $0.value === newSource }) else { continue }
+                retainedIndexes.append(newIndex)
                 if let old = menuRowSources.first(where: { $0.value === newSource }),
                    let cached = menuRowCaches[old.key] {
                     carried[newIndex] = cached
@@ -383,6 +386,9 @@ final class ManagedItem: ManagedItemLifecycle {
             menuRowSourceLeases = pendingUpdate.menuRowSourceLeases ?? [:]
             menuRowCaches = carried
             startMenuRowSources()
+            for index in retainedIndexes {
+                seedMenuRowCache(at: index)
+            }
         }
         applyIcon()
         if pendingUpdate.timerNeedsRestart {
@@ -558,7 +564,7 @@ final class ManagedItem: ManagedItemLifecycle {
             menuRowTimerTokens[index] = token
             let scheduler = self.scheduler
             Task { [weak self] in
-                await scheduler.registerRecurring(token: token, interval: interval) { [weak self] in
+                await scheduler.registerRecurring(token: token, interval: interval, initialDelay: interval) { [weak self] in
                     let item = self
                     Task { @MainActor in
                         item?.requestMenuRowRefresh(at: index)
@@ -574,6 +580,24 @@ final class ManagedItem: ManagedItemLifecycle {
         let scheduler = self.scheduler
         for token in tokens {
             Task { await scheduler.cancelTimer(token) }
+        }
+    }
+
+    /// Copies CommandSource's settled value into a retained row after a menu
+    /// edit cancelled the row's apply-task. Does not start a refresh and
+    /// does not block menu construction.
+    private func seedMenuRowCache(at index: Int) {
+        guard let source = menuRowSources[index], menuRowRefreshTasks[index] == nil else { return }
+        let token = UUID()
+        menuRowRefreshTokens[index] = token
+        menuRowRefreshTasks[index] = Task { @MainActor [weak self, source] in
+            let cached = await source.waitForIdleValue()
+            guard let self, self.menuRowRefreshTokens[index] == token else { return }
+            if !self.isRetired {
+                self.applyMenuRowCachedValue(cached, from: source)
+            }
+            self.menuRowRefreshTokens[index] = nil
+            self.menuRowRefreshTasks[index] = nil
         }
     }
 
