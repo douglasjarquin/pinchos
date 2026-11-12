@@ -18,7 +18,7 @@ final class CommandExecutionTests: XCTestCase {
         XCTAssertFalse(execution.stdoutTruncated)
     }
 
-    func testConfiguredEnvironmentMergesAndOverridesInheritedValuesAndUsesWorkingDirectory() async throws {
+    func testConfiguredEnvironmentOverridesPolicyValuesAndUsesWorkingDirectory() async throws {
         let workingDirectory = FileManager.default.temporaryDirectory
             .appendingPathComponent("pinchos-command-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: workingDirectory, withIntermediateDirectories: true)
@@ -30,7 +30,7 @@ final class CommandExecutionTests: XCTestCase {
             command: "printf '%s\\n%s\\n%s\\n' \"$HOME\" \"$PATH\" \"$PINCHOS_TEST_OVERRIDE\"; pwd",
             timeout: 1,
             maxOutputBytes: 512,
-            shell: ["/bin/zsh", "-lc"],
+            shell: ["/bin/sh", "-c"],
             workingDirectory: workingDirectory.path,
             environment: [
                 "PATH": configuredPath,
@@ -51,6 +51,130 @@ final class CommandExecutionTests: XCTestCase {
         XCTAssertEqual(outputLines[1], configuredPath)
         XCTAssertEqual(outputLines[2], "configured's value")
         XCTAssertEqual(URL(fileURLWithPath: outputLines[3]).lastPathComponent, workingDirectory.lastPathComponent)
+    }
+
+    func testPolicyPATHAndWorkingDirectoryMatchUnderGUIAndTerminalInheritedEnvironments() async throws {
+        let home = FileManager.default.temporaryDirectory
+            .appendingPathComponent("pinchos-policy-home-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: home, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: home) }
+
+        let secret = "pinchos-secret-should-never-leak-\(UUID().uuidString)"
+        let guiPolicy = CommandExecutionPolicy(inheritedEnvironment: [
+            "PATH": "/usr/bin:/bin:/usr/sbin:/sbin",
+            "HOME": home.path,
+            "USER": "pinchos-gui",
+            "PINCHOS_SECRET": secret,
+            "AWS_SECRET_ACCESS_KEY": secret
+        ])
+        let terminalPolicy = CommandExecutionPolicy(inheritedEnvironment: [
+            "PATH": "/opt/homebrew/bin:/opt/homebrew/sbin:/usr/bin:/bin:/usr/sbin:/sbin:/opt/custom/bin",
+            "HOME": home.path,
+            "USER": "pinchos-term",
+            "TERM": "xterm-256color",
+            "PINCHOS_SECRET": secret,
+            "AWS_SECRET_ACCESS_KEY": secret
+        ])
+
+        let jqPath = "/opt/homebrew/bin/jq"
+        let hasJQ = FileManager.default.isExecutableFile(atPath: jqPath)
+        let command = hasJQ
+            ? "command -v ls; command -v jq; printf '%s\\n' \"$PATH\"; pwd; printf 'secret<%s>\\n' \"${PINCHOS_SECRET-}\""
+            : "command -v ls; printf '%s\\n' \"$PATH\"; pwd; printf 'secret<%s>\\n' \"${PINCHOS_SECRET-}\""
+        func run(_ policy: CommandExecutionPolicy) async throws -> [String] {
+            let runner = CommandRunner(
+                command: command,
+                timeout: 2,
+                maxOutputBytes: 1024,
+                policy: policy
+            )
+            guard case .completed(let execution) = await runner.runIfIdle() else {
+                XCTFail("expected policy execution to complete")
+                return []
+            }
+            XCTAssertEqual(execution.terminalReason, .exited(code: 0), "\(execution.stderr)")
+            XCTAssertFalse(execution.stdout.contains(secret))
+            XCTAssertFalse(execution.stderr.contains(secret))
+            return execution.stdout.split(whereSeparator: \.isNewline).map(String.init)
+        }
+
+        let gui = try await run(guiPolicy)
+        let terminal = try await run(terminalPolicy)
+        XCTAssertEqual(gui, terminal)
+        XCTAssertEqual(gui.first, "/bin/ls")
+        let pathIndex = hasJQ ? 2 : 1
+        if hasJQ {
+            XCTAssertEqual(gui.dropFirst().first, jqPath)
+        }
+        XCTAssertEqual(gui.dropFirst(pathIndex).first, CommandExecutionPolicy.pathEntries.joined(separator: ":"))
+        let pwd = try XCTUnwrap(gui.dropFirst(pathIndex + 1).first)
+        XCTAssertEqual(
+            URL(fileURLWithPath: pwd).resolvingSymlinksInPath().path,
+            home.resolvingSymlinksInPath().path
+        )
+        XCTAssertEqual(gui.last, "secret<>")
+    }
+
+    func testSSHAuthSockIsNotPassedThroughToSpawnedCommands() async throws {
+        let sock = "/tmp/pinchos-ssh-agent-\(UUID().uuidString).sock"
+        let policy = CommandExecutionPolicy(inheritedEnvironment: [
+            "PATH": "/usr/bin:/bin:/usr/sbin:/sbin",
+            "HOME": NSHomeDirectory(),
+            "SSH_AUTH_SOCK": sock
+        ])
+        let runner = CommandRunner(
+            command: "printf 'sock<%s>\\n' \"${SSH_AUTH_SOCK-}\"",
+            timeout: 1,
+            maxOutputBytes: 256,
+            policy: policy
+        )
+        guard case .completed(let execution) = await runner.runIfIdle() else {
+            return XCTFail("expected SSH_AUTH_SOCK execution to complete")
+        }
+        XCTAssertEqual(execution.terminalReason, .exited(code: 0), "\(execution.stderr)")
+        XCTAssertEqual(execution.stdout.trimmingCharacters(in: .whitespacesAndNewlines), "sock<>")
+        XCTAssertFalse(execution.stdout.contains(sock))
+        XCTAssertFalse(execution.stderr.contains(sock))
+    }
+
+    func testAbsentToolIsReportedWithoutDumpingInheritedSecrets() async throws {
+        let secret = "pinchos-absent-secret-\(UUID().uuidString)"
+        let policy = CommandExecutionPolicy(inheritedEnvironment: [
+            "PATH": "/usr/bin:/bin:/usr/sbin:/sbin",
+            "HOME": NSHomeDirectory(),
+            "PINCHOS_SECRET": secret
+        ])
+        let runner = CommandRunner(
+            command: "definitely_missing_pinchos_command_125",
+            timeout: 1,
+            maxOutputBytes: 512,
+            policy: policy
+        )
+        guard case .completed(let execution) = await runner.runIfIdle() else {
+            return XCTFail("expected missing-tool execution to complete")
+        }
+        XCTAssertEqual(execution.exitCode, 127)
+        let combined = execution.stdout + execution.stderr
+        XCTAssertTrue(
+            combined.contains("definitely_missing_pinchos_command_125"),
+            "missing-tool diagnostic omitted the command: \(combined)"
+        )
+        XCTAssertTrue(
+            combined.lowercased().contains("not found") || combined.contains("No such file"),
+            "missing-tool diagnostic was not helpful: \(combined)"
+        )
+        XCTAssertFalse(combined.contains(secret))
+        XCTAssertFalse(combined.contains("PINCHOS_SECRET"))
+    }
+
+    func testDefaultWorkingDirectoryIsHome() async throws {
+        let runner = CommandRunner(command: "pwd", timeout: 1, maxOutputBytes: 256)
+        guard case .completed(let execution) = await runner.runIfIdle() else {
+            return XCTFail("expected pwd execution to complete")
+        }
+        XCTAssertEqual(execution.terminalReason, .exited(code: 0))
+        let pwd = execution.stdout.trimmingCharacters(in: .whitespacesAndNewlines)
+        XCTAssertEqual(pwd, CommandExecutionPolicy.current.workingDirectory)
     }
 
     func testUnresolvableConfiguredShellReportsItsPath() async {

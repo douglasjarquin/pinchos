@@ -13,6 +13,24 @@ Command diagnostics remain bounded and available for troubleshooting.
 Commands and actions are unsandboxed code executed with the user's permissions.
 Review executables, arguments, paths, network destinations, credentials, and write targets before placing them in TOML.
 
+## Command execution policy
+
+Primary sources, dynamic menu values, actions, `pinchos run`, and `pinchos doctor` share one internal policy (`CommandExecutionPolicy`).
+The policy is not a public config surface: there are no per-item `shell`, `env`, or `cwd` keys.
+
+- **Shell.** `/bin/sh -c` only. Non-login and non-interactive, so shell startup files are not loaded.
+- **PATH.** `/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin`. Apple Silicon Homebrew first, then `/usr/local/bin`, then the launchd system directories. Inherited `PATH` is ignored so Finder/`open` and Terminal resolve the same tools.
+- **Working directory.** The resolved `HOME` directory, not the process's launch cwd (`/` under Finder/`open`, the current shell directory under Terminal).
+- **HOME and inherited environment.** `HOME` comes from the host when set, otherwise `NSHomeDirectory()`. `USER`, `LOGNAME`, `TMPDIR`, locale/`TZ`, and `__CF_USER_TEXT_ENCODING` are copied when present and non-empty. Missing `HOME`/`USER`/`TMPDIR` fall back to the process owner and the system temp directory. `SHELL` is `/bin/sh`.
+- **Not inherited.** Arbitrary host variables, including secrets and custom PATH entries. `SSH_AUTH_SOCK` is not inherited; launchd's ssh-agent can set it for GUI apps as well as Terminal, and Pinchos does not pass it through. Commands that need credentials should read them from files the command already knows about.
+
+This makes supported system and Homebrew tools resolve consistently.
+It does not make Finder and Terminal identical arbitrary user environments.
+
+`pinchos doctor` inspects the same PATH and HOME policy without running user commands.
+Missing tools are reported as not found on that PATH.
+Doctor output does not dump the inherited environment or secret values.
+
 ## Live reload and recovery
 
 Valid changes apply incrementally while preserving unchanged source/cache identity.

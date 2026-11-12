@@ -83,6 +83,7 @@ struct PinchosCLI {
     private let opener: (URL) -> Bool
     private let shutdownCoordinator: ShutdownCoordinator?
     private let runnerRegistry: CLICommandRunnerRegistry
+    private let executionPolicy: CommandExecutionPolicy
 
     init(
         configPath: String = ConfigLocation.resolve(),
@@ -90,7 +91,8 @@ struct PinchosCLI {
         output: CLIOutput = CLIOutput(),
         opener: @escaping (URL) -> Bool = { NSWorkspace.shared.open($0) },
         shutdownCoordinator: ShutdownCoordinator? = nil,
-        runnerRegistry: CLICommandRunnerRegistry? = nil
+        runnerRegistry: CLICommandRunnerRegistry? = nil,
+        executionPolicy: CommandExecutionPolicy = .current
     ) {
         self.configPath = configPath
         self.fileManager = fileManager
@@ -98,6 +100,7 @@ struct PinchosCLI {
         self.opener = opener
         self.shutdownCoordinator = shutdownCoordinator
         self.runnerRegistry = runnerRegistry ?? CLICommandRunnerRegistry()
+        self.executionPolicy = executionPolicy
     }
 
     func run(arguments: [String]) async -> Int32 {
@@ -245,7 +248,8 @@ struct PinchosCLI {
 
         let runner = CommandRunner(
             command: item.run,
-            timeout: item.timeout
+            timeout: item.timeout,
+            policy: executionPolicy
         )
         guard runnerRegistry.register(runner) else {
             return shutdownCoordinator?.terminationExitCode ?? CLIExitCode.execution
@@ -338,17 +342,21 @@ struct PinchosCLI {
             }
         }
 
-        let processEnvironment = ProcessInfo.processInfo.environment
-        if let path = processEnvironment["PATH"], !path.isEmpty {
-            reportSuccess("execution environment", "PATH is available")
+        reportSuccess(
+            "execution environment",
+            "PATH uses Homebrew, /usr/local/bin, and system directories"
+        )
+        var workingDirectoryIsDirectory = ObjCBool(false)
+        if fileManager.fileExists(
+            atPath: executionPolicy.workingDirectory,
+            isDirectory: &workingDirectoryIsDirectory
+        ), workingDirectoryIsDirectory.boolValue {
+            reportSuccess("execution environment", "working directory is available")
         } else {
-            reportFailure("execution environment", "PATH is missing or empty")
-            problemCount += 1
-        }
-        if let home = processEnvironment["HOME"], !home.isEmpty {
-            reportSuccess("execution environment", "HOME is available")
-        } else {
-            reportFailure("execution environment", "HOME is missing or empty")
+            reportFailure(
+                "execution environment",
+                "working directory cannot be resolved: \(executionPolicy.workingDirectory)"
+            )
             problemCount += 1
         }
 
@@ -366,10 +374,10 @@ struct PinchosCLI {
                 )
 
                 if let command = commandName(from: item.run) {
-                    if let executablePath = executablePath(for: command, processEnvironment: processEnvironment) {
+                    if let executablePath = executionPolicy.resolveExecutable(command, fileManager: fileManager) {
                         reportSuccess("item.\(item.name).run", executablePath)
                     } else {
-                        reportFailure("item.\(item.name).run", "command '\(command)' is unavailable in the process environment")
+                        reportFailure("item.\(item.name).run", executionPolicy.missingCommandMessage(command))
                         problemCount += 1
                     }
                 } else {
@@ -385,33 +393,6 @@ struct PinchosCLI {
         }
         output.stdout("Doctor found \(problemCount) problem\(problemCount == 1 ? "" : "s").\n")
         return CLIExitCode.diagnostics
-    }
-
-    private func executablePath(
-        for command: String,
-        processEnvironment: [String: String]
-    ) -> String? {
-        if command.contains("/") {
-            let path: String
-            if command.hasPrefix("/") {
-                path = command
-            } else {
-                path = URL(fileURLWithPath: fileManager.currentDirectoryPath).appendingPathComponent(command).path
-            }
-            return fileManager.isExecutableFile(atPath: path) ? path : nil
-        }
-
-        let pathValue = processEnvironment["PATH"] ?? ""
-        for directory in pathValue.split(separator: ":", omittingEmptySubsequences: false) {
-            let directoryPath = directory.isEmpty
-                ? fileManager.currentDirectoryPath
-                : String(directory)
-            let path = URL(fileURLWithPath: directoryPath).appendingPathComponent(command).path
-            if fileManager.isExecutableFile(atPath: path) {
-                return path
-            }
-        }
-        return nil
     }
 
     private var configURL: URL {
@@ -618,7 +599,7 @@ struct PinchosCLI {
     }
 
     private func printDoctorHelp() {
-        output.stdout("Usage: pinchos doctor\n\nInspect config accessibility, commands, icons and SF Symbols, and the process environment.\n")
+        output.stdout("Usage: pinchos doctor\n\nInspect config accessibility, commands, icons and SF Symbols, and the execution PATH policy without running commands or dumping the inherited environment.\n")
     }
 
     private func printConfigPathHelp() {
