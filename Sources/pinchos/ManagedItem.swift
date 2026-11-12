@@ -751,11 +751,49 @@ final class ManagedItem: ManagedItemLifecycle {
     private func refresh() async {
         guard isLive else { return }
         let generation = configurationGeneration
+        // Paint stale-while-refreshing as soon as this item admits the
+        // flight, before the permit wait or the command. Waiting for
+        // `primarySource.refresh()` would leave the bar on the pre-wake
+        // title until success or ⚠︎.
+        await updatePresentation(forceRefreshing: true)
+        guard !isRetired, generation == configurationGeneration else { return }
         _ = await primarySource.refresh()
         guard !isRetired, generation == configurationGeneration else { return }
         let cached = await primarySource.snapshot()
-        let hasInFlightRefresh = await primarySource.hasInFlightRefresh()
         applyMenuRowCachedValue(cached, from: primarySource)
+        await updatePresentation()
+    }
+
+    private func requestPresentationUpdate() {
+        Task { @MainActor [weak self] in
+            await self?.updatePresentation()
+        }
+    }
+
+    private func updatePresentation(forceRefreshing: Bool = false) async {
+        let runnerSnapshot = await primarySource.runnerSnapshot()
+        let cached = await primarySource.snapshot()
+        let hasInFlightRefresh = await primarySource.hasInFlightRefresh()
+        guard !isRetired else { return }
+        adoptCachedValue(cached)
+        renderPresentation(
+            makeRuntimeSnapshot(
+                runnerSnapshot,
+                cached: cached,
+                hasInFlightRefresh: hasInFlightRefresh,
+                forceRefreshing: forceRefreshing
+            )
+        )
+    }
+
+    /// Keep the visible text and the success timestamp from the same shared
+    /// cache entry. A 300s consumer must not keep older text while borrowing
+    /// a 60s consumer's newer `lastSuccessfulAt`. An empty replacement source
+    /// does not erase this item's last good.
+    private func adoptCachedValue(_ cached: CachedValue) {
+        guard cached.value != nil || cached.lastSuccessfulAt != nil || lastSuccessfulOutput == nil else {
+            return
+        }
         lastSuccessfulOutput = cached.value
         lastAttemptedAt = cached.lastAttemptedAt
         lastUpdatedAt = cached.lastSuccessfulAt
@@ -765,33 +803,6 @@ final class ManagedItem: ManagedItemLifecycle {
                 output: lastTrimmedLine(of: execution.stdout)
             )
         }
-        let runnerSnapshot = await primarySource.runnerSnapshot()
-        guard !isRetired, generation == configurationGeneration else { return }
-        let snapshot = makeRuntimeSnapshot(
-            runnerSnapshot,
-            cached: cached,
-            hasInFlightRefresh: hasInFlightRefresh
-        )
-        renderPresentation(snapshot)
-    }
-
-    private func requestPresentationUpdate() {
-        Task { @MainActor [weak self] in
-            await self?.updatePresentation()
-        }
-    }
-
-    private func updatePresentation() async {
-        let runnerSnapshot = await primarySource.runnerSnapshot()
-        let cached = await primarySource.snapshot()
-        let hasInFlightRefresh = await primarySource.hasInFlightRefresh()
-        guard !isRetired else { return }
-        let snapshot = makeRuntimeSnapshot(
-            runnerSnapshot,
-            cached: cached,
-            hasInFlightRefresh: hasInFlightRefresh
-        )
-        renderPresentation(snapshot)
     }
 
     private func renderPresentation(_ snapshot: ItemRuntimeSnapshot) {
@@ -814,13 +825,15 @@ final class ManagedItem: ManagedItemLifecycle {
     private func makeRuntimeSnapshot(
         _ runnerSnapshot: CommandRunnerSnapshot,
         cached: CachedValue? = nil,
-        hasInFlightRefresh: Bool = false
+        hasInFlightRefresh: Bool = false,
+        forceRefreshing: Bool = false
     ) -> ItemRuntimeSnapshot {
-        let isRefreshing = runnerSnapshot.isRunning
+        let isRefreshing = forceRefreshing
+            || runnerSnapshot.isRunning
             || (cached?.state == .refreshing && hasInFlightRefresh)
         return ItemRuntimeSnapshot(
             isRunning: runnerSnapshot.isRunning,
-            fullOutput: lastSuccessfulOutput,
+            fullOutput: cached?.value ?? lastSuccessfulOutput,
             lastAttemptedAt: cached?.lastAttemptedAt ?? lastAttemptedAt,
             lastUpdatedAt: cached?.lastSuccessfulAt ?? lastUpdatedAt,
             lastExecution: cached?.lastExecution ?? runnerSnapshot.lastExecution,
@@ -835,6 +848,7 @@ final class ManagedItem: ManagedItemLifecycle {
         let runnerSnapshot = await primarySource.runnerSnapshot()
         let cached = await primarySource.snapshot()
         let hasInFlightRefresh = await primarySource.hasInFlightRefresh()
+        adoptCachedValue(cached)
         let snapshot = makeRuntimeSnapshot(
             runnerSnapshot,
             cached: cached,

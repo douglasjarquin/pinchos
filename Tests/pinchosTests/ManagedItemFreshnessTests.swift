@@ -140,10 +140,14 @@ final class ManagedItemFreshnessTests: XCTestCase {
         )
 
         item.refreshNow()
-        let ready = await waitUntil { await item.runtimeSnapshot().fullOutput == "72" }
+        let ready = await waitUntil {
+            let snapshot = await item.runtimeSnapshot()
+            return snapshot.fullOutput == "72" && snapshot.freshness.state == .fresh
+        }
         XCTAssertTrue(ready)
         let successSnapshot = await item.runtimeSnapshot()
         let lastSuccess = try XCTUnwrap(successSnapshot.lastUpdatedAt)
+        try await Task.sleep(for: .milliseconds(50))
 
         clock.date = clock.date.addingTimeInterval(90)
         item.refreshNow()
@@ -243,18 +247,15 @@ final class ManagedItemFreshnessTests: XCTestCase {
         )
 
         item.refreshNow()
-        let ready = await waitUntil { await item.runtimeSnapshot().fullOutput == "72" }
+        let ready = await waitUntil { item.renderedTitle == "72" }
         XCTAssertTrue(ready)
-        XCTAssertEqual(item.renderedTitle, "72")
 
         item.refreshNow()
         let refreshing = await waitUntil {
-            await item.runtimeSnapshot().freshness.state == .refreshing
-                && item.renderedTitle == "72"
+            item.renderedTitle == "72"
+                && item.renderedAccessibilityLabel == "72, refreshing"
         }
         XCTAssertTrue(refreshing)
-        // Clock has not advanced past the 60s window, so this stays plain refreshing.
-        XCTAssertEqual(item.renderedAccessibilityLabel, "72, refreshing")
         let settled = await waitUntil { await item.runtimeSnapshot().fullOutput == "99" }
         XCTAssertTrue(settled)
         XCTAssertEqual(item.renderedTitle, "99")
@@ -263,55 +264,59 @@ final class ManagedItemFreshnessTests: XCTestCase {
     @MainActor
     func testAgedValueKeepsStaleMarkerWhileARefreshIsInFlight() async throws {
         let clock = TestItemClock()
-        let hold = path("stale-refresh-hold")
-        let command = "if [ ! -e '\(hold.path)' ]; then printf '72'; touch '\(hold.path)'; else sleep 0.5; printf '99'; fi"
-        let item = makeItem(
-            config: ItemConfig(
-                name: "item",
-                run: command,
-                interval: .scheduled(60),
-                menu: [MenuRowConfig(label: "Usage", run: command, cache: 60)]
-            ),
-            clock: clock
+        let scheduler = CommandScheduler()
+        let factory = FreshnessItemFactory(clock: clock, scheduler: scheduler)
+        let controller = StatusItemController(
+            configPath: "/tmp/pinchos-freshness-\(UUID().uuidString).toml",
+            onReload: {},
+            itemFactory: factory,
+            scheduler: scheduler,
+            statusItemHost: FreshnessStatusItemHost()
         )
+        addTeardownBlock { @MainActor in await controller.shutdown() }
 
-        item.refreshNow()
+        let hold = path("stale-refresh-hold")
+        let command = "if [ ! -e '\(hold.path)' ]; then printf '72'; touch '\(hold.path)'; else sleep 0.6; printf '99'; fi"
+        let config = ItemConfig(
+            name: "item",
+            run: command,
+            interval: .scheduled(60),
+            menu: [MenuRowConfig(label: "Usage", run: command, cache: 60)]
+        )
+        await controller.apply(config: PinchosConfig(items: [config]))
+        let item = try XCTUnwrap(factory.created.first)
+
         let ready = await waitUntil {
-            let snapshot = await item.runtimeSnapshot()
-            return snapshot.fullOutput == "72" && item.menuRowValue(at: 0) == "72"
+            item.renderedTitle == "72" && item.menuRowValue(at: 0) == "72"
         }
         XCTAssertTrue(ready)
 
-        item.refreshNow()
-        let inWindow = await waitUntil {
-            let snapshot = await item.runtimeSnapshot()
-            return snapshot.freshness.state == .refreshing
-                && !snapshot.freshness.isAgeExpired
-                && item.renderedTitle == "72"
-        }
-        XCTAssertTrue(inWindow)
-        XCTAssertEqual(item.renderedAccessibilityLabel, "72, refreshing")
-
-        // Sleep/wake: the injected clock jumps past expiry while the refresh
-        // is still in flight. Refreshing must not hide the aged-out marker.
+        // Wake, then a tick starts a slow refresh. The bar must pick up
+        // stale-while-refreshing without runtimeSnapshot() painting it.
         clock.date = clock.date.addingTimeInterval(180)
-        let snapshot = await item.runtimeSnapshot()
-        XCTAssertEqual(snapshot.freshness.state, .refreshing)
-        XCTAssertTrue(snapshot.freshness.isAgeExpired)
-        XCTAssertFalse(snapshot.freshness.isSchedulerDelayed)
-        XCTAssertEqual(item.renderedTitle, "72\(ValueFreshness.staleMarker)")
-        XCTAssertEqual(item.renderedAccessibilityLabel, "72, stale, refreshing")
+        item.refreshNow()
+        let refreshing = await waitUntil {
+            item.renderedTitle == "72\(ValueFreshness.staleMarker)"
+                && item.renderedAccessibilityLabel == "72, stale, refreshing"
+        }
+        XCTAssertTrue(refreshing)
 
-        let row = item.menuRowFreshness(at: 0)
-        XCTAssertEqual(row.state, .refreshing)
-        XCTAssertTrue(row.isAgeExpired)
-        XCTAssertEqual(row.marker, ValueFreshness.staleMarker)
-        XCTAssertEqual(row.spokenDescription(valueText: "72"), "72, stale, refreshing")
-        XCTAssertEqual(item.menuRowValue(at: 0), "72")
+        let menu = await controller.makeLifecycleMenu(forManagedItem: item)
+        let titles = menu.items.map(\.title)
+        let usage = try XCTUnwrap(menu.items.first(where: { $0.title.hasPrefix("Usage:") }))
+        XCTAssertEqual(usage.title, "Usage: 72\(ValueFreshness.staleMarker)")
+        XCTAssertEqual(usage.accessibilityLabel(), "Usage, 72, stale, refreshing")
+        XCTAssertTrue(titles.contains("State: running"))
+        XCTAssertTrue(titles.contains("Stale: yes"))
+        XCTAssertFalse(titles.contains("Delay: scheduler"))
 
-        let settled = await waitUntil { await item.runtimeSnapshot().fullOutput == "99" }
+        let collapsed = await controller.makeCollapsedMenu()
+        let collapsedRow = try XCTUnwrap(collapsed.items.first(where: { $0.submenu != nil }))
+        XCTAssertEqual(collapsedRow.title, "72\(ValueFreshness.staleMarker)")
+        XCTAssertEqual(collapsedRow.accessibilityLabel(), "72, stale, refreshing")
+
+        let settled = await waitUntil { item.renderedTitle == "99" }
         XCTAssertTrue(settled)
-        XCTAssertEqual(item.renderedTitle, "99")
         XCTAssertEqual(item.renderedAccessibilityLabel, "99, fresh")
     }
 
@@ -366,6 +371,41 @@ final class ManagedItemFreshnessTests: XCTestCase {
     }
 
     @MainActor
+    func testSharedConsumerAdoptsTheSameSuccessTextAndTimestamp() async throws {
+        let clock = TestItemClock()
+        let registry = CommandSourceRegistry()
+        let hold = path("shared-adopt")
+        let command = "if [ ! -e '\(hold.path)' ]; then printf '72'; touch '\(hold.path)'; else printf '99'; fi"
+        let short = makeItem(
+            config: ItemConfig(name: "short", run: command, interval: .scheduled(60)),
+            clock: clock,
+            sourceRegistry: registry
+        )
+        let long = makeItem(
+            config: ItemConfig(name: "long", run: command, interval: .scheduled(300)),
+            clock: clock,
+            sourceRegistry: registry
+        )
+
+        short.refreshNow()
+        long.refreshNow()
+        let ready = await waitUntil { short.renderedTitle == "72" && long.renderedTitle == "72" }
+        XCTAssertTrue(ready)
+        XCTAssertEqual(registry.sourceCount, 1)
+
+        short.refreshNow()
+        let updated = await waitUntil { short.renderedTitle == "99" }
+        XCTAssertTrue(updated)
+
+        let longSnapshot = await long.runtimeSnapshot()
+        let shortSnapshot = await short.runtimeSnapshot()
+        XCTAssertEqual(longSnapshot.fullOutput, "99")
+        XCTAssertEqual(long.renderedTitle, "99")
+        XCTAssertEqual(longSnapshot.lastUpdatedAt, shortSnapshot.lastUpdatedAt)
+        XCTAssertEqual(longSnapshot.freshness.state, .fresh)
+    }
+
+    @MainActor
     private func assertSharedFreshness(
         firstInterval: TimeInterval,
         secondInterval: TimeInterval,
@@ -404,4 +444,47 @@ final class ManagedItemFreshnessTests: XCTestCase {
         XCTAssertEqual(firstSnapshot.freshness.state, expectedShort)
         XCTAssertEqual(secondSnapshot.freshness.state, expectedLong)
     }
+}
+
+@MainActor
+private final class FreshnessItemFactory: ManagedItemFactory {
+    let clock: TestItemClock
+    let scheduler: CommandScheduler
+    let sourceRegistry: CommandSourceRegistry
+    private(set) var created: [ManagedItem] = []
+
+    init(
+        clock: TestItemClock,
+        scheduler: CommandScheduler,
+        sourceRegistry: CommandSourceRegistry = CommandSourceRegistry()
+    ) {
+        self.clock = clock
+        self.scheduler = scheduler
+        self.sourceRegistry = sourceRegistry
+    }
+
+    func make(
+        config: ItemConfig,
+        menuDelegate: StatusItemMenuDelegate,
+        initiallyVisible: Bool
+    ) -> any ManagedItemLifecycle {
+        let item = ManagedItem(
+            config: config,
+            menuDelegate: menuDelegate,
+            initiallyVisible: initiallyVisible,
+            scheduler: scheduler,
+            sourceRegistry: sourceRegistry,
+            now: { self.clock.now() },
+            statusItemFactory: { nil }
+        )
+        created.append(item)
+        return item
+    }
+}
+
+@MainActor
+private final class FreshnessStatusItemHost: StatusItemHost {
+    func makeStatusItem() -> NSStatusItem? { NSStatusItem() }
+    func removeStatusItem(_ item: NSStatusItem) { item.menu = nil }
+    func present(menu: NSMenu, on statusItem: NSStatusItem) {}
 }
