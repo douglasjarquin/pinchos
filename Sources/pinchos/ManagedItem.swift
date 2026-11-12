@@ -355,13 +355,15 @@ final class ManagedItem: ManagedItemLifecycle {
     func commitPreparedUpdate() {
         guard case .updateReady(let pendingUpdate) = lifecycle else { return }
         // The item stays in `updateReady` until the new configuration is fully
-        // installed, so restarting menu-row sources below registers their
-        // timers without starting an immediate refresh.
+        // installed. `requestMenuRowRefresh` no-ops until `.live`, so new or
+        // changed cached rows are requested after that flip. Rows whose source
+        // the registry kept are seeded instead of refreshed.
         commandConfig = pendingUpdate.commandConfig
         if let primarySource = pendingUpdate.primarySource {
             self.primarySource = primarySource
             primarySourceLease = pendingUpdate.primarySourceLease!
         }
+        var rowsToRefreshAfterLive: [Int] = []
         if pendingUpdate.menuRowsChanged {
             let incomingSources = pendingUpdate.menuRowSources ?? Self.makeMenuRowSourceLeases(
                 for: commandConfig.menu,
@@ -371,13 +373,13 @@ final class ManagedItem: ManagedItemLifecycle {
                 clock: sourceClock
             ).mapValues(\.source)
             var carried: [Int: CachedValue] = [:]
-            var retainedIndexes: [Int] = []
+            var retainedIndexes: Set<Int> = []
             for (newIndex, newSource) in incomingSources {
-                guard menuRowSources.contains(where: { $0.value === newSource }) else { continue }
-                retainedIndexes.append(newIndex)
-                if let old = menuRowSources.first(where: { $0.value === newSource }),
-                   let cached = menuRowCaches[old.key] {
-                    carried[newIndex] = cached
+                if let old = menuRowSources.first(where: { $0.value === newSource }) {
+                    retainedIndexes.insert(newIndex)
+                    if let cached = menuRowCaches[old.key] {
+                        carried[newIndex] = cached
+                    }
                 }
             }
             menuRows = commandConfig.menu
@@ -385,9 +387,15 @@ final class ManagedItem: ManagedItemLifecycle {
             menuRowSources = incomingSources
             menuRowSourceLeases = pendingUpdate.menuRowSourceLeases ?? [:]
             menuRowCaches = carried
-            startMenuRowSources()
-            for index in retainedIndexes {
-                seedMenuRowCache(at: index)
+            cancelMenuRowTimers()
+            for (index, _) in incomingSources {
+                if retainedIndexes.contains(index) {
+                    seedMenuRowCache(at: index)
+                    registerMenuRowTimer(at: index, initialDelay: menuRows[index].cache ?? 0)
+                } else {
+                    registerMenuRowTimer(at: index)
+                    rowsToRefreshAfterLive.append(index)
+                }
             }
         }
         applyIcon()
@@ -399,6 +407,9 @@ final class ManagedItem: ManagedItemLifecycle {
             requestPresentationUpdate()
         }
         lifecycle = .live
+        for index in rowsToRefreshAfterLive {
+            requestMenuRowRefresh(at: index)
+        }
     }
 
     func prepareRemoval(deadline: ContinuousClock.Instant = LifecycleDeadline.makeInstant()) async {
@@ -559,16 +570,20 @@ final class ManagedItem: ManagedItemLifecycle {
         cancelMenuRowTimers()
         for (index, source) in menuRowSources {
             requestMenuRowRefresh(at: index, source: source)
-            guard let interval = menuRows[index].cache else { continue }
-            let token = CommandScheduler.ItemToken()
-            menuRowTimerTokens[index] = token
-            let scheduler = self.scheduler
-            Task { [weak self] in
-                await scheduler.registerRecurring(token: token, interval: interval, initialDelay: interval) { [weak self] in
-                    let item = self
-                    Task { @MainActor in
-                        item?.requestMenuRowRefresh(at: index)
-                    }
+            registerMenuRowTimer(at: index)
+        }
+    }
+
+    private func registerMenuRowTimer(at index: Int, initialDelay: TimeInterval = 0) {
+        guard menuRows.indices.contains(index), let interval = menuRows[index].cache else { return }
+        let token = CommandScheduler.ItemToken()
+        menuRowTimerTokens[index] = token
+        let scheduler = self.scheduler
+        Task { [weak self] in
+            await scheduler.registerRecurring(token: token, interval: interval, initialDelay: initialDelay) { [weak self] in
+                let item = self
+                Task { @MainActor in
+                    item?.requestMenuRowRefresh(at: index)
                 }
             }
         }

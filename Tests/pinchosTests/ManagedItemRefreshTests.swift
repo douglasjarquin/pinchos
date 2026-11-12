@@ -66,12 +66,13 @@ final class ManagedItemRefreshTests: XCTestCase {
         config: ItemConfig,
         clock: TestItemClock = TestItemClock(),
         scheduler: CommandScheduler = CommandScheduler(),
-        sourceRegistry: CommandSourceRegistry = CommandSourceRegistry()
+        sourceRegistry: CommandSourceRegistry = CommandSourceRegistry(),
+        initiallyVisible: Bool = false
     ) -> ManagedItem {
         let item = ManagedItem(
             config: config,
             menuDelegate: RefreshTestMenuDelegate(),
-            initiallyVisible: false,
+            initiallyVisible: initiallyVisible,
             scheduler: scheduler,
             sourceRegistry: sourceRegistry,
             now: { clock.now() },
@@ -486,6 +487,113 @@ final class ManagedItemRefreshTests: XCTestCase {
         )
         XCTAssertEqual(item.menuRowValue(at: 0), "kept")
         XCTAssertEqual(item.menuRowRefreshTaskCountForTesting, 0)
+    }
+
+    @MainActor
+    func testReloadRefreshesNewAndChangedCachedRowsOnceAndLeavesRetainedIdle() async throws {
+        let keptLog = path("reload-kept.log")
+        let changedLog = path("reload-changed.log")
+        let newLog = path("reload-new.log")
+        let clock = TestItemClock()
+        let kept = counting(keptLog, output: "kept")
+        let item = makeItem(
+            config: ItemConfig(
+                name: "item",
+                run: "printf primary",
+                interval: .manual,
+                menu: [
+                    MenuRowConfig(label: "Kept", run: kept, cache: 60),
+                    MenuRowConfig(label: "Old", run: "printf old", cache: 60)
+                ]
+            ),
+            clock: clock
+        )
+
+        _ = item.menuRowValue(at: 0)
+        let first = await waitUntil { item.menuRowValue(at: 0) == "kept" }
+        XCTAssertTrue(first)
+        let idle = await waitForMenuRowIdle(item)
+        XCTAssertTrue(idle)
+        XCTAssertEqual(lineCount(keptLog), 1)
+
+        await item.prepareUpdate(config: ItemConfig(
+            name: "item",
+            run: "printf primary",
+            interval: .manual,
+            menu: [
+                MenuRowConfig(label: "Kept", run: kept, cache: 60),
+                MenuRowConfig(label: "Changed", run: counting(changedLog, output: "changed"), cache: 60),
+                MenuRowConfig(label: "New", run: counting(newLog, output: "new"), cache: 60)
+            ]
+        ))
+        item.commitPreparedUpdate()
+
+        let changedAndNew = await waitUntil {
+            self.lineCount(changedLog) == 1 && self.lineCount(newLog) == 1
+        }
+        XCTAssertTrue(changedAndNew, "changed or new cached row did not refresh after reload")
+        let idleAfter = await waitForMenuRowIdle(item)
+        XCTAssertTrue(idleAfter)
+        XCTAssertEqual(lineCount(keptLog), 1, "a retained cached row refreshed on reload")
+        XCTAssertEqual(lineCount(changedLog), 1, "a changed cached row did not run exactly once")
+        XCTAssertEqual(lineCount(newLog), 1, "a new cached row did not run exactly once")
+        XCTAssertEqual(item.menuRowValue(at: 0), "kept")
+
+        for _ in 0..<8 {
+            _ = item.menuRowValue(at: 0)
+        }
+        XCTAssertEqual(lineCount(keptLog), 1, "a retained row lost its retry gate after reload")
+        XCTAssertEqual(item.menuRowRefreshTaskCountForTesting, 0)
+    }
+
+    @MainActor
+    func testStartupRefreshesPrimaryAndCachedRowOnce() async throws {
+        let primaryLog = path("startup-primary.log")
+        let rowLog = path("startup-row.log")
+        let item = makeItem(
+            config: ItemConfig(
+                name: "item",
+                run: counting(primaryLog, output: "primary"),
+                interval: .manual,
+                menu: [MenuRowConfig(label: "Cached", run: counting(rowLog, output: "row"), cache: 60)]
+            ),
+            initiallyVisible: true
+        )
+
+        let started = await waitUntil {
+            self.lineCount(primaryLog) == 1 && item.menuRowValue(at: 0) == "row"
+        }
+        XCTAssertTrue(started)
+        let idle = await waitForMenuRowIdle(item)
+        XCTAssertTrue(idle)
+        try? await Task.sleep(for: .milliseconds(200))
+        XCTAssertEqual(lineCount(primaryLog), 1, "startup ran the primary more than once")
+        XCTAssertEqual(lineCount(rowLog), 1, "startup ran the cached row more than once")
+    }
+
+    @MainActor
+    func testActivateRefreshesPrimaryAndCachedRowOnce() async throws {
+        let primaryLog = path("activate-primary.log")
+        let rowLog = path("activate-row.log")
+        let item = makeItem(
+            config: ItemConfig(
+                name: "item",
+                run: counting(primaryLog, output: "primary"),
+                interval: .manual,
+                menu: [MenuRowConfig(label: "Cached", run: counting(rowLog, output: "row"), cache: 60)]
+            )
+        )
+
+        item.activate()
+        let started = await waitUntil {
+            self.lineCount(primaryLog) == 1 && item.menuRowValue(at: 0) == "row"
+        }
+        XCTAssertTrue(started)
+        let idle = await waitForMenuRowIdle(item)
+        XCTAssertTrue(idle)
+        try? await Task.sleep(for: .milliseconds(200))
+        XCTAssertEqual(lineCount(primaryLog), 1, "activate ran the primary more than once")
+        XCTAssertEqual(lineCount(rowLog), 1, "activate ran the cached row more than once")
     }
 
     @MainActor
