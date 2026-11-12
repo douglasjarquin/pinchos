@@ -3,7 +3,7 @@
 The canonical entrypoint is `mise run verify`; the fenced `verify` block below is the machine-readable contract.
 The Swift checks it runs are the ones [`.github/workflows/verify.yml`](.github/workflows/verify.yml) runs on GitHub's `macos-26` runner image.
 That runner image is distinct from the macOS 14 deployment minimum in `Package.swift`.
-The workflow runs on pull requests and pushes. Site steps apply only when `site/` or `recipes/` changed.
+The workflow runs on pull requests and on pushes to `main`. Site steps apply only when `site/` or `recipes/` changed.
 
 ```verify
 entrypoint = "mise run verify"
