@@ -68,13 +68,16 @@ final class ManagedItemLifecycleTests: XCTestCase {
     }
 
     @MainActor
-    private func makeItem(config: ItemConfig) -> ManagedItem {
+    private func makeItem(
+        config: ItemConfig,
+        sourceRegistry: CommandSourceRegistry = CommandSourceRegistry()
+    ) -> ManagedItem {
         let item = ManagedItem(
             config: config,
             menuDelegate: NoopMenuDelegate(),
             initiallyVisible: false,
             scheduler: CommandScheduler(),
-            sourceRegistry: CommandSourceRegistry(),
+            sourceRegistry: sourceRegistry,
             statusItemFactory: { nil }
         )
         addTeardownBlock { @MainActor in
@@ -276,6 +279,64 @@ final class ManagedItemLifecycleTests: XCTestCase {
 
         try await assertRetired(item)
         XCTAssertFalse(exists(marker("updated")))
+    }
+
+    @MainActor
+    func testRemovalWhileUpdateIsSettlingReleasesTheUpdatesSources() async throws {
+        let registry = CommandSourceRegistry()
+        let item = makeLeaseHoldingItem(registry: registry)
+        let settlement = Latch()
+        item.cancellationSettlementDelayForTesting = { role in
+            if role == "primary" {
+                await settlement.wait()
+            }
+        }
+
+        let update = Task { @MainActor in
+            await item.prepareUpdate(config: self.leaseChangingConfig())
+        }
+        let updateSettling = await waitUntil { await settlement.arrivals == 1 }
+        XCTAssertTrue(updateSettling, "the update never reached settlement")
+        let removal = Task { @MainActor in await item.prepareRemoval() }
+        await settlement.open()
+        await update.value
+        await removal.value
+        item.cancellationSettlementDelayForTesting = nil
+        item.commitRemoval()
+
+        XCTAssertEqual(registry.sourceCount, 0, "a dropped update kept its command sources registered")
+    }
+
+    @MainActor
+    func testRemovalFromPreparedUpdateReleasesTheUpdatesSources() async throws {
+        let registry = CommandSourceRegistry()
+        let item = makeLeaseHoldingItem(registry: registry)
+
+        await item.prepareUpdate(config: leaseChangingConfig())
+        await item.prepareRemoval()
+        item.commitRemoval()
+
+        XCTAssertEqual(registry.sourceCount, 0, "a discarded prepared update kept its command sources registered")
+    }
+
+    @MainActor
+    private func makeLeaseHoldingItem(registry: CommandSourceRegistry) -> ManagedItem {
+        makeItem(
+            config: config(
+                run: "printf old",
+                menu: [MenuRowConfig(label: "Old", run: "printf old-row", cache: 60)]
+            ),
+            sourceRegistry: registry
+        )
+    }
+
+    /// Changes both the primary command and a cached menu row, so the update
+    /// acquires a replacement primary source and replacement row sources.
+    private func leaseChangingConfig() -> ItemConfig {
+        config(
+            run: "printf new",
+            menu: [MenuRowConfig(label: "New", run: "printf new-row", cache: 60)]
+        )
     }
 
     @MainActor

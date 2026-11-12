@@ -323,10 +323,7 @@ final class ManagedItem: ManagedItemLifecycle {
             }
         )
 
-        // Removal may have begun while this update was settling; it owns the
-        // item from then on, so the prepared update is dropped.
-        guard case .preparingUpdate = lifecycle else { return }
-        lifecycle = .updateReady(PendingUpdate(
+        let pendingUpdate = PendingUpdate(
             commandConfig: newCommandConfig,
             primarySource: replacementPrimarySource,
             menuRowRunners: replacementMenuRowRunners,
@@ -336,7 +333,25 @@ final class ManagedItem: ManagedItemLifecycle {
             menuRowsChanged: menuRowsChanged,
             timerNeedsRestart: timerNeedsRestart,
             presentationNeedsUpdate: presentationNeedsUpdate
-        ))
+        )
+        // Removal may have begun while this update was settling; it owns the
+        // item from then on, so the prepared update is dropped.
+        guard case .preparingUpdate = lifecycle else {
+            releaseSources(of: pendingUpdate)
+            return
+        }
+        lifecycle = .updateReady(pendingUpdate)
+    }
+
+    /// Releases the replacement sources a prepared update acquired, for an
+    /// update that will never be committed.
+    private func releaseSources(of pendingUpdate: PendingUpdate) {
+        if let lease = pendingUpdate.primarySourceLease {
+            sourceRegistry.release(lease)
+        }
+        for lease in (pendingUpdate.menuRowSourceLeases ?? [:]).values {
+            sourceRegistry.release(lease)
+        }
     }
 
     func commitPreparedUpdate() {
@@ -376,7 +391,10 @@ final class ManagedItem: ManagedItemLifecycle {
 
     func prepareRemoval(deadline: ContinuousClock.Instant = LifecycleDeadline.makeInstant()) async {
         switch lifecycle {
-        case .live, .preparingUpdate, .updateReady:
+        case .updateReady(let pendingUpdate):
+            releaseSources(of: pendingUpdate)
+            lifecycle = .preparingRemoval
+        case .live, .preparingUpdate:
             lifecycle = .preparingRemoval
         case .preparingRemoval, .retired:
             return
