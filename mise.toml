@@ -11,7 +11,7 @@ description = "Run the Swift package tests"
 run = "swift test"
 
 [tasks.verify]
-description = "Run the canonical verification checks from VERIFY.md"
+description = "Canonical verification: debug build, tests against .build/debug/pinchos, then release build"
 run = "swift build && swift test && swift build -c release"
 
 [tasks."site:install"]

@@ -25,43 +25,33 @@ jobs:
       - uses: actions/checkout@v4
       - name: swift build
         run: swift build
-      - name: Reproduce leftover-release test binary selection
+      - name: Plant leftover release binary
         run: |
           set -euo pipefail
           DEBUG_BIN="${PWD}/.build/debug/pinchos"
           RELEASE_BIN="${PWD}/.build/release/pinchos"
-          MARKER="${RUNNER_TEMP}/pinchos-stale-selection.log"
           test -x "$DEBUG_BIN"
           mkdir -p .build/release
-          cat > "$RELEASE_BIN" <<EOF
+          cat > "$RELEASE_BIN" <<'EOF'
           #!/bin/sh
-          printf 'STALE_RELEASE_SELECTED\n' >> '${MARKER}'
-          exec '${DEBUG_BIN}' "\$@"
+          echo "stale leftover .build/release/pinchos must not be selected by tests" >&2
+          exit 99
           EOF
           chmod +x "$RELEASE_BIN"
           ls -l "$DEBUG_BIN" "$RELEASE_BIN"
           python3 - <<'PY'
           import os
           root = os.getcwd()
-          candidates = [
-              os.path.join(root, ".build/release/pinchos"),
-              os.path.join(root, ".build/debug/pinchos"),
-          ]
-          selected = next(p for p in candidates if os.access(p, os.X_OK))
-          print(f"old_pinchosExecutable_selected={selected}")
-          if os.path.basename(os.path.dirname(selected)) != "release":
-              raise SystemExit(
-                  "expected old pinchosExecutable() rule to select leftover release"
-              )
+          debug = os.path.join(root, ".build", "debug", "pinchos")
+          release = os.path.join(root, ".build", "release", "pinchos")
+          print(f"debug={debug} executable={os.access(debug, os.X_OK)}")
+          print(f"release={release} executable={os.access(release, os.X_OK)}")
+          if not os.access(debug, os.X_OK):
+              raise SystemExit("debug binary missing after swift build")
+          if not os.access(release, os.X_OK):
+              raise SystemExit("leftover release stub was not planted")
+          print("contract=select_.build/debug/pinchos_ignore_leftover_release")
           PY
-          : > "$MARKER"
-          swift test --filter testNormalRunPreservesConfiguredExitCode
-          if ! grep -q STALE_RELEASE_SELECTED "$MARKER"; then
-            echo "expected SignalIntegrationTests to launch leftover .build/release/pinchos"
-            exit 1
-          fi
-          echo "BEFORE: executable-level tests launched leftover release binary"
-          cat "$MARKER"
       - name: swift test
         run: swift test
       - name: swift build (release)
