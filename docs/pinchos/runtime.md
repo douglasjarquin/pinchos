@@ -52,6 +52,24 @@ ManagedItem keeps at most one apply-task per menu row (`menuRowRefreshTasks`) an
 Reload, removal, and shutdown cancel obsolete work and cannot execute stale actions.
 Last-good values, FIFO scheduler admission, process limits, and cancellation stay as they are.
 
+## Freshness and failure presentation
+
+Presentation interprets existing source timestamps.
+It does not add a polling loop, a trigger subsystem, or a public freshness key.
+
+Each consumer uses the shared last-success timestamp against its own window: `interval` for the primary value, `cache` for a submenu row.
+Manual consumers omit a window and do not age.
+Registration order cannot change that: two consumers of one command with 60s and 300s windows, created in either order, still diverge at 90s.
+
+The fixed states are unavailable, fresh, age-stale, queued/refreshing, failed-with-value, and failed-without-value.
+Last-good text stays visible while a refresh is queued or running and after a failed command.
+Age expiry and a missed/delayed scheduler tick share the stale marker and spoken "stale, scheduler delayed"; a failed command uses the warning marker and keeps the last-good value.
+Initial failure does not invent a success timestamp or value.
+The same interpretation is used for the menu-bar title, submenu values, collapsed first-level rows, VoiceOver labels, and diagnostic snapshots (`State`, `Stale`, and `Delay: scheduler` when the scheduler has not attempted since the value aged out).
+
+Scalar age starts at command success in Pinchos.
+Upstream observation time is not inferred from Remainder or any other provider.
+
 ## Live reload and recovery
 
 Valid changes apply incrementally while preserving unchanged source/cache identity.

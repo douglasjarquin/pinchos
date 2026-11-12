@@ -307,6 +307,44 @@ final class StatusItemControllerTests: XCTestCase {
         XCTAssertTrue(titles.contains("Last exit code: 7"))
         XCTAssertTrue(titles.contains("stderr: diagnostic"))
         XCTAssertTrue(titles.contains("Skipped ticks: 2"))
+        XCTAssertFalse(titles.contains("Delay: scheduler"))
+    }
+
+    func testLifecycleMenuShowsSchedulerDelayForAgeStaleValue() async throws {
+        let factory = FakeManagedItemFactory()
+        let controller = makeController(factory: factory)
+        addTeardownBlock { @MainActor in
+            await controller.shutdown()
+        }
+
+        await controller.apply(config: PinchosConfig(items: [item("alpha")]))
+        let success = Date(timeIntervalSince1970: 1_700_000_000)
+        factory.created[0].runtimeSnapshotValue = ItemRuntimeSnapshot(
+            isRunning: false,
+            fullOutput: "72%",
+            lastAttemptedAt: success,
+            lastUpdatedAt: success,
+            lastExecution: CommandExecution(
+                terminalReason: .exited(code: 0),
+                stdout: "72%",
+                stderr: "",
+                stdoutBytesRead: 3,
+                stderrBytesRead: 0,
+                stdoutTruncated: false,
+                stderrTruncated: false,
+                duration: 0.1
+            ),
+            staleAfter: 60,
+            skippedRefreshes: 0,
+            now: success.addingTimeInterval(180)
+        )
+
+        let menu = await controller.makeLifecycleMenu(forManagedItem: factory.created[0])
+        let titles = menu.items.map(\.title)
+        XCTAssertTrue(titles.contains("State: stale"))
+        XCTAssertTrue(titles.contains("Stale: yes"))
+        XCTAssertTrue(titles.contains("Delay: scheduler"))
+        XCTAssertTrue(titles.contains("Last success: 2023-11-14T22:13:20Z"))
     }
 
     func testCompactLifecycleMenuShowsOnlyActions() async throws {
@@ -352,6 +390,7 @@ final class StatusItemControllerTests: XCTestCase {
         XCTAssertFalse(titles.contains(where: { $0.hasPrefix("Skipped ticks:") }))
         XCTAssertFalse(titles.contains(where: { $0.hasPrefix("Scheduler:") }))
         XCTAssertFalse(titles.contains(where: { $0.hasPrefix("Copy Full") }))
+        XCTAssertFalse(titles.contains("Delay: scheduler"))
         XCTAssertFalse(titles.contains("full \u{240A} value \u{b7} failed \u{b7} showing last good value"))
     }
 

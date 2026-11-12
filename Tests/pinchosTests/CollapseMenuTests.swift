@@ -16,6 +16,7 @@ private final class CollapseFakeItem: ManagedItemLifecycle {
     /// first-level row and the value shown in its menu). `nil` means "not yet
     /// run", which collapses the row back to the item name.
     var runtimeValue: String?
+    var runtimeSnapshotValue: ItemRuntimeSnapshot?
     private(set) var runtimeSnapshotStarted = false
 
     init(config: ItemConfig) {
@@ -63,6 +64,9 @@ private final class CollapseFakeItem: ManagedItemLifecycle {
             await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
                 runtimeSnapshotRelease = continuation
             }
+        }
+        if let runtimeSnapshotValue {
+            return runtimeSnapshotValue
         }
         return ItemRuntimeSnapshot(
             isRunning: false,
@@ -199,6 +203,40 @@ final class CollapseMenuTests: XCTestCase {
             XCTAssertNil(submenu.items.first(where: { $0.title == "Quit Pinchos" }))
         }
         XCTAssertNotNil(collapsed.items.first(where: { $0.title == "Expand Pinchos" }))
+    }
+
+    func testCollapsedFirstLevelMirrorsStaleMarkerAndSpokenState() async throws {
+        let factory = CollapseFakeFactory()
+        let host = CollapseFakeStatusItemHost()
+        let controller = makeController(factory: factory, host: host)
+        addTeardownBlock { @MainActor in await controller.shutdown() }
+
+        await controller.apply(config: PinchosConfig(items: [command("disk")]))
+        let attempt = Date(timeIntervalSince1970: 1_700_000_000)
+        factory.created[0].runtimeSnapshotValue = ItemRuntimeSnapshot(
+            isRunning: false,
+            fullOutput: "12",
+            lastAttemptedAt: attempt,
+            lastUpdatedAt: attempt,
+            lastExecution: CommandExecution(
+                terminalReason: .exited(code: 0),
+                stdout: "12",
+                stderr: "",
+                stdoutBytesRead: 2,
+                stderrBytesRead: 0,
+                stdoutTruncated: false,
+                stderrTruncated: false,
+                duration: 0.1
+            ),
+            staleAfter: 60,
+            skippedRefreshes: 0,
+            now: attempt.addingTimeInterval(180)
+        )
+
+        let collapsed = await controller.makeCollapsedMenu()
+        let row = try XCTUnwrap(collapsed.items.first(where: { $0.submenu != nil }))
+        XCTAssertEqual(row.title, "12\(ValueFreshness.staleMarker)")
+        XCTAssertEqual(row.accessibilityLabel(), "12, stale, scheduler delayed")
     }
 
     func testCollapsedFirstLevelShowsCommandValueInsteadOfName() async throws {

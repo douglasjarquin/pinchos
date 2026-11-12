@@ -63,6 +63,7 @@ final class ManagedItem: ManagedItemLifecycle {
     private var lastAttemptedAt: Date?
     private var lastUpdatedAt: Date?
     private var lastSuccessfulTitle: String?
+    private(set) var renderedAccessibilityLabel = "unavailable"
     private var statusItemSuppressed = false
 
     /// Test-only seam that pauses a queued action invocation after it has been
@@ -766,7 +767,7 @@ final class ManagedItem: ManagedItemLifecycle {
         }
         let runnerSnapshot = await primarySource.runnerSnapshot()
         guard !isRetired, generation == configurationGeneration else { return }
-        let snapshot = makeRuntimeSnapshot(runnerSnapshot)
+        let snapshot = makeRuntimeSnapshot(runnerSnapshot, cached: cached)
         renderPresentation(snapshot)
     }
 
@@ -778,56 +779,51 @@ final class ManagedItem: ManagedItemLifecycle {
 
     private func updatePresentation() async {
         let runnerSnapshot = await primarySource.runnerSnapshot()
+        let cached = await primarySource.snapshot()
         guard !isRetired else { return }
-        let snapshot = makeRuntimeSnapshot(runnerSnapshot)
+        let snapshot = makeRuntimeSnapshot(runnerSnapshot, cached: cached)
         renderPresentation(snapshot)
     }
 
     private func renderPresentation(_ snapshot: ItemRuntimeSnapshot) {
         let baseTitle: String
-        switch snapshot.status {
-        case .fresh, .stale:
+        switch snapshot.freshness.state {
+        case .fresh, .ageStale, .failedWithValue:
             baseTitle = lastSuccessfulTitle ?? "–"
-        case .warning:
-            baseTitle = lastSuccessfulTitle ?? "–"
-        case .error:
-            baseTitle = lastSuccessfulTitle ?? "–"
-        case .running:
+        case .refreshing:
             baseTitle = lastSuccessfulTitle ?? renderedTitle
-        case .unavailable:
+        case .failedWithoutValue, .unavailable:
             baseTitle = "–"
         }
 
-        let marker: String
-        switch snapshot.status {
-        case .stale:
-            marker = " ⌛︎"
-        case .warning, .error, .unavailable:
-            marker = " ⚠︎"
-        case .running, .fresh:
-            marker = ""
-        }
-        setTitle(truncateTitle(baseTitle, maxLength: 60) + marker)
+        renderedAccessibilityLabel = snapshot.freshness.spokenDescription(valueText: lastSuccessfulTitle)
+        setTitle(truncateTitle(baseTitle, maxLength: 60) + snapshot.freshness.marker)
         applyIcon(source: commandConfig.iconSource)
         setVisibility(true)
     }
 
-    private func makeRuntimeSnapshot(_ runnerSnapshot: CommandRunnerSnapshot) -> ItemRuntimeSnapshot {
-        ItemRuntimeSnapshot(
+    private func makeRuntimeSnapshot(
+        _ runnerSnapshot: CommandRunnerSnapshot,
+        cached: CachedValue? = nil
+    ) -> ItemRuntimeSnapshot {
+        let isRefreshing = runnerSnapshot.isRunning || cached?.state == .refreshing
+        return ItemRuntimeSnapshot(
             isRunning: runnerSnapshot.isRunning,
             fullOutput: lastSuccessfulOutput,
             lastAttemptedAt: lastAttemptedAt,
             lastUpdatedAt: lastUpdatedAt,
-            lastExecution: runnerSnapshot.lastExecution,
-            staleAfter: nil,
+            lastExecution: runnerSnapshot.lastExecution ?? cached?.lastExecution,
+            staleAfter: freshnessInterval(commandConfig.interval),
             skippedRefreshes: runnerSnapshot.skippedRefreshes,
-            now: now()
+            now: now(),
+            isRefreshing: isRefreshing
         )
     }
 
     func runtimeSnapshot() async -> ItemRuntimeSnapshot {
         let runnerSnapshot = await primarySource.runnerSnapshot()
-        let snapshot = makeRuntimeSnapshot(runnerSnapshot)
+        let cached = await primarySource.snapshot()
+        let snapshot = makeRuntimeSnapshot(runnerSnapshot, cached: cached)
         renderPresentation(snapshot)
         return snapshot
     }
@@ -840,6 +836,41 @@ final class ManagedItem: ManagedItemLifecycle {
         guard menuRows.indices.contains(index) else { return nil }
         requestMenuRowRefreshIfNeeded(at: index)
         return menuRows[index].value ?? menuRowCaches[index]?.value
+    }
+
+    func menuRowFreshness(at index: Int) -> ValueFreshness {
+        guard menuRows.indices.contains(index) else {
+            return ValueFreshness.interpret(
+                value: nil,
+                isRefreshing: false,
+                lastSuccessfulAt: nil,
+                lastAttemptedAt: nil,
+                lastExecutionFailed: false,
+                freshnessInterval: nil,
+                now: now()
+            )
+        }
+        requestMenuRowRefreshIfNeeded(at: index)
+        let cached = menuRowCaches[index]
+        let lastExecutionFailed = cached?.lastExecution.map { $0.terminalReason != .exited(code: 0) } ?? false
+        return ValueFreshness.interpret(
+            value: menuRows[index].value ?? cached?.value,
+            isRefreshing: menuRowRefreshTasks[index] != nil,
+            lastSuccessfulAt: cached?.lastSuccessfulAt,
+            lastAttemptedAt: cached?.lastAttemptedAt,
+            lastExecutionFailed: lastExecutionFailed,
+            freshnessInterval: menuRows[index].cache,
+            now: now()
+        )
+    }
+
+    private func freshnessInterval(_ interval: RefreshInterval) -> TimeInterval? {
+        switch interval {
+        case .scheduled(let value):
+            return value
+        case .manual:
+            return nil
+        }
     }
 
     var menuRowRefreshTaskCountForTesting: Int { menuRowRefreshTasks.count }
@@ -1006,6 +1037,7 @@ final class ManagedItem: ManagedItemLifecycle {
     private func applyDisplayedTitle() {
         renderedButtonTitle = renderedTitle
         statusItem?.button?.title = renderedTitle
+        statusItem?.button?.setAccessibilityLabel(renderedAccessibilityLabel)
     }
 
     private func setVisibility(_ visible: Bool) {

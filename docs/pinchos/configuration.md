@@ -55,7 +55,9 @@ The two icon keys are mutually exclusive.
 Every non-separator menu row needs a non-empty `label`.
 Use `value` for static text, `run` for a cached command value, and `action` for a clickable command.
 A row may combine `run` and `action`.
-`cache` is optional for a dynamic row; when present, it controls the row's freshness interval, while an omitted value makes the row manual-only.
+`cache` is optional for a dynamic row; when present, it is that row's freshness window against the shared command-success timestamp, while an omitted value makes the row manual-only and not age-stale.
+The item `interval` is the same kind of window for the primary value.
+Shared primary and menu commands keep one success timestamp; consumers with different windows can disagree on freshness without depending on who registered first.
 `separator = true` cannot be combined with any other row key.
 
 Opening a menu is synchronous and never waits on a command.
