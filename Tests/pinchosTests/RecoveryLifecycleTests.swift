@@ -1439,6 +1439,172 @@ final class RecoveryLifecycleTests: XCTestCase {
         try? FileManager.default.removeItem(at: root)
     }
 
+    func testUnrelatedChurnInWatchedAncestorDoesNotReattach() async throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("pinchos-watcher-ancestor-churn-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let configURL = root.appendingPathComponent("pinchos/pinchos.toml")
+        let attempts = CallbackCounter()
+        let changes = CallbackCounter()
+        let watcher = ConfigWatcher(
+            path: configURL.path,
+            onChange: { _ = changes.increment() },
+            onAttachAttempt: { _ = attempts.increment() }
+        )
+        defer {
+            watcher.stop()
+            try? FileManager.default.removeItem(at: root)
+        }
+
+        watcher.start()
+        try await Task.sleep(for: .milliseconds(150))
+        XCTAssertEqual(attempts.value, 1)
+
+        for index in 0..<5 {
+            let sibling = root.appendingPathComponent("unrelated-\(index).txt")
+            try "noise".write(to: sibling, atomically: false, encoding: .utf8)
+            try FileManager.default.removeItem(at: sibling)
+        }
+        try await Task.sleep(for: .milliseconds(400))
+
+        XCTAssertEqual(attempts.value, 1, "sibling churn that leaves the deepest ancestor unchanged must not reattach")
+        XCTAssertEqual(changes.value, 0)
+    }
+
+    func testStopWhileWatchingAncestorIgnoresLaterFileCreation() async throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("pinchos-watcher-stop-ancestor-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let configURL = root.appendingPathComponent("pinchos.toml")
+        let attempts = CallbackCounter()
+        let changes = CallbackCounter()
+        let watcher = ConfigWatcher(
+            path: configURL.path,
+            onChange: { _ = changes.increment() },
+            onAttachAttempt: { _ = attempts.increment() }
+        )
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        watcher.start()
+        try await Task.sleep(for: .milliseconds(150))
+        watcher.stop()
+        try await Task.sleep(for: .milliseconds(50))
+
+        try "value = 1".write(to: configURL, atomically: true, encoding: .utf8)
+        try await Task.sleep(for: .milliseconds(500))
+
+        XCTAssertEqual(attempts.value, 1, "a stopped watcher must not reattach on ancestor events")
+        XCTAssertEqual(changes.value, 0, "a stopped watcher must not report a change")
+    }
+
+    func testStopWhileBackingOffCancelsRetry() async throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("pinchos-watcher-stop-backoff-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let configURL = root.appendingPathComponent("pinchos.toml")
+        try "value = 1".write(to: configURL, atomically: false, encoding: .utf8)
+        // The file exists but cannot be opened, so every attach falls into backoff.
+        try FileManager.default.setAttributes([.posixPermissions: 0], ofItemAtPath: configURL.path)
+        let attempts = CallbackCounter()
+        let changes = CallbackCounter()
+        let watcher = ConfigWatcher(
+            path: configURL.path,
+            onChange: { _ = changes.increment() },
+            backoffDelay: 0.05,
+            onAttachAttempt: { _ = attempts.increment() }
+        )
+        defer {
+            try? FileManager.default.setAttributes([.posixPermissions: 0o644], ofItemAtPath: configURL.path)
+            try? FileManager.default.removeItem(at: root)
+        }
+
+        watcher.start()
+        let deadline = Date().addingTimeInterval(3)
+        while Date() < deadline, attempts.value < 3 {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        XCTAssertGreaterThanOrEqual(attempts.value, 3, "an unopenable file should retry after each backoff delay")
+
+        watcher.stop()
+        try await Task.sleep(for: .milliseconds(50))
+        let attemptsAfterStop = attempts.value
+        try FileManager.default.setAttributes([.posixPermissions: 0o644], ofItemAtPath: configURL.path)
+        try await Task.sleep(for: .milliseconds(300))
+
+        XCTAssertEqual(attempts.value, attemptsAfterStop, "stop() must cancel the pending backoff retry")
+        XCTAssertEqual(changes.value, 0)
+    }
+
+    func testBackoffRetryAttachesOnceFileBecomesOpenable() async throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("pinchos-watcher-backoff-retry-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let configURL = root.appendingPathComponent("pinchos.toml")
+        try "value = 1".write(to: configURL, atomically: false, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0], ofItemAtPath: configURL.path)
+        let attempts = CallbackCounter()
+        let callback = expectation(description: "change after backoff retry")
+        let watcher = ConfigWatcher(
+            path: configURL.path,
+            onChange: { callback.fulfill() },
+            backoffDelay: 0.05,
+            onAttachAttempt: { _ = attempts.increment() }
+        )
+        defer {
+            watcher.stop()
+            try? FileManager.default.setAttributes([.posixPermissions: 0o644], ofItemAtPath: configURL.path)
+            try? FileManager.default.removeItem(at: root)
+        }
+
+        watcher.start()
+        let deadline = Date().addingTimeInterval(3)
+        while Date() < deadline, attempts.value < 2 {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        try FileManager.default.setAttributes([.posixPermissions: 0o644], ofItemAtPath: configURL.path)
+
+        await fulfillment(of: [callback], timeout: 3)
+        let attemptsAfterAttach = attempts.value
+        try await Task.sleep(for: .milliseconds(200))
+        XCTAssertEqual(attempts.value, attemptsAfterAttach, "a successful attach must end the backoff retries")
+    }
+
+    func testStartAfterStopAttachesAgain() async throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("pinchos-watcher-restart-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let configURL = root.appendingPathComponent("pinchos.toml")
+        try "initial".write(to: configURL, atomically: true, encoding: .utf8)
+        let attempts = CallbackCounter()
+        let changes = CallbackCounter()
+        let watcher = ConfigWatcher(
+            path: configURL.path,
+            onChange: { _ = changes.increment() },
+            onAttachAttempt: { _ = attempts.increment() }
+        )
+        defer {
+            watcher.stop()
+            try? FileManager.default.removeItem(at: root)
+        }
+
+        watcher.start()
+        try await Task.sleep(for: .milliseconds(400))
+        XCTAssertEqual(changes.value, 1, "attaching to an existing file reports one change")
+        watcher.stop()
+        watcher.start()
+        try await Task.sleep(for: .milliseconds(400))
+        XCTAssertEqual(attempts.value, 2, "start() after stop() must attach again")
+        XCTAssertEqual(changes.value, 2, "the new attachment reports its own change")
+
+        try "edited".write(to: configURL, atomically: false, encoding: .utf8)
+        let deadline = Date().addingTimeInterval(3)
+        while Date() < deadline, changes.value == 2 {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        try await Task.sleep(for: .milliseconds(400))
+        XCTAssertEqual(changes.value, 3, "the restarted watcher must report a later write exactly once")
+    }
+
     func testRepeatedStartStopDeleteRecreateKeepsDescriptorCountStable() async throws {
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent("pinchos-issue-51-descriptor-stress-\(UUID().uuidString)", isDirectory: true)
