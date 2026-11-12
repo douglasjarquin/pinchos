@@ -8,6 +8,36 @@ private final class RefreshTestMenuDelegate: StatusItemMenuDelegate {
     func showLifecycleMenu(for statusItem: NSStatusItem) {}
 }
 
+/// Completes in the same turn so a delay-0 cache timer would race a second run.
+private actor InstantSourceRunner: CommandSourceRunner {
+    private(set) var runCount = 0
+    private var lastExecution: CommandExecution?
+
+    func runIfIdle() async -> CommandRunOutcome {
+        runCount += 1
+        let execution = CommandExecution(
+            terminalReason: .exited(code: 0),
+            stdout: "instant\n",
+            stderr: "",
+            stdoutBytesRead: 8,
+            stderrBytesRead: 0,
+            stdoutTruncated: false,
+            stderrTruncated: false,
+            duration: 0
+        )
+        lastExecution = execution
+        return .completed(execution)
+    }
+
+    func awaitSettledExecution() async -> CommandExecution? { lastExecution }
+
+    func cancelActive() async {}
+
+    func snapshot() async -> CommandRunnerSnapshot {
+        CommandRunnerSnapshot(isRunning: false, lastExecution: lastExecution, skippedRefreshes: 0)
+    }
+}
+
 private final class TestItemClock: @unchecked Sendable {
     var date: Date
 
@@ -494,6 +524,7 @@ final class ManagedItemRefreshTests: XCTestCase {
         let keptLog = path("reload-kept.log")
         let changedLog = path("reload-changed.log")
         let newLog = path("reload-new.log")
+        let manualLog = path("reload-manual.log")
         let clock = TestItemClock()
         let kept = counting(keptLog, output: "kept")
         let item = makeItem(
@@ -523,7 +554,8 @@ final class ManagedItemRefreshTests: XCTestCase {
             menu: [
                 MenuRowConfig(label: "Kept", run: kept, cache: 60),
                 MenuRowConfig(label: "Changed", run: counting(changedLog, output: "changed"), cache: 60),
-                MenuRowConfig(label: "New", run: counting(newLog, output: "new"), cache: 60)
+                MenuRowConfig(label: "New", run: counting(newLog, output: "new"), cache: 60),
+                MenuRowConfig(label: "Manual", run: counting(manualLog, output: "manual"))
             ]
         ))
         item.commitPreparedUpdate()
@@ -537,13 +569,62 @@ final class ManagedItemRefreshTests: XCTestCase {
         XCTAssertEqual(lineCount(keptLog), 1, "a retained cached row refreshed on reload")
         XCTAssertEqual(lineCount(changedLog), 1, "a changed cached row did not run exactly once")
         XCTAssertEqual(lineCount(newLog), 1, "a new cached row did not run exactly once")
+        XCTAssertEqual(lineCount(manualLog), 0, "a new manual row ran on reload commit")
         XCTAssertEqual(item.menuRowValue(at: 0), "kept")
 
         for _ in 0..<8 {
             _ = item.menuRowValue(at: 0)
         }
         XCTAssertEqual(lineCount(keptLog), 1, "a retained row lost its retry gate after reload")
+        XCTAssertEqual(lineCount(manualLog), 0, "a new manual row ran after reload without an explicit request")
         XCTAssertEqual(item.menuRowRefreshTaskCountForTesting, 0)
+    }
+
+    @MainActor
+    func testReloadRunsNewCachedRowOnceWithInstantRunner() async throws {
+        let scheduler = CommandScheduler()
+        let sourceRegistry = CommandSourceRegistry()
+        let runner = InstantSourceRunner()
+        let command = "instant-reload-row"
+        let lease = sourceRegistry.acquire(
+            configuration: CommandSourceConfiguration(
+                command: command,
+                timeout: ItemConfig.defaultTimeout,
+                refreshPolicy: .scheduled(60),
+                staleAfter: 60
+            ),
+            scheduler: scheduler,
+            runner: runner
+        )
+        addTeardownBlock {
+            sourceRegistry.release(lease)
+        }
+        let item = makeItem(
+            config: ItemConfig(
+                name: "item",
+                run: "printf primary",
+                interval: .manual,
+                menu: [MenuRowConfig(label: "Old", run: "printf old", cache: 60)]
+            ),
+            scheduler: scheduler,
+            sourceRegistry: sourceRegistry
+        )
+
+        await item.prepareUpdate(config: ItemConfig(
+            name: "item",
+            run: "printf primary",
+            interval: .manual,
+            menu: [MenuRowConfig(label: "New", run: command, cache: 60)]
+        ))
+        item.commitPreparedUpdate()
+
+        let ran = await waitUntil { await runner.runCount == 1 }
+        XCTAssertTrue(ran, "new cached row with an instant runner did not refresh after reload")
+        let idle = await waitForMenuRowIdle(item)
+        XCTAssertTrue(idle)
+        try? await Task.sleep(for: .milliseconds(200))
+        let runCount = await runner.runCount
+        XCTAssertEqual(runCount, 1, "instant cached row ran more than once on reload")
     }
 
     @MainActor

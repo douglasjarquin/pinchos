@@ -58,6 +58,7 @@ Valid changes apply incrementally while preserving unchanged source/cache identi
 Added, removed, changed, and reordered items are reconciled under one concurrent lifecycle deadline.
 After a reload commits, a cached menu row whose source is new or changed refreshes once immediately.
 A row whose source the registry kept does not refresh on commit; it keeps its last settled value and the 30-second retry gate.
+A new or changed manual row does not run on commit; it first runs on the next menu open, Refresh Now, or equivalent explicit request.
 Malformed configuration leaves the last known-good items running and exposes recovery actions for creating, opening, reloading, or quitting.
 
 ## Removed development syntax
