@@ -342,20 +342,22 @@ struct PinchosCLI {
             }
         }
 
-        if executionPolicy.path.isEmpty {
-            reportFailure("execution environment", "execution PATH could not be composed")
-            problemCount += 1
+        reportSuccess(
+            "execution environment",
+            "PATH uses system plus Apple Silicon Homebrew directories"
+        )
+        var workingDirectoryIsDirectory = ObjCBool(false)
+        if fileManager.fileExists(
+            atPath: executionPolicy.workingDirectory,
+            isDirectory: &workingDirectoryIsDirectory
+        ), workingDirectoryIsDirectory.boolValue {
+            reportSuccess("execution environment", "working directory is available")
         } else {
-            reportSuccess(
+            reportFailure(
                 "execution environment",
-                "PATH uses system plus Apple Silicon Homebrew directories"
+                "working directory cannot be resolved: \(executionPolicy.workingDirectory)"
             )
-        }
-        if executionPolicy.home.isEmpty {
-            reportFailure("execution environment", "HOME could not be resolved")
             problemCount += 1
-        } else {
-            reportSuccess("execution environment", "HOME is available")
         }
 
         if let config {

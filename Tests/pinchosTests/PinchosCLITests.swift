@@ -419,6 +419,37 @@ final class PinchosCLITests: XCTestCase {
         XCTAssertFalse(combined.contains("/usr/bin:/bin:/usr/sbin:/sbin"))
     }
 
+    func testDoctorFailsWhenWorkingDirectoryIsMissing() async throws {
+        let root = try makeRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let configURL = root.appendingPathComponent("pinchos/pinchos.toml")
+        try FileManager.default.createDirectory(at: configURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try """
+        [item.clock]
+        run = "true"
+        """.write(to: configURL, atomically: true, encoding: .utf8)
+        let staleHome = root.appendingPathComponent("missing-home-\(UUID().uuidString)")
+        let policy = CommandExecutionPolicy(inheritedEnvironment: [
+            "PATH": "/usr/bin:/bin:/usr/sbin:/sbin",
+            "HOME": staleHome.path
+        ])
+        let capture = CLIOutputCapture()
+        let cli = PinchosCLI(
+            configPath: configURL.path,
+            output: capture.output,
+            executionPolicy: policy
+        )
+
+        let doctorCode = await cli.run(arguments: ["doctor"])
+
+        XCTAssertEqual(doctorCode, 4)
+        XCTAssertTrue(capture.stdout.contains("[PASS] execution environment: PATH uses system plus Apple Silicon Homebrew"))
+        XCTAssertTrue(capture.stdout.contains("[FAIL] execution environment"))
+        XCTAssertTrue(capture.stdout.contains("working directory cannot be resolved"))
+        XCTAssertTrue(capture.stdout.contains(staleHome.path))
+        XCTAssertFalse(capture.stdout.contains("[PASS] execution environment: working directory is available"))
+    }
+
     func testDoctorReportsAbsentToolsHelpfullyWithoutExecutingOrDumpingSecrets() async throws {
         let root = try makeRoot()
         defer { try? FileManager.default.removeItem(at: root) }

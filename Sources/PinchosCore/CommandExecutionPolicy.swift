@@ -73,12 +73,7 @@ public struct CommandExecutionPolicy: Equatable, Sendable {
                 environment[key] = value
             }
         }
-        if environment["HOME"] == nil {
-            let home = NSHomeDirectory()
-            if !home.isEmpty {
-                environment["HOME"] = home
-            }
-        }
+        environment["HOME"] = home
         if environment["USER"] == nil {
             let user = NSUserName()
             if !user.isEmpty {
@@ -105,8 +100,10 @@ public struct CommandExecutionPolicy: Equatable, Sendable {
             if command.hasPrefix("/") {
                 path = command
             } else {
-                path = URL(fileURLWithPath: command, relativeTo: URL(fileURLWithPath: workingDirectory))
-                    .standardizedFileURL.path
+                path = URL(
+                    fileURLWithPath: command,
+                    relativeTo: URL(fileURLWithPath: workingDirectory, isDirectory: true)
+                ).standardizedFileURL.path
             }
             return fileManager.isExecutableFile(atPath: path) ? path : nil
         }

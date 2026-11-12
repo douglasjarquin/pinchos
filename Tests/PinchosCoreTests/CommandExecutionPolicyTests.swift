@@ -80,4 +80,35 @@ final class CommandExecutionPolicyTests: XCTestCase {
         ])
         XCTAssertEqual(policy.resolveExecutable("./rel-tool"), tool.path)
     }
+
+    func testSpawnedHOMEAlwaysMatchesWorkingDirectory() {
+        let missingInherited = CommandExecutionPolicy(inheritedEnvironment: [:])
+        XCTAssertEqual(missingInherited.environment()["HOME"], missingInherited.workingDirectory)
+        XCTAssertEqual(missingInherited.workingDirectory, NSHomeDirectory())
+
+        let stale = "/definitely/missing/pinchos-home-\(UUID().uuidString)"
+        let staleInherited = CommandExecutionPolicy(inheritedEnvironment: ["HOME": stale])
+        XCTAssertEqual(staleInherited.environment()["HOME"], stale)
+        XCTAssertEqual(staleInherited.workingDirectory, stale)
+    }
+
+    func testRelativeExecutableResolvesAgainstHOMEEvenWhenHOMEDoesNotExist() throws {
+        let parent = FileManager.default.temporaryDirectory
+            .appendingPathComponent("pinchos-policy-missing-home-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: parent, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: parent) }
+        let decoy = parent.appendingPathComponent("rel-tool")
+        try "#!/bin/sh\nexit 0\n".write(to: decoy, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: decoy.path)
+        let missingHome = parent.appendingPathComponent("does-not-exist")
+
+        let policy = CommandExecutionPolicy(inheritedEnvironment: [
+            "PATH": "/usr/bin:/bin:/usr/sbin:/sbin",
+            "HOME": missingHome.path
+        ])
+        XCTAssertNil(
+            policy.resolveExecutable("./rel-tool"),
+            "a missing HOME must not resolve relative tools against its parent"
+        )
+    }
 }
