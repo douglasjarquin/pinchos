@@ -12,65 +12,109 @@ protocol ProcessSessionIdentity: AnyObject, Sendable {
 }
 
 final class SupervisorProcessSession: ProcessSessionIdentity, @unchecked Sendable {
-    private final class State: @unchecked Sendable {
+    final class State: @unchecked Sendable {
+        /// The supervisor's lifecycle. The reaper can observe exit from any
+        /// case. Whether the supervisor has reported every descendant gone is
+        /// only meaningful once the command has started, so only those cases
+        /// carry it.
+        private enum Phase {
+            case spawned
+            case running(descendantsGone: Bool)
+            case commandExited(descendantsGone: Bool)
+            case terminating
+            case released
+            case exited
+        }
+
         private let lock = NSLock()
-        private var started = false
-        private var commandExited = false
-        private var descendantsGone = false
-        private var terminating = false
-        private var released = false
-        private var exited = false
+        private var phase = Phase.spawned
 
         var isOwned: Bool {
             lock.lock()
             defer { lock.unlock() }
-            return !terminating && !released && !exited
+            switch phase {
+            case .spawned, .running, .commandExited:
+                return true
+            case .terminating, .released, .exited:
+                return false
+            }
         }
 
         var hasDescendants: Bool {
             lock.lock()
             defer { lock.unlock() }
-            return started && !descendantsGone && !terminating && !released && !exited
+            switch phase {
+            case .running(let descendantsGone), .commandExited(let descendantsGone):
+                return !descendantsGone
+            case .spawned, .terminating, .released, .exited:
+                return false
+            }
         }
 
-        func markStarted() {
-            lock.lock()
-            started = true
-            lock.unlock()
+        func markStarted() -> Bool {
+            transition { phase in
+                guard case .spawned = phase else { return nil }
+                return .running(descendantsGone: false)
+            }
         }
 
-        func markDescendantsGone() {
-            lock.lock()
-            descendantsGone = true
-            lock.unlock()
+        func markDescendantsGone() -> Bool {
+            transition { phase in
+                switch phase {
+                case .running(descendantsGone: false):
+                    return .running(descendantsGone: true)
+                case .commandExited(descendantsGone: false):
+                    return .commandExited(descendantsGone: true)
+                case .spawned, .running, .commandExited, .terminating, .released, .exited:
+                    return nil
+                }
+            }
         }
 
         func markCommandExited() -> Bool {
-            lock.lock()
-            defer { lock.unlock() }
-            guard !commandExited, !terminating, !released, !exited else { return false }
-            commandExited = true
-            return true
+            transition { phase in
+                guard case .running(let descendantsGone) = phase else { return nil }
+                return .commandExited(descendantsGone: descendantsGone)
+            }
         }
 
         func beginTermination() -> Bool {
+            transition { phase in
+                switch phase {
+                case .spawned, .running, .commandExited:
+                    return .terminating
+                case .terminating, .released, .exited:
+                    return nil
+                }
+            }
+        }
+
+        func markReleased() -> Bool {
+            transition { phase in
+                switch phase {
+                case .spawned, .running, .commandExited:
+                    return .released
+                case .terminating, .released, .exited:
+                    return nil
+                }
+            }
+        }
+
+        func markExited() -> Bool {
+            transition { phase in
+                if case .exited = phase { return nil }
+                return .exited
+            }
+        }
+
+        /// Applies `next` atomically; a `nil` result rejects the transition
+        /// and leaves the phase unchanged.
+        private func transition(_ next: (Phase) -> Phase?) -> Bool {
             lock.lock()
             defer { lock.unlock() }
-            guard !terminating, !released, !exited else { return false }
-            terminating = true
+            guard let nextPhase = next(phase) else { return false }
+            phase = nextPhase
             return true
-        }
-
-        func markReleased() {
-            lock.lock()
-            released = true
-            lock.unlock()
-        }
-
-        func markExited() {
-            lock.lock()
-            exited = true
-            lock.unlock()
         }
     }
 
@@ -136,7 +180,7 @@ final class SupervisorProcessSession: ProcessSessionIdentity, @unchecked Sendabl
             throw LaunchError.pipeWriteFailed(ESRCH)
         }
         try send("start\n")
-        state.markStarted()
+        _ = state.markStarted()
     }
 
     func commandDidExit() {
@@ -157,11 +201,10 @@ final class SupervisorProcessSession: ProcessSessionIdentity, @unchecked Sendabl
     func release() {
         lifecycleLock.lock()
         defer { lifecycleLock.unlock() }
-        guard state.isOwned else {
+        guard state.markReleased() else {
             closeControlDescriptor()
             return
         }
-        state.markReleased()
         try? send("release\n")
         closeControlDescriptor()
     }
@@ -191,7 +234,7 @@ final class SupervisorProcessSession: ProcessSessionIdentity, @unchecked Sendabl
             guard count > 0 else { return }
             statusBuffer.append(contentsOf: buffer.prefix(count))
             if statusBuffer.range(of: Data("empty\n".utf8)) != nil {
-                state.markDescendantsGone()
+                _ = state.markDescendantsGone()
             }
             pollResult = Darwin.poll(&descriptor, 1, 0)
         }
@@ -241,7 +284,7 @@ final class SupervisorProcessSession: ProcessSessionIdentity, @unchecked Sendabl
         guard result == processGroupID || (result == -1 && errorCode != EINTR) else {
             return false
         }
-        state.markExited()
+        _ = state.markExited()
         return true
     }
 

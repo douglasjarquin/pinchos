@@ -584,6 +584,38 @@ final class CommandExecutionTests: XCTestCase {
         XCTAssertEqual(session.terminationRequestCount, 1)
     }
 
+    /// Killing the supervisor races its reaper, so a planned control-pipe
+    /// write lands on a dead reader in most iterations. Without SIGPIPE
+    /// suppression on that pipe, any one of those writes kills this test
+    /// process with signal 13 instead of returning.
+    func testSupervisorDyingBeforeSendDoesNotKillHostProcess() async throws {
+        for _ in 0..<40 {
+            var stdoutPipe = [Int32](repeating: -1, count: 2)
+            var stderrPipe = [Int32](repeating: -1, count: 2)
+            XCTAssertEqual(pipe(&stdoutPipe), 0)
+            XCTAssertEqual(pipe(&stderrPipe), 0)
+            defer {
+                for fileDescriptor in stdoutPipe + stderrPipe { close(fileDescriptor) }
+            }
+            let session = try SupervisorProcessSession.launch(
+                stdoutRead: stdoutPipe[0],
+                stdoutWrite: stdoutPipe[1],
+                stderrRead: stderrPipe[0],
+                stderrWrite: stderrPipe[1],
+                environment: [:]
+            )
+            try session.start()
+
+            _ = kill(session.processGroupID, SIGKILL)
+            usleep(200)
+            session.commandDidExit()
+            session.release()
+            await session.waitForExit()
+
+            XCTAssertFalse(session.isOwned)
+        }
+    }
+
     private func temporaryURL(_ prefix: String) -> URL {
         FileManager.default.temporaryDirectory.appendingPathComponent("pinchos-\(prefix)-\(UUID().uuidString)")
     }
