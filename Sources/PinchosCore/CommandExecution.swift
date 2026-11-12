@@ -1206,18 +1206,14 @@ public actor CommandRunner {
         var completedExecution = result.execution
         lastExecution = completedExecution
         if let process = result.lingeringProcess {
-            if process.controller.hasDescendants() {
+            guard let settled = await settledExecution(of: process) else {
                 if isCurrent(run) {
                     phase = .lingering(process)
                 }
                 return .completed(completedExecution)
             }
-            process.timeoutTask.cancel()
-            process.controller.release()
-            await process.controller.waitForExit()
-            await process.output.stopAndWait()
-            completedExecution = process.currentExecution()
-            lastExecution = completedExecution
+            completedExecution = settled
+            lastExecution = settled
         }
         if isCurrent(run) {
             phase = .idle

@@ -527,10 +527,11 @@ final class ManagedItem: ManagedItemLifecycle {
             let token = CommandScheduler.ItemToken()
             menuRowTimerTokens[index] = token
             let scheduler = self.scheduler
-            Task {
+            Task { [weak self] in
                 await scheduler.registerRecurring(token: token, interval: interval) { [weak self] in
-                    Task { @MainActor [weak self] in
-                        self?.requestMenuRowRefresh(at: index)
+                    let item = self
+                    Task { @MainActor in
+                        item?.requestMenuRowRefresh(at: index)
                     }
                 }
             }
@@ -668,7 +669,6 @@ final class ManagedItem: ManagedItemLifecycle {
         let cached = await primarySource.refresh()
         guard !isRetired, generation == configurationGeneration else { return }
         guard let execution = cached.lastExecution else { return }
-        guard !isRetired, generation == configurationGeneration else { return }
         lastSuccessfulOutput = cached.value
         lastAttemptedAt = cached.lastAttemptedAt
         lastUpdatedAt = cached.lastSuccessfulAt

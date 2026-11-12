@@ -77,15 +77,15 @@ actor ConfigLoadCoordinator {
     private(set) var appliedCount = 0
 
     func requestLoad(path: String) {
+        if case .shutdown = state { return }
+        generation += 1
         switch state {
-        case .shutdown:
-            return
         case .idle:
-            generation += 1
             start(path: path)
         case .loading:
-            generation += 1
             state = .loading(pendingPath: path)
+        case .shutdown:
+            break
         }
     }
 

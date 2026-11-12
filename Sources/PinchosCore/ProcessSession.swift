@@ -51,6 +51,7 @@ final class SupervisorProcessSession: ProcessSessionIdentity, @unchecked Sendabl
             }
         }
 
+        @discardableResult
         func markStarted() -> Bool {
             transition { phase in
                 guard case .spawned = phase else { return nil }
@@ -58,6 +59,7 @@ final class SupervisorProcessSession: ProcessSessionIdentity, @unchecked Sendabl
             }
         }
 
+        @discardableResult
         func markDescendantsGone() -> Bool {
             transition { phase in
                 switch phase {
@@ -100,6 +102,7 @@ final class SupervisorProcessSession: ProcessSessionIdentity, @unchecked Sendabl
             }
         }
 
+        @discardableResult
         func markExited() -> Bool {
             transition { phase in
                 if case .exited = phase { return nil }
@@ -180,7 +183,7 @@ final class SupervisorProcessSession: ProcessSessionIdentity, @unchecked Sendabl
             throw LaunchError.pipeWriteFailed(ESRCH)
         }
         try send("start\n")
-        _ = state.markStarted()
+        state.markStarted()
     }
 
     func commandDidExit() {
@@ -234,7 +237,7 @@ final class SupervisorProcessSession: ProcessSessionIdentity, @unchecked Sendabl
             guard count > 0 else { return }
             statusBuffer.append(contentsOf: buffer.prefix(count))
             if statusBuffer.range(of: Data("empty\n".utf8)) != nil {
-                _ = state.markDescendantsGone()
+                state.markDescendantsGone()
             }
             pollResult = Darwin.poll(&descriptor, 1, 0)
         }
@@ -284,7 +287,7 @@ final class SupervisorProcessSession: ProcessSessionIdentity, @unchecked Sendabl
         guard result == processGroupID || (result == -1 && errorCode != EINTR) else {
             return false
         }
-        _ = state.markExited()
+        state.markExited()
         return true
     }
 
