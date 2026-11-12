@@ -54,11 +54,7 @@ extension CommandSourceRunner {
     public func recordSkippedRefresh() async {}
 }
 
-extension CommandRunner: CommandSourceRunner {
-    public func recordSkippedRefresh() async {
-        _ = await beginIfIdle()
-    }
-}
+extension CommandRunner: CommandSourceRunner {}
 
 public enum CachedValueState: String, Equatable, Sendable {
     case unavailable

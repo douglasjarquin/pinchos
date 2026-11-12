@@ -22,20 +22,28 @@ final class ConfigWatcher {
     private let onChange: () -> Void
     private let queue = DispatchQueue(label: "com.pinchos.watcher")
 
+    /// Where the watcher is attached. Each case owns the dispatch sources or
+    /// work item it uses; `transition(to:)` cancels them on the way out.
+    private enum Attachment {
+        case stopped
+        /// The config file exists. `parentGuard` watches its parent directory
+        /// for delete/rename, and is absent only if that directory could not
+        /// be opened.
+        case watchingFile(source: DispatchSourceFileSystemObject, parentGuard: DispatchSourceFileSystemObject?)
+        /// The config file is missing; `source` watches the deepest existing
+        /// ancestor at `path`.
+        case watchingAncestor(path: String, source: DispatchSourceFileSystemObject)
+        /// `open()` failed on a path that exists; `retry` reattaches later.
+        case backingOff(retry: DispatchWorkItem)
+    }
+
     /// Bumped on every start()/stop() so async work items captured under an
     /// older generation are provably stale and become no-ops, even if they
     /// were already enqueued (e.g. a debounce timer or a backoff retry).
+    /// A matching generation also implies the watcher has not been stopped.
     private var generation = 0
-    private var isRunning = false
-
-    private var fileSource: DispatchSourceFileSystemObject?
-    private var parentGuardSource: DispatchSourceFileSystemObject?
+    private var attachment = Attachment.stopped
     private var changeWorkItem: DispatchWorkItem?
-    private var backoffWorkItem: DispatchWorkItem?
-    /// Path + whether it is the config file itself for the currently attached
-    /// source. Used to ignore no-op directory events (busy ancestors) that do
-    /// not change where we should be watching.
-    private var attachedTarget: WatchTarget?
 
     /// Exceptional-failure retry delay. This path is not the normal way missing
     /// config is handled - see `WatchTarget` resolution below - it only fires if
@@ -63,8 +71,7 @@ final class ConfigWatcher {
 
     func start() {
         queue.async { [weak self] in
-            guard let self, !self.isRunning else { return }
-            self.isRunning = true
+            guard let self, case .stopped = self.attachment else { return }
             self.generation += 1
             self.attach(generation: self.generation)
         }
@@ -73,26 +80,22 @@ final class ConfigWatcher {
     func stop() {
         queue.async { [weak self] in
             guard let self else { return }
-            self.isRunning = false
             self.generation += 1
             self.changeWorkItem?.cancel()
             self.changeWorkItem = nil
-            self.backoffWorkItem?.cancel()
-            self.backoffWorkItem = nil
-            self.cancelActiveSources()
+            self.transition(to: .stopped)
         }
     }
 
     // MARK: - Attachment
 
     private func attach(generation: Int) {
-        guard generation == self.generation, isRunning else { return }
+        guard generation == self.generation else { return }
 
         let watchTarget = Self.deepestExistingAncestor(of: path)
         onAttachAttempt?()
         guard let fd = openSource(watchTarget.path) else {
-            attachedTarget = nil
-            scheduleBackoff(generation: generation)
+            transition(to: .backingOff(retry: scheduleBackoff(generation: generation)))
             return
         }
 
@@ -103,12 +106,13 @@ final class ConfigWatcher {
         let newSource = makeSource(fd: fd, eventMask: eventMask) { [weak self] flags in
             self?.handleFileOrAncestorEvent(generation: generation, flags: flags, isTarget: watchTarget.isTarget)
         }
-        fileSource = newSource
-        attachedTarget = watchTarget
 
         var guardSource: DispatchSourceFileSystemObject?
         if watchTarget.isTarget {
             guardSource = attachParentGuard(of: watchTarget.path, generation: generation)
+            transition(to: .watchingFile(source: newSource, parentGuard: guardSource))
+        } else {
+            transition(to: .watchingAncestor(path: watchTarget.path, source: newSource))
         }
 
         newSource.resume()
@@ -121,8 +125,7 @@ final class ConfigWatcher {
         // instead of waiting for some unrelated future event to notice.
         let settled = Self.deepestExistingAncestor(of: path)
         guard settled.path == watchTarget.path, settled.isTarget == watchTarget.isTarget else {
-            cancelActiveSources()
-            attach(generation: generation)
+            reattach(generation: generation)
             return
         }
 
@@ -141,12 +144,11 @@ final class ConfigWatcher {
             // under our feet changed, so re-resolve from scratch.
             self?.reattach(generation: generation)
         }
-        parentGuardSource = guardSource
         return guardSource
     }
 
     private func handleFileOrAncestorEvent(generation: Int, flags: DispatchSource.FileSystemEvent, isTarget: Bool) {
-        guard generation == self.generation, isRunning else { return }
+        guard generation == self.generation else { return }
 
         if isTarget {
             if flags.contains(.delete) || flags.contains(.rename) {
@@ -172,24 +174,32 @@ final class ConfigWatcher {
         // churn) would otherwise thrash open/close for events that don't
         // concern our target path at all.
         let next = Self.deepestExistingAncestor(of: path)
-        guard let attached = attachedTarget, attached.path == next.path, attached.isTarget == next.isTarget else {
+        guard case .watchingAncestor(let attachedPath, _) = attachment, !next.isTarget, attachedPath == next.path else {
             reattach(generation: generation)
             return
         }
     }
 
     private func reattach(generation: Int) {
-        guard generation == self.generation, isRunning else { return }
-        cancelActiveSources()
+        guard generation == self.generation else { return }
         attach(generation: generation)
     }
 
-    private func cancelActiveSources() {
-        fileSource?.cancel()
-        fileSource = nil
-        parentGuardSource?.cancel()
-        parentGuardSource = nil
-        attachedTarget = nil
+    /// The single place the attachment changes: cancels everything the
+    /// current case owns, then enters `next`.
+    private func transition(to next: Attachment) {
+        switch attachment {
+        case .stopped:
+            break
+        case .watchingFile(let source, let parentGuard):
+            source.cancel()
+            parentGuard?.cancel()
+        case .watchingAncestor(_, let source):
+            source.cancel()
+        case .backingOff(let retry):
+            retry.cancel()
+        }
+        attachment = next
     }
 
     // MARK: - Dispatch source construction
@@ -221,7 +231,7 @@ final class ConfigWatcher {
         changeWorkItem?.cancel()
         let workItem = DispatchWorkItem { [weak self] in
             guard let self else { return }
-            guard generation == self.generation, self.isRunning else { return }
+            guard generation == self.generation else { return }
             self.changeWorkItem = nil
             self.onChange()
         }
@@ -229,12 +239,12 @@ final class ConfigWatcher {
         queue.asyncAfter(deadline: .now() + 0.25, execute: workItem)
     }
 
-    private func scheduleBackoff(generation: Int) {
+    private func scheduleBackoff(generation: Int) -> DispatchWorkItem {
         let workItem = DispatchWorkItem { [weak self] in
             self?.attach(generation: generation)
         }
-        backoffWorkItem = workItem
         queue.asyncAfter(deadline: .now() + backoffDelay, execute: workItem)
+        return workItem
     }
 
     // MARK: - Ancestor resolution

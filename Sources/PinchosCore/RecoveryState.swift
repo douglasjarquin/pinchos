@@ -1,35 +1,31 @@
-public struct RecoveryState: Equatable, Sendable {
-    public private(set) var isVisible: Bool
-    public private(set) var configExists: Bool
-    public private(set) var errorDescription: String?
+/// Which configuration-recovery situation the menu bar is showing, if any.
+///
+/// Every transition is legal: each visible case can replace another directly,
+/// and a config with items (or a dismiss) returns to `hidden` from any of them.
+public enum RecoveryState: Equatable, Sendable {
+    case hidden
+    /// The config file exists but declares no items.
+    case emptyConfig
+    /// The config file does not exist.
+    case missingConfig
+    /// A parse error or a failed recovery action. `configExists` keeps the
+    /// missing-config menu when the action failed while the file was absent.
+    case error(message: String, configExists: Bool)
 
-    public init() {
-        self.isVisible = false
-        self.configExists = true
-        self.errorDescription = nil
+    public var isVisible: Bool {
+        self != .hidden
     }
 
     public var menu: RecoveryMenu {
-        RecoveryMenu(configExists: configExists)
-    }
-
-    public mutating func apply(config: PinchosConfig) {
-        if config.items.isEmpty {
-            show(configExists: true, errorDescription: nil)
-        } else {
-            dismiss()
+        switch self {
+        case .missingConfig, .error(_, configExists: false):
+            return RecoveryMenu(configExists: false)
+        case .hidden, .emptyConfig, .error(_, configExists: true):
+            return RecoveryMenu(configExists: true)
         }
     }
 
-    public mutating func show(configExists: Bool, errorDescription: String?) {
-        isVisible = true
-        self.configExists = configExists
-        self.errorDescription = errorDescription
-    }
-
-    public mutating func dismiss() {
-        isVisible = false
-        configExists = true
-        errorDescription = nil
+    public mutating func apply(config: PinchosConfig) {
+        self = config.items.isEmpty ? .emptyConfig : .hidden
     }
 }

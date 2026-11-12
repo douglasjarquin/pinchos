@@ -168,7 +168,7 @@ final class StatusItemController: StatusItemMenuDelegate {
     private var collapsedStatusItem: NSStatusItem?
     private var collapsedMenuGeneration = 0
     private var barPresentation: BarPresentation = .expanded
-    private var recoveryState = RecoveryState()
+    private var recoveryState: RecoveryState = .hidden
     private let configPath: String
     private let onReload: () -> Void
     private var lifecycleTail: Task<Void, Never>?
@@ -218,19 +218,26 @@ final class StatusItemController: StatusItemMenuDelegate {
 
     func showParseError(_ description: String) async {
         await enqueueLifecycleOperation { [weak self] in
-            self?.showRecoveryNow(configExists: true, errorDescription: description)
+            self?.showRecoveryNow(.error(message: description, configExists: true))
         }
     }
 
-    func showRecovery(configExists: Bool) async {
+    func showMissingConfig() async {
         await enqueueLifecycleOperation { [weak self] in
-            self?.showRecoveryNow(configExists: configExists, errorDescription: nil)
+            self?.showRecoveryNow(.missingConfig)
         }
     }
 
-    private func showRecoveryNow(configExists: Bool, errorDescription: String?) {
-        recoveryState.show(configExists: configExists, errorDescription: errorDescription)
+    private func showRecoveryNow(_ state: RecoveryState) {
+        recoveryState = state
         updateRecoveryItem()
+    }
+
+    private var recoveryTitle: String {
+        if case .error = recoveryState {
+            return "pinchos \u{26A0}\u{FE0E}"
+        }
+        return "pinchos"
     }
 
     private func updateRecoveryItem() {
@@ -246,9 +253,7 @@ final class StatusItemController: StatusItemMenuDelegate {
             statusItem.button?.sendAction(on: [.leftMouseUp, .rightMouseUp])
             warningItem = statusItem
         }
-        warningItem?.button?.title = recoveryState.errorDescription == nil
-            ? "pinchos"
-            : "pinchos \u{26A0}\u{FE0E}"
+        warningItem?.button?.title = recoveryTitle
     }
 
     /// A plain left/right click shows the compact menu (cached rows, actions,
@@ -385,7 +390,7 @@ final class StatusItemController: StatusItemMenuDelegate {
             statusItemHost.removeStatusItem(warningItem)
         }
         warningItem = nil
-        recoveryState.dismiss()
+        recoveryState = .hidden
     }
 
     private func synchronizeCollapsedVisibility() {
@@ -490,8 +495,8 @@ final class StatusItemController: StatusItemMenuDelegate {
 
     private func buildRecoveryMenu() -> NSMenu {
         let menu = NSMenu()
-        if let errorDescription = recoveryState.errorDescription {
-            let errorItem = NSMenuItem(title: errorDescription, action: nil, keyEquivalent: "")
+        if case .error(let message, _) = recoveryState {
+            let errorItem = NSMenuItem(title: message, action: nil, keyEquivalent: "")
             errorItem.isEnabled = false
             menu.addItem(errorItem)
             menu.addItem(NSMenuItem.separator())
@@ -626,10 +631,7 @@ final class StatusItemController: StatusItemMenuDelegate {
     }
 
     private func makeCollapsedRecoveryItem() -> NSMenuItem {
-        let title = recoveryState.errorDescription == nil
-            ? "pinchos"
-            : "pinchos \u{26A0}\u{FE0E}"
-        let item = NSMenuItem(title: title, action: nil, keyEquivalent: "")
+        let item = NSMenuItem(title: recoveryTitle, action: nil, keyEquivalent: "")
         item.submenu = buildRecoveryMenu()
         item.setAccessibilityLabel("Pinchos recovery")
         item.setAccessibilityHelp("Open recovery actions for the Pinchos configuration.")
@@ -1035,10 +1037,10 @@ final class StatusItemController: StatusItemMenuDelegate {
     }
 
     private func showRecoveryError(_ error: Error) {
-        showRecoveryNow(
-            configExists: FileManager.default.fileExists(atPath: configPath),
-            errorDescription: String(describing: error)
-        )
+        showRecoveryNow(.error(
+            message: String(describing: error),
+            configExists: FileManager.default.fileExists(atPath: configPath)
+        ))
     }
 
     @objc private func quitAction() {

@@ -39,6 +39,9 @@ enum ConfigFileLoader {
 /// - Each call to `requestLoad` records a new generation and starts loading immediately
 ///   unless a load is already in flight, in which case it becomes the sole pending
 ///   request -- a burst of N requests while busy never grows more than one pending slot.
+/// - A load stays in flight until its result handler returns, so requests that arrive
+///   while the handler is suspended coalesce as pending instead of starting a second
+///   load beside a follow-up.
 /// - A load's result is only handed to `resultHandler` if no newer request has been
 ///   made since that load started. A superseded result is discarded whether it
 ///   succeeded or failed, so a slow stale parse can never overwrite, or show a warning
@@ -51,12 +54,18 @@ actor ConfigLoadCoordinator {
     typealias Loader = @Sendable (String) async -> ConfigLoadOutcome
     typealias ResultHandler = @Sendable @MainActor (ConfigLoadOutcome) async -> Void
 
+    private enum State {
+        case idle
+        /// A load is in flight, from `start` until its result handler returns.
+        /// `pendingPath` is the latest request that arrived meanwhile, if any.
+        case loading(pendingPath: String?)
+        case shutdown
+    }
+
     private let loader: Loader
     private let resultHandler: ResultHandler
     private var generation = 0
-    private var isLoading = false
-    private var pendingPath: String?
-    private var isShutdown = false
+    private var state = State.idle
 
     init(loader: @escaping Loader, resultHandler: @escaping ResultHandler) {
         self.loader = loader
@@ -68,13 +77,16 @@ actor ConfigLoadCoordinator {
     private(set) var appliedCount = 0
 
     func requestLoad(path: String) {
-        guard !isShutdown else { return }
+        if case .shutdown = state { return }
         generation += 1
-        guard !isLoading else {
-            pendingPath = path
-            return
+        switch state {
+        case .idle:
+            start(path: path)
+        case .loading:
+            state = .loading(pendingPath: path)
+        case .shutdown:
+            break
         }
-        start(path: path)
     }
 
     /// Stops applying any future result and drops any coalesced pending request.
@@ -82,13 +94,11 @@ actor ConfigLoadCoordinator {
     /// is simply discarded when it arrives, so shutdown never blocks on outstanding
     /// loader work.
     func shutdown() {
-        isShutdown = true
-        pendingPath = nil
+        state = .shutdown
     }
 
     private func start(path: String) {
-        isLoading = true
-        pendingPath = nil
+        state = .loading(pendingPath: nil)
         let startedGeneration = generation
         let loader = self.loader
         Task {
@@ -98,14 +108,17 @@ actor ConfigLoadCoordinator {
     }
 
     private func finished(generation finishedGeneration: Int, outcome: ConfigLoadOutcome) async {
-        isLoading = false
-        let isCurrent = finishedGeneration == generation
-        if isCurrent, !isShutdown {
+        guard case .loading = state else { return }
+        if finishedGeneration == generation {
             appliedCount += 1
             await resultHandler(outcome)
         }
-        if let path = pendingPath, !isShutdown {
-            start(path: path)
+        // Re-read after the handler: shutdown or new requests may have landed meanwhile.
+        guard case .loading(let pendingPath) = state else { return }
+        if let pendingPath {
+            start(path: pendingPath)
+        } else {
+            state = .idle
         }
     }
 }

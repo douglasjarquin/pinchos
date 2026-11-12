@@ -62,21 +62,47 @@ final class RecoveryTests: XCTestCase {
     }
 
     func testRecoveryStateMovesFromMissingAndEmptyToNormal() {
-        var state = RecoveryState()
-
-        XCTAssertFalse(state.isVisible)
-
-        state.show(configExists: false, errorDescription: nil)
+        var state = RecoveryState.missingConfig
         XCTAssertTrue(state.isVisible)
         XCTAssertTrue(state.menu.canCreateExampleConfig)
 
         state.apply(config: PinchosConfig(items: []))
+        XCTAssertEqual(state, .emptyConfig)
         XCTAssertTrue(state.isVisible)
         XCTAssertFalse(state.menu.canCreateExampleConfig)
 
         state.apply(config: PinchosConfig(items: [
             ItemConfig(name: "clock", run: "echo clock", interval: .scheduled(60))
         ]))
+        XCTAssertEqual(state, .hidden)
         XCTAssertFalse(state.isVisible)
+    }
+
+    func testEveryVisibleCaseReturnsToHiddenForConfigWithItems() {
+        let withItems = PinchosConfig(items: [ItemConfig(name: "clock", run: "echo clock", interval: .manual)])
+        let visible: [RecoveryState] = [
+            .emptyConfig,
+            .missingConfig,
+            .error(message: "broken", configExists: true),
+            .error(message: "broken", configExists: false),
+        ]
+        for start in visible {
+            var state = start
+            XCTAssertTrue(state.isVisible, "\(start)")
+            state.apply(config: withItems)
+            XCTAssertEqual(state, .hidden, "\(start)")
+        }
+    }
+
+    func testErrorMenuFollowsWhetherConfigExists() {
+        XCTAssertEqual(
+            RecoveryState.error(message: "broken", configExists: false).menu,
+            RecoveryState.missingConfig.menu
+        )
+        XCTAssertEqual(
+            RecoveryState.error(message: "broken", configExists: true).menu,
+            RecoveryState.emptyConfig.menu
+        )
+        XCTAssertFalse(RecoveryState.hidden.isVisible)
     }
 }

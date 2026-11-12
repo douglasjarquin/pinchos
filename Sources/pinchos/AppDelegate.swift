@@ -68,7 +68,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         case .parseFailure(let description):
             await controller.showParseError(description)
         case .missingFile:
-            await controller.showRecovery(configExists: false)
+            await controller.showMissingConfig()
         }
     }
 

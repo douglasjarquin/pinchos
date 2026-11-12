@@ -1052,14 +1052,35 @@ public actor CommandRunner {
     private let timeout: TimeInterval
     private let maxOutputBytes: Int
     private let outputBudget: OutputMemoryBudget
-    private var activeTask: Task<CommandExecutionResult, Never>?
-    private var activeController: ProcessGroupController?
-    private var lingeringProcesses: [LingeringProcess] = []
+    private var phase = RunPhase.idle
     private var lastExecution: CommandExecution?
     private var skippedRefreshes = 0
-    private var cancellationInProgress = false
-    private var shutdownRequested = false
     private var runGeneration: UInt64 = 0
+
+    /// Where the runner is in its lifecycle. Every resource that exists only
+    /// in one phase travels with that case.
+    private enum RunPhase {
+        /// Nothing is running; `beginIfIdle()` may start a run.
+        case idle
+        /// The shell is running, or its result is still being finished.
+        case running(ActiveRun)
+        /// The shell exited but left descendants in its process group.
+        case lingering(LingeringProcess)
+        /// A cancellation is in flight and ends in `destination`.
+        case cancelling(destination: CancellationDestination)
+        /// Terminal: the runner never runs again.
+        case shutDown
+    }
+
+    private enum CancellationDestination {
+        case idle
+        case shutDown
+    }
+
+    private struct ActiveRun {
+        let task: Task<CommandExecutionResult, Never>
+        let controller: ProcessGroupController
+    }
 
     public init(command: String, timeout: TimeInterval) {
         self.init(
@@ -1130,7 +1151,7 @@ public actor CommandRunner {
     }
 
     deinit {
-        for process in lingeringProcesses {
+        if case .lingering(let process) = phase {
             process.timeoutTask.cancel()
             process.output.stop()
             process.controller.requestGroupTermination()
@@ -1139,13 +1160,8 @@ public actor CommandRunner {
 
     public func beginIfIdle() async -> Bool {
         let generation = runGeneration
-        await settleLingeringProcesses()
-        guard generation == runGeneration,
-            activeTask == nil,
-            lingeringProcesses.isEmpty,
-            !cancellationInProgress,
-            !shutdownRequested
-        else {
+        await settleLingeringProcess()
+        guard generation == runGeneration, case .idle = phase else {
             skippedRefreshes += 1
             return false
         }
@@ -1174,36 +1190,34 @@ public actor CommandRunner {
                 _ = controller.beginTermination(.cancelled)
             }
         }
-        activeTask = task
-        activeController = controller
+        phase = .running(ActiveRun(task: task, controller: controller))
         return true
     }
 
     public func finishActiveRun() async -> CommandRunOutcome {
-        guard let task = activeTask else { return .skipped }
+        guard case .running(let run) = phase else { return .skipped }
         let generation = runGeneration
-        let result = await task.value
-        activeController = nil
+        let result = await run.task.value
         if generation != runGeneration {
-            let execution = await finishCancelledRun(result)
-            activeTask = nil
-            return .completed(execution)
+            // A cancellation took this run over while it finished; that
+            // cancellation owns the phase, so only report the cancelled result.
+            return .completed(await finishCancelledRun(result))
         }
         var completedExecution = result.execution
         lastExecution = completedExecution
         if let process = result.lingeringProcess {
-            if process.controller.hasDescendants() {
-                lingeringProcesses.append(process)
-            } else {
-                process.timeoutTask.cancel()
-                process.controller.release()
-                await process.controller.waitForExit()
-                await process.output.stopAndWait()
-                completedExecution = process.currentExecution()
-                lastExecution = completedExecution
+            guard let settled = await settledExecution(of: process) else {
+                if isCurrent(run) {
+                    phase = .lingering(process)
+                }
+                return .completed(completedExecution)
             }
+            completedExecution = settled
+            lastExecution = settled
         }
-        activeTask = nil
+        if isCurrent(run) {
+            phase = .idle
+        }
         return .completed(completedExecution)
     }
 
@@ -1239,55 +1253,111 @@ public actor CommandRunner {
     /// `finishActiveRun()`/`runIfIdle()` instead of trusting the preliminary
     /// execution directly.
     public func awaitSettledExecution() async -> CommandExecution? {
-        if activeTask != nil {
+        if case .running = phase {
             _ = await finishActiveRun()
         }
-        while let process = lingeringProcesses.first {
-            // The supervisor process stays alive until `release()`; do not
-            // `waitForExit()` here or we hang until the timeout kills the
-            // group. Poll descendant emptiness (which refreshes supervisor
-            // status) until the group is empty or timeout/cancel claims it.
-            while process.controller.hasDescendants() {
+        while true {
+            switch phase {
+            case .lingering(let process):
+                // The supervisor process stays alive until `release()`; do not
+                // `waitForExit()` here or we hang until the timeout kills the
+                // group. Poll descendant emptiness (which refreshes supervisor
+                // status) until the group is empty or timeout/cancel claims it.
+                while process.controller.hasDescendants() {
+                    try? await Task.sleep(nanoseconds: 20_000_000)
+                }
+                await settleLingeringProcess()
+            case .cancelling:
+                // The in-flight cancellation records the definitive result.
                 try? await Task.sleep(nanoseconds: 20_000_000)
+            case .idle, .running, .shutDown:
+                return lastExecution
             }
-            await settleLingeringProcesses()
         }
-        return lastExecution
     }
 
+    /// Cancels any active work and moves the runner to its terminal phase.
+    /// Joining a cancellation already in flight redirects it to shut down
+    /// instead of starting a second one.
     public func cancelForShutdown() async {
-        shutdownRequested = true
-        await cancelActive()
+        switch phase {
+        case .shutDown:
+            return
+        case .cancelling:
+            phase = .cancelling(destination: .shutDown)
+        case .idle, .running, .lingering:
+            await cancel(endingIn: .shutDown)
+        }
     }
 
     public func cancelActive() async {
-        guard !cancellationInProgress else { return }
-        cancellationInProgress = true
-        runGeneration &+= 1
+        await cancel(endingIn: .idle)
+    }
 
-        let activeTask = self.activeTask
-        activeTask?.cancel()
-        activeController?.requestGroupTermination()
-        if let activeTask {
-            _ = await activeTask.value
-            self.activeTask = nil
-            activeController = nil
-        }
-
-        for process in lingeringProcesses {
-            await terminate(process)
-        }
-        await settleLingeringProcesses()
-        cancellationInProgress = false
+    /// Counts a refresh that was coalesced into the run already in flight.
+    /// Only counts: recording a skip never starts a run, even when the busy
+    /// run could settle to idle at this moment.
+    public func recordSkippedRefresh() async {
+        skippedRefreshes += 1
     }
 
     public func snapshot() async -> CommandRunnerSnapshot {
-        await settleLingeringProcesses()
+        await settleLingeringProcess()
+        let isRunning: Bool
+        switch phase {
+        case .running, .lingering, .cancelling:
+            isRunning = true
+        case .idle, .shutDown:
+            isRunning = false
+        }
         return CommandRunnerSnapshot(
-            isRunning: activeTask != nil || !lingeringProcesses.isEmpty || cancellationInProgress,
+            isRunning: isRunning,
             lastExecution: lastExecution,
             skippedRefreshes: skippedRefreshes
         )
+    }
+
+    /// The single cancellation path. A call that arrives while another
+    /// cancellation is in flight returns at once; the in-flight one finishes.
+    private func cancel(endingIn destination: CancellationDestination) async {
+        switch phase {
+        case .cancelling, .shutDown:
+            return
+        case .idle:
+            // Invalidates a `beginIfIdle()` still suspended while settling.
+            runGeneration &+= 1
+            if destination == .shutDown {
+                phase = .shutDown
+            }
+            return
+        case .running(let run):
+            runGeneration &+= 1
+            phase = .cancelling(destination: destination)
+            run.task.cancel()
+            run.controller.requestGroupTermination()
+            _ = await run.task.value
+        case .lingering(let process):
+            runGeneration &+= 1
+            phase = .cancelling(destination: destination)
+            await terminate(process)
+            if let execution = await settledExecution(of: process) {
+                lastExecution = execution
+            }
+        }
+
+        // Re-read after the awaits: shutdown may have joined this cancellation.
+        guard case .cancelling(let finalDestination) = phase else { return }
+        switch finalDestination {
+        case .idle:
+            phase = .idle
+        case .shutDown:
+            phase = .shutDown
+        }
+    }
+
+    private func isCurrent(_ run: ActiveRun) -> Bool {
+        guard case .running(let current) = phase else { return false }
+        return current.controller === run.controller
     }
 
     private func terminate(_ process: LingeringProcess) async {
@@ -1309,20 +1379,27 @@ public actor CommandRunner {
         return execution
     }
 
-    private func settleLingeringProcesses() async {
-        var activeProcesses = [LingeringProcess]()
-        for process in lingeringProcesses {
-            guard !process.controller.hasDescendants() else {
-                activeProcesses.append(process)
-                continue
-            }
-            process.timeoutTask.cancel()
-            process.controller.release()
-            await process.controller.waitForExit()
-            await process.output.stopAndWait()
-            lastExecution = process.currentExecution()
-        }
-        lingeringProcesses = activeProcesses
+    /// Moves a lingering run to idle once its descendants are gone.
+    private func settleLingeringProcess() async {
+        guard case .lingering(let process) = phase,
+            let execution = await settledExecution(of: process)
+        else { return }
+        // Re-read after the awaits: a cancellation may have taken this
+        // process over, and it then records the definitive result itself.
+        guard case .lingering(let current) = phase, current.controller === process.controller else { return }
+        lastExecution = execution
+        phase = .idle
+    }
+
+    /// Releases a lingering process whose descendants are gone and returns
+    /// its definitive execution, or `nil` while descendants remain.
+    private func settledExecution(of process: LingeringProcess) async -> CommandExecution? {
+        guard !process.controller.hasDescendants() else { return nil }
+        process.timeoutTask.cancel()
+        process.controller.release()
+        await process.controller.waitForExit()
+        await process.output.stopAndWait()
+        return process.currentExecution()
     }
 
 }
