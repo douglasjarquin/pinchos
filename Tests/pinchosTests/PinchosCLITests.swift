@@ -406,7 +406,7 @@ final class PinchosCLITests: XCTestCase {
 
         XCTAssertEqual(doctorCode, 0)
         XCTAssertTrue(capture.stdout.contains("[PASS] item.tools.run"))
-        XCTAssertTrue(capture.stdout.contains("PATH uses system plus Apple Silicon Homebrew"))
+        XCTAssertTrue(capture.stdout.contains("PATH uses Homebrew, /usr/local/bin, and system directories"))
         if tool == "jq" {
             XCTAssertTrue(capture.stdout.contains(jq))
         } else if tool == "brew" {
@@ -443,7 +443,7 @@ final class PinchosCLITests: XCTestCase {
         let doctorCode = await cli.run(arguments: ["doctor"])
 
         XCTAssertEqual(doctorCode, 4)
-        XCTAssertTrue(capture.stdout.contains("[PASS] execution environment: PATH uses system plus Apple Silicon Homebrew"))
+        XCTAssertTrue(capture.stdout.contains("[PASS] execution environment: PATH uses Homebrew, /usr/local/bin, and system directories"))
         XCTAssertTrue(capture.stdout.contains("[FAIL] execution environment"))
         XCTAssertTrue(capture.stdout.contains("working directory cannot be resolved"))
         XCTAssertTrue(capture.stdout.contains(staleHome.path))
@@ -477,7 +477,7 @@ final class PinchosCLITests: XCTestCase {
         XCTAssertEqual(doctorCode, 4)
         XCTAssertTrue(capture.stdout.contains("[FAIL] item.missing.run"))
         XCTAssertTrue(capture.stdout.contains("definitely_missing_pinchos_command_125"))
-        XCTAssertTrue(capture.stdout.contains("system plus Apple Silicon Homebrew"))
+        XCTAssertTrue(capture.stdout.contains("Homebrew, /usr/local/bin, and system directories"))
         let combined = capture.stdout + capture.stderr
         XCTAssertFalse(combined.contains(secret))
         XCTAssertFalse(combined.contains("PINCHOS_SECRET"))

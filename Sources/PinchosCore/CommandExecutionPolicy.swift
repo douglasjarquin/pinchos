@@ -23,12 +23,12 @@ public struct CommandExecutionPolicy: Equatable, Sendable {
         "/opt/homebrew/sbin"
     ]
 
-    /// Homebrew first, matching `brew shellenv` on Apple Silicon, then the
-    /// launchd system directories.
-    public static let pathEntries = appleSiliconHomebrewPathEntries + systemPathEntries
+    /// Homebrew first, then `/usr/local/bin`, then the launchd system directories.
+    public static let pathEntries =
+        appleSiliconHomebrewPathEntries + ["/usr/local/bin"] + systemPathEntries
 
     /// Host keys copied when present and non-empty. `PATH`, `SHELL`, `PWD`,
-    /// and arbitrary secrets are not copied.
+    /// `SSH_AUTH_SOCK`, and arbitrary secrets are not copied.
     public static let inheritedKeys = [
         "HOME",
         "USER",
@@ -118,6 +118,6 @@ public struct CommandExecutionPolicy: Equatable, Sendable {
     }
 
     public func missingCommandMessage(_ command: String) -> String {
-        "command '\(command)' was not found on the execution PATH (system plus Apple Silicon Homebrew)"
+        "command '\(command)' was not found on the execution PATH (Homebrew, /usr/local/bin, and system directories)"
     }
 }

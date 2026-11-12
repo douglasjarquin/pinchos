@@ -19,10 +19,10 @@ Primary sources, dynamic menu values, actions, `pinchos run`, and `pinchos docto
 The policy is not a public config surface: there are no per-item `shell`, `env`, or `cwd` keys.
 
 - **Shell.** `/bin/sh -c` only. Non-login and non-interactive, so shell startup files are not loaded.
-- **PATH.** `/opt/homebrew/bin:/opt/homebrew/sbin:/usr/bin:/bin:/usr/sbin:/sbin`. Apple Silicon Homebrew first, then the launchd system directories. Inherited `PATH` is ignored so Finder/`open` and Terminal resolve the same tools.
+- **PATH.** `/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin`. Apple Silicon Homebrew first, then `/usr/local/bin`, then the launchd system directories. Inherited `PATH` is ignored so Finder/`open` and Terminal resolve the same tools.
 - **Working directory.** The resolved `HOME` directory, not the process's launch cwd (`/` under Finder/`open`, the current shell directory under Terminal).
 - **HOME and inherited environment.** `HOME` comes from the host when set, otherwise `NSHomeDirectory()`. `USER`, `LOGNAME`, `TMPDIR`, locale/`TZ`, and `__CF_USER_TEXT_ENCODING` are copied when present and non-empty. Missing `HOME`/`USER`/`TMPDIR` fall back to the process owner and the system temp directory. `SHELL` is `/bin/sh`.
-- **Not inherited.** Arbitrary host variables, including secrets, custom PATH entries, and Terminal-only values such as `SSH_AUTH_SOCK`. Commands that need credentials should read them from files the command already knows about.
+- **Not inherited.** Arbitrary host variables, including secrets and custom PATH entries. `SSH_AUTH_SOCK` is not inherited; launchd's ssh-agent can set it for GUI apps as well as Terminal, and Pinchos does not pass it through. Commands that need credentials should read them from files the command already knows about.
 
 This makes supported system and Homebrew tools resolve consistently.
 It does not make Finder and Terminal identical arbitrary user environments.

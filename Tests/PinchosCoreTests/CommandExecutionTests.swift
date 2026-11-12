@@ -115,6 +115,28 @@ final class CommandExecutionTests: XCTestCase {
         XCTAssertEqual(gui.last, "secret<>")
     }
 
+    func testSSHAuthSockIsNotPassedThroughToSpawnedCommands() async throws {
+        let sock = "/tmp/pinchos-ssh-agent-\(UUID().uuidString).sock"
+        let policy = CommandExecutionPolicy(inheritedEnvironment: [
+            "PATH": "/usr/bin:/bin:/usr/sbin:/sbin",
+            "HOME": NSHomeDirectory(),
+            "SSH_AUTH_SOCK": sock
+        ])
+        let runner = CommandRunner(
+            command: "printf 'sock<%s>\\n' \"${SSH_AUTH_SOCK-}\"",
+            timeout: 1,
+            maxOutputBytes: 256,
+            policy: policy
+        )
+        guard case .completed(let execution) = await runner.runIfIdle() else {
+            return XCTFail("expected SSH_AUTH_SOCK execution to complete")
+        }
+        XCTAssertEqual(execution.terminalReason, .exited(code: 0), "\(execution.stderr)")
+        XCTAssertEqual(execution.stdout.trimmingCharacters(in: .whitespacesAndNewlines), "sock<>")
+        XCTAssertFalse(execution.stdout.contains(sock))
+        XCTAssertFalse(execution.stderr.contains(sock))
+    }
+
     func testAbsentToolIsReportedWithoutDumpingInheritedSecrets() async throws {
         let secret = "pinchos-absent-secret-\(UUID().uuidString)"
         let policy = CommandExecutionPolicy(inheritedEnvironment: [

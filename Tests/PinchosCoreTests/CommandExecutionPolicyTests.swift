@@ -21,8 +21,21 @@ final class CommandExecutionPolicyTests: XCTestCase {
         ])
 
         XCTAssertEqual(gui.path, terminal.path)
+        XCTAssertEqual(
+            CommandExecutionPolicy.pathEntries,
+            [
+                "/opt/homebrew/bin",
+                "/opt/homebrew/sbin",
+                "/usr/local/bin",
+                "/usr/bin",
+                "/bin",
+                "/usr/sbin",
+                "/sbin"
+            ]
+        )
         XCTAssertEqual(gui.path, CommandExecutionPolicy.pathEntries.joined(separator: ":"))
         XCTAssertTrue(gui.path.contains("/opt/homebrew/bin"))
+        XCTAssertTrue(gui.path.contains("/usr/local/bin"))
         XCTAssertTrue(gui.path.contains("/usr/bin"))
         XCTAssertFalse(gui.path.contains("/Users/test/.local/bin"))
 
@@ -34,9 +47,19 @@ final class CommandExecutionPolicyTests: XCTestCase {
         XCTAssertNil(guiEnv["PINCHOS_SECRET"])
         XCTAssertNil(terminalEnv["PINCHOS_SECRET"])
         XCTAssertNil(terminalEnv["TERM"])
-        XCTAssertNil(terminalEnv["SSH_AUTH_SOCK"])
         XCTAssertFalse(String(describing: guiEnv).contains(secret))
         XCTAssertFalse(gui.missingCommandMessage("jq").contains(secret))
+    }
+
+    func testSSHAuthSockIsNotInherited() {
+        let sock = "/tmp/pinchos-ssh-agent-\(UUID().uuidString).sock"
+        let policy = CommandExecutionPolicy(inheritedEnvironment: [
+            "HOME": NSHomeDirectory(),
+            "SSH_AUTH_SOCK": sock
+        ])
+        XCTAssertFalse(CommandExecutionPolicy.inheritedKeys.contains("SSH_AUTH_SOCK"))
+        XCTAssertNil(policy.environment()["SSH_AUTH_SOCK"])
+        XCTAssertFalse(String(describing: policy.environment()).contains(sock))
     }
 
     func testResolveExecutableFindsSystemAndHomebrewToolsUnderLaunchdPATH() {
@@ -50,7 +73,7 @@ final class CommandExecutionPolicyTests: XCTestCase {
         XCTAssertNil(policy.resolveExecutable("definitely_missing_pinchos_command_125"))
         XCTAssertTrue(
             policy.missingCommandMessage("definitely_missing_pinchos_command_125")
-                .contains("system plus Apple Silicon Homebrew")
+                .contains("Homebrew, /usr/local/bin, and system directories")
         )
         XCTAssertFalse(policy.missingCommandMessage("ls").contains(secret))
         XCTAssertFalse(policy.missingCommandMessage("ls").contains("/usr/bin:/bin:/usr/sbin:/sbin"))

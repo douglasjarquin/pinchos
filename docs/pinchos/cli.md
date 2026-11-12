@@ -15,4 +15,6 @@
 `run <item>` executes one item for scriptable verification under that same policy.
 `config-path` prints the resolved path and `open-config` opens it in the default application.
 
-The execution policy (PATH, HOME, working directory, inherited keys) is documented in [runtime.md](runtime.md).
+The execution policy is documented in [runtime.md](runtime.md).
+PATH is `/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin`.
+`SSH_AUTH_SOCK` is not inherited.

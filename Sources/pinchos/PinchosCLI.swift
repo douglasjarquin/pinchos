@@ -344,7 +344,7 @@ struct PinchosCLI {
 
         reportSuccess(
             "execution environment",
-            "PATH uses system plus Apple Silicon Homebrew directories"
+            "PATH uses Homebrew, /usr/local/bin, and system directories"
         )
         var workingDirectoryIsDirectory = ObjCBool(false)
         if fileManager.fileExists(
