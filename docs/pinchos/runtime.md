@@ -31,10 +31,35 @@ It does not make Finder and Terminal identical arbitrary user environments.
 Missing tools are reported as not found on that PATH.
 Doctor output does not dump the inherited environment or secret values.
 
+## Refresh Now, retries, and coalescing
+
+Refresh Now requests every distinct value source the selected Pincho uses, including manual submenu rows with no `cache` interval.
+It never executes action rows.
+Equivalent primary and submenu commands share one source, so one request does not multiply identical executions.
+
+Opening a menu is synchronous and never waits on a refresh.
+Fresh values do not refresh on open.
+A never-attempted (unavailable) row may start a background refresh immediately.
+Stale values, failed refreshes that still have a last-good value, and failed refreshes with no value may request a background retry only after **30 seconds** have elapsed since the last attempt settled (`CommandSource.retryInterval`).
+The gate uses completion time, not when the refresh was admitted or started, so a slow command or a long FIFO wait does not make the next menu open retry immediately.
+That cadence is fixed; there is no TOML key for it.
+Explicit Refresh Now bypasses the delay.
+Manual submenu values use the same cadence after an initial failure; success stays manual-only until Refresh Now.
+
+Each source has at most one in-flight refresh.
+Additional `refresh()` callers join that execution instead of stacking waiters.
+ManagedItem keeps at most one apply-task per menu row (`menuRowRefreshTasks`) and at most one primary refresh task (`pendingRefreshPermitTask`); extra Refresh Now clicks coalesce there.
+Reload, removal, and shutdown cancel obsolete work and cannot execute stale actions.
+Last-good values, FIFO scheduler admission, process limits, and cancellation stay as they are.
+
 ## Live reload and recovery
 
 Valid changes apply incrementally while preserving unchanged source/cache identity.
 Added, removed, changed, and reordered items are reconciled under one concurrent lifecycle deadline.
+After a reload commits, a cached menu row whose source is new or changed refreshes once immediately.
+A retained cached row with no carried value is requested the same way, so a first attempt cancelled while still queued is not stranded until the cache timer.
+A row whose source the registry kept and that already has a settled value does not refresh on commit; it keeps that value and the 30-second retry gate.
+A new or changed manual row does not run on commit; it first runs on the next menu open, Refresh Now, or equivalent explicit request.
 Malformed configuration leaves the last known-good items running and exposes recovery actions for creating, opening, reloading, or quitting.
 
 ## Removed development syntax

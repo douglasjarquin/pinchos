@@ -9,17 +9,34 @@ private actor FakeSourceRunner: CommandSourceRunner {
     private(set) var activeRuns = 0
     private(set) var maxActiveRuns = 0
     private let delay: Duration
+    private let holdUntilReleased: Bool
+    private var startedWaiters: [CheckedContinuation<Void, Never>] = []
+    private var releaseWaiters: [CheckedContinuation<Void, Never>] = []
 
-    init(outcomes: [CommandRunOutcome], delay: Duration = .zero) {
+    init(
+        outcomes: [CommandRunOutcome],
+        delay: Duration = .zero,
+        holdUntilReleased: Bool = false
+    ) {
         self.outcomes = outcomes
         self.delay = delay
+        self.holdUntilReleased = holdUntilReleased
     }
 
     func runIfIdle() async -> CommandRunOutcome {
         runCount += 1
         activeRuns += 1
         maxActiveRuns = max(maxActiveRuns, activeRuns)
-        if delay > .zero {
+        let started = startedWaiters
+        startedWaiters.removeAll()
+        for waiter in started {
+            waiter.resume()
+        }
+        if holdUntilReleased {
+            await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+                releaseWaiters.append(continuation)
+            }
+        } else if delay > .zero {
             try? await Task.sleep(for: delay)
         }
         activeRuns -= 1
@@ -30,9 +47,24 @@ private actor FakeSourceRunner: CommandSourceRunner {
         return outcome
     }
 
+    func waitUntilRunStarts() async {
+        if activeRuns > 0 { return }
+        await withCheckedContinuation { startedWaiters.append($0) }
+    }
+
+    func release() {
+        let waiters = releaseWaiters
+        releaseWaiters.removeAll()
+        for waiter in waiters {
+            waiter.resume()
+        }
+    }
+
     func awaitSettledExecution() async -> CommandExecution? { lastExecution }
 
-    func cancelActive() async {}
+    func cancelActive() async {
+        release()
+    }
 
     func snapshot() async -> CommandRunnerSnapshot {
         CommandRunnerSnapshot(isRunning: activeRuns > 0, lastExecution: lastExecution, skippedRefreshes: 0)
@@ -87,14 +119,21 @@ final class CommandSourceTests: XCTestCase {
         outcomes: [CommandRunOutcome],
         clock: TestSourceClock = TestSourceClock(Date(timeIntervalSince1970: 1_700_000_000)),
         staleAfter: TimeInterval? = nil,
-        delay: Duration = .zero
+        delay: Duration = .zero,
+        holdUntilReleased: Bool = false,
+        refreshPolicy: CommandSourceRefreshPolicy = .manual
     ) -> (CommandSource, FakeSourceRunner, TestSourceClock) {
-        let runner = FakeSourceRunner(outcomes: outcomes, delay: delay)
+        let runner = FakeSourceRunner(
+            outcomes: outcomes,
+            delay: delay,
+            holdUntilReleased: holdUntilReleased
+        )
         let source = CommandSource(
             configuration: CommandSourceConfiguration(
                 command: "ignored",
                 timeout: 1,
                 maxOutputBytes: 1024,
+                refreshPolicy: refreshPolicy,
                 staleAfter: staleAfter
             ),
             scheduler: CommandScheduler(maxActiveSessions: 1),
@@ -102,6 +141,19 @@ final class CommandSourceTests: XCTestCase {
             runner: runner
         )
         return (source, runner, clock)
+    }
+
+    private func execution(_ stdout: String, code: Int32 = 0, stderr: String = "") -> CommandExecution {
+        CommandExecution(
+            terminalReason: .exited(code: code),
+            stdout: stdout,
+            stderr: stderr,
+            stdoutBytesRead: stdout.utf8.count,
+            stderrBytesRead: stderr.utf8.count,
+            stdoutTruncated: false,
+            stderrTruncated: false,
+            duration: 0.1
+        )
     }
 
     func testCancellingWhileWaitingForPermitDoesNotLaunchQueuedSource() async throws {
@@ -128,6 +180,148 @@ final class CommandSourceTests: XCTestCase {
         let diagnostics = await scheduler.diagnostics()
         XCTAssertEqual(diagnostics.activeSessions, 0)
         XCTAssertEqual(diagnostics.queuedSessions, 0)
+    }
+
+    func testCancellingLastRefreshJoinerAbortsQueuedPermitAndDoesNotRun() async throws {
+        let scheduler = CommandScheduler(maxActiveSessions: 1)
+        try await scheduler.acquirePermit()
+        let runner = FakeSourceRunner(outcomes: [.completed(success)])
+        let source = CommandSource(
+            configuration: CommandSourceConfiguration(command: "ignored", timeout: 1),
+            scheduler: scheduler,
+            runner: runner
+        )
+
+        let refresh = Task { await source.refresh() }
+        try await waitUntil { await scheduler.diagnostics().queuedSessions == 1 }
+        refresh.cancel()
+        _ = await refresh.value
+        await scheduler.releasePermit()
+        try await Task.sleep(for: .milliseconds(50))
+
+        let runCount = await runner.runCount
+        XCTAssertEqual(runCount, 0)
+        let diagnostics = await scheduler.diagnostics()
+        XCTAssertEqual(diagnostics.queuedSessions, 0)
+        XCTAssertEqual(diagnostics.activeSessions, 0)
+    }
+
+    func testCancellingOneJoinerLeavesSharedRefreshRunning() async throws {
+        let (source, runner, _) = source(
+            outcomes: [.completed(success)],
+            holdUntilReleased: true
+        )
+
+        let first = Task { await source.refresh() }
+        await runner.waitUntilRunStarts()
+        let second = Task { await source.refresh() }
+        first.cancel()
+        _ = await first.value
+        let runCountWhileHeld = await runner.runCount
+        XCTAssertEqual(runCountWhileHeld, 1)
+        await runner.release()
+        let secondValue = await second.value
+        let runCount = await runner.runCount
+        XCTAssertEqual(secondValue.value, "72%\n")
+        XCTAssertEqual(runCount, 1)
+    }
+
+    func testCancellingLastJoinerAfterRunnerStartsStillRecordsResult() async throws {
+        let (source, runner, _) = source(
+            outcomes: [.completed(success)],
+            holdUntilReleased: true
+        )
+
+        let refresh = Task { await source.refresh() }
+        await runner.waitUntilRunStarts()
+        refresh.cancel()
+        let cancelled = await refresh.value
+        XCTAssertEqual(cancelled.state, .refreshing)
+
+        await runner.release()
+        try await waitUntil { await source.snapshot().state == .fresh }
+        let cached = await source.snapshot()
+        let runCount = await runner.runCount
+        XCTAssertEqual(cached.value, "72%\n")
+        XCTAssertEqual(cached.state, .fresh)
+        XCTAssertEqual(runCount, 1)
+    }
+
+    func testRefreshJoinsCancelledFlightThatAlreadyStartedTheRunner() async throws {
+        let scheduler = CommandScheduler(maxActiveSessions: 2)
+        let runner = FakeSourceRunner(
+            outcomes: [.completed(success), .completed(execution("second\n"))],
+            holdUntilReleased: true
+        )
+        let source = CommandSource(
+            configuration: CommandSourceConfiguration(command: "ignored", timeout: 1),
+            scheduler: scheduler,
+            runner: runner
+        )
+
+        let first = Task { await source.refresh() }
+        await runner.waitUntilRunStarts()
+        first.cancel()
+        _ = await first.value
+
+        let second = Task { await source.refresh() }
+        try await waitUntil {
+            await scheduler.diagnostics().activeSessions >= 1
+        }
+        try await Task.sleep(for: .milliseconds(50))
+        let diagnostics = await scheduler.diagnostics()
+        let runCountWhileHeld = await runner.runCount
+        let maxActiveRuns = await runner.maxActiveRuns
+        XCTAssertEqual(diagnostics.activeSessions, 1, "a second flight took another permit")
+        XCTAssertEqual(runCountWhileHeld, 1)
+        XCTAssertEqual(maxActiveRuns, 1)
+
+        await runner.release()
+        let secondValue = await second.value
+        let runCount = await runner.runCount
+        XCTAssertEqual(secondValue.value, "72%\n")
+        XCTAssertEqual(secondValue.state, .fresh)
+        XCTAssertEqual(runCount, 1)
+        let diagnosticsAfter = await scheduler.diagnostics()
+        XCTAssertEqual(diagnosticsAfter.activeSessions, 0)
+    }
+
+    func testCancellingLastJoinerWhileDescendantLingersNeitherSpinsNorDropsResult() async throws {
+        let pidFile = FileManager.default.temporaryDirectory
+            .appendingPathComponent("source-linger-\(UUID().uuidString)")
+        let command = "(sleep 0.8; printf late) & printf '%s' \"$!\" > '\(pidFile.path)'; exit 0"
+        let runner = CommandRunner(command: command, timeout: 5)
+        let source = CommandSource(
+            configuration: CommandSourceConfiguration(command: command, timeout: 5),
+            scheduler: CommandScheduler(maxActiveSessions: 1),
+            runner: runner
+        )
+        defer {
+            if let text = try? String(contentsOf: pidFile, encoding: .utf8),
+               let pid = Int32(text.trimmingCharacters(in: .whitespacesAndNewlines)) {
+                kill(pid, SIGKILL)
+            }
+            try? FileManager.default.removeItem(at: pidFile)
+        }
+
+        let refresh = Task { await source.refresh() }
+        try await waitUntil {
+            let snapshot = await runner.snapshot()
+            return snapshot.isRunning && snapshot.lastExecution?.terminalReason == .exited(code: 0)
+        }
+        refresh.cancel()
+        let cancelled = await refresh.value
+        XCTAssertEqual(cancelled.state, .refreshing)
+
+        let cpuBefore = processCPUSeconds()
+        try await Task.sleep(for: .milliseconds(200))
+        let cpuDelta = processCPUSeconds() - cpuBefore
+        XCTAssertLessThan(cpuDelta, 0.15, "lingering settlement busy-spun after the last joiner cancelled")
+
+        try await waitUntil { await source.snapshot().state == .fresh }
+        let cached = await source.snapshot()
+        XCTAssertEqual(cached.value, "late")
+        XCTAssertEqual(cached.state, .fresh)
     }
 
     func testRefreshPublishesBoundedCachedValueAndTerminalState() async {
@@ -252,5 +446,206 @@ final class CommandSourceTests: XCTestCase {
         XCTAssertEqual(cachedValue.state, .fresh)
 
         await registry.releaseAndCancelIfLast(second)
+    }
+
+    func testFreshValueIsNotAutomaticallyDue() async {
+        let clock = TestSourceClock(Date(timeIntervalSince1970: 1_700_000_000))
+        let (source, runner, _) = source(
+            outcomes: [.completed(success)],
+            clock: clock,
+            staleAfter: 60
+        )
+
+        _ = await source.refresh()
+        clock.date = clock.date.addingTimeInterval(10)
+        let snapshot = await source.snapshot()
+        let due = CommandSource.isAutomaticRefreshDue(snapshot: snapshot, now: clock.date)
+        let runCount = await runner.runCount
+
+        XCTAssertFalse(due)
+        XCTAssertEqual(snapshot.state, .fresh)
+        XCTAssertEqual(runCount, 1)
+    }
+
+    func testStaleValueIsDueOnlyAfterRetryInterval() async {
+        let clock = TestSourceClock(Date(timeIntervalSince1970: 1_700_000_000))
+        let (source, runner, _) = source(
+            outcomes: [.completed(success), .completed(execution("stale-refresh\n"))],
+            clock: clock,
+            staleAfter: 10
+        )
+
+        _ = await source.refresh()
+        clock.date = clock.date.addingTimeInterval(11)
+        let stale = await source.snapshot()
+        let dueBeforeCadence = CommandSource.isAutomaticRefreshDue(snapshot: stale, now: clock.date)
+        XCTAssertEqual(stale.state, .stale)
+        XCTAssertFalse(dueBeforeCadence)
+
+        clock.date = clock.date.addingTimeInterval(CommandSource.retryInterval - 11)
+        let dueAfterCadence = CommandSource.isAutomaticRefreshDue(
+            snapshot: await source.snapshot(),
+            now: clock.date
+        )
+        XCTAssertTrue(dueAfterCadence)
+        let refreshed = await source.refresh()
+        let runCount = await runner.runCount
+
+        XCTAssertEqual(refreshed.value, "stale-refresh\n")
+        XCTAssertEqual(runCount, 2)
+    }
+
+    func testFailedWithValueDoesNotRetryUntilRetryIntervalElapses() async {
+        let clock = TestSourceClock(Date(timeIntervalSince1970: 1_700_000_000))
+        let (source, runner, _) = source(
+            outcomes: [.completed(success), .completed(failure), .completed(execution("recovered\n"))],
+            clock: clock,
+            staleAfter: 60
+        )
+
+        _ = await source.refresh()
+        clock.date = clock.date.addingTimeInterval(61)
+        let failed = await source.refresh()
+        XCTAssertEqual(failed.value, "72%\n")
+        XCTAssertEqual(failed.state, .error)
+
+        clock.date = clock.date.addingTimeInterval(1)
+        let dueImmediately = CommandSource.isAutomaticRefreshDue(
+            snapshot: await source.snapshot(),
+            now: clock.date
+        )
+        XCTAssertFalse(dueImmediately)
+        let runCountAfterIgnored = await runner.runCount
+        XCTAssertEqual(runCountAfterIgnored, 2)
+
+        clock.date = clock.date.addingTimeInterval(CommandSource.retryInterval)
+        let dueAfterCadence = CommandSource.isAutomaticRefreshDue(
+            snapshot: await source.snapshot(),
+            now: clock.date
+        )
+        XCTAssertTrue(dueAfterCadence)
+        let recovered = await source.refresh()
+        let runCount = await runner.runCount
+        XCTAssertEqual(recovered.value, "recovered\n")
+        XCTAssertEqual(runCount, 3)
+    }
+
+    func testFailedWithoutValueRetriesAfterCadenceIncludingManual() async {
+        let clock = TestSourceClock(Date(timeIntervalSince1970: 1_700_000_000))
+        let (source, runner, _) = source(
+            outcomes: [.completed(failure), .completed(success)],
+            clock: clock
+        )
+
+        let failed = await source.refresh()
+        let dueImmediately = CommandSource.isAutomaticRefreshDue(snapshot: failed, now: clock.date)
+        XCTAssertNil(failed.value)
+        XCTAssertEqual(failed.state, .error)
+        XCTAssertFalse(dueImmediately)
+
+        clock.date = clock.date.addingTimeInterval(CommandSource.retryInterval)
+        let dueAfterCadence = CommandSource.isAutomaticRefreshDue(
+            snapshot: await source.snapshot(),
+            now: clock.date
+        )
+        XCTAssertTrue(dueAfterCadence)
+        let recovered = await source.refresh()
+        let runCount = await runner.runCount
+        XCTAssertEqual(recovered.value, "72%\n")
+        XCTAssertEqual(runCount, 2)
+    }
+
+    func testManualSuccessIsNotAutomaticallyDue() async {
+        let clock = TestSourceClock(Date(timeIntervalSince1970: 1_700_000_000))
+        let (source, runner, _) = source(
+            outcomes: [.completed(success)],
+            clock: clock
+        )
+
+        _ = await source.refresh()
+        clock.date = clock.date.addingTimeInterval(CommandSource.retryInterval * 4)
+        let due = CommandSource.isAutomaticRefreshDue(
+            snapshot: await source.snapshot(),
+            now: clock.date
+        )
+        XCTAssertFalse(due)
+        let runCount = await runner.runCount
+        XCTAssertEqual(runCount, 1)
+    }
+
+    func testDuplicateConsumersJoinOneRefresh() async {
+        let (source, runner, _) = source(
+            outcomes: [.completed(success)],
+            holdUntilReleased: true
+        )
+
+        let first = Task { await source.refresh() }
+        await runner.waitUntilRunStarts()
+        let second = Task { await source.refresh() }
+        let third = Task { await source.refresh() }
+        await runner.release()
+        let firstValue = await first.value
+        let secondValue = await second.value
+        let thirdValue = await third.value
+        let runCount = await runner.runCount
+        let maxActiveRuns = await runner.maxActiveRuns
+
+        XCTAssertEqual(Set([firstValue.value, secondValue.value, thirdValue.value]), ["72%\n"])
+        XCTAssertEqual(runCount, 1)
+        XCTAssertEqual(maxActiveRuns, 1)
+    }
+
+    func testQueuedFailingRefreshIsNotDueUntilRetryIntervalAfterSettlement() async throws {
+        let clock = TestSourceClock(Date(timeIntervalSince1970: 1_700_000_000))
+        let scheduler = CommandScheduler(maxActiveSessions: 1)
+        try await scheduler.acquirePermit()
+        let runner = FakeSourceRunner(outcomes: [.completed(failure)])
+        let source = CommandSource(
+            configuration: CommandSourceConfiguration(
+                command: "ignored",
+                timeout: 1,
+                maxOutputBytes: 1024
+            ),
+            scheduler: scheduler,
+            clock: clock,
+            runner: runner
+        )
+
+        let refresh = Task { await source.refresh() }
+        try await waitUntil { await scheduler.diagnostics().queuedSessions == 1 }
+
+        clock.date = clock.date.addingTimeInterval(CommandSource.retryInterval + 5)
+        await scheduler.releasePermit()
+        let failed = await refresh.value
+        let runCountAfterFailure = await runner.runCount
+        XCTAssertEqual(failed.state, .error)
+        XCTAssertEqual(runCountAfterFailure, 1)
+
+        let dueOnCompletion = CommandSource.isAutomaticRefreshDue(snapshot: failed, now: clock.date)
+        XCTAssertFalse(dueOnCompletion, "queueing plus run time must not elapse the retry gate")
+
+        clock.date = clock.date.addingTimeInterval(CommandSource.retryInterval - 1)
+        let dueBeforeCadence = CommandSource.isAutomaticRefreshDue(
+            snapshot: await source.snapshot(),
+            now: clock.date
+        )
+        XCTAssertFalse(dueBeforeCadence)
+        let runCountBeforeCadence = await runner.runCount
+        XCTAssertEqual(runCountBeforeCadence, 1)
+
+        clock.date = clock.date.addingTimeInterval(1)
+        let dueAfterCadence = CommandSource.isAutomaticRefreshDue(
+            snapshot: await source.snapshot(),
+            now: clock.date
+        )
+        XCTAssertTrue(dueAfterCadence)
+    }
+
+    private func processCPUSeconds() -> Double {
+        var usage = rusage()
+        getrusage(RUSAGE_SELF, &usage)
+        let user = Double(usage.ru_utime.tv_sec) + Double(usage.ru_utime.tv_usec) / 1_000_000
+        let system = Double(usage.ru_stime.tv_sec) + Double(usage.ru_stime.tv_usec) / 1_000_000
+        return user + system
     }
 }

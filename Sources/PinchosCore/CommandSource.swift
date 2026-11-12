@@ -102,17 +102,66 @@ public struct SystemCommandSourceClock: CommandSourceClock {
     public func now() -> Date { Date() }
 }
 
+/// Single-resume slot so a joiner can return as soon as it is cancelled
+/// without racing the shared refresh task's completion.
+private final class RefreshJoinerSlot: @unchecked Sendable {
+    private let lock = NSLock()
+    private var continuation: CheckedContinuation<CachedValue, Never>?
+    private var result: CachedValue?
+
+    func install(_ continuation: CheckedContinuation<CachedValue, Never>) {
+        lock.lock()
+        if let result {
+            lock.unlock()
+            continuation.resume(returning: result)
+            return
+        }
+        self.continuation = continuation
+        lock.unlock()
+    }
+
+    func resume(_ value: CachedValue) {
+        lock.lock()
+        if let continuation {
+            self.continuation = nil
+            lock.unlock()
+            continuation.resume(returning: value)
+            return
+        }
+        if result == nil {
+            result = value
+        }
+        lock.unlock()
+    }
+}
+
 public actor CommandSource {
+    /// Automatic retries of a failed or stale source wait this long after the
+    /// last attempt settled before menu-open may start more work.
+    /// Explicit `refresh()` / Refresh Now bypasses the delay.
+    public static let retryInterval: TimeInterval = 30
+
     private let configuration: CommandSourceConfiguration
     private let runner: any CommandSourceRunner
     private let scheduler: CommandScheduler
     private let clock: any CommandSourceClock
     private var cachedValue = CachedValue()
-    private var isRefreshing = false
     private var runnerStarted = false
     private var generation: UInt64 = 0
-    private var refreshTask: Task<Void, Never>?
-    private var refreshWaiters: [CheckedContinuation<CachedValue, Never>] = []
+    /// At most one in-flight execution. Additional `refresh()` callers join
+    /// this task instead of appending waiters. Cancelling the last joiner of
+    /// a flight that has not reached the runner cancels the queued permit
+    /// wait. A command that already started is left running so lingering
+    /// settlement can sleep instead of busy-spin, and still records its
+    /// result in the shared cache.
+    private var inFlight: Task<CachedValue, Never>?
+    private var inFlightID: UUID?
+    private var joiners: [UUID: RefreshJoiner] = [:]
+
+    private struct RefreshJoiner {
+        let flightID: UUID
+        let slot: RefreshJoinerSlot
+    }
 
     public init(
         configuration: CommandSourceConfiguration,
@@ -148,21 +197,55 @@ public actor CommandSource {
         return cachedValue
     }
 
+    /// Whether an automatic refresh should start now. Explicit Refresh Now
+    /// bypasses this gate. Fresh values never auto-refresh. Never-attempted
+    /// sources are due immediately. Stale and failed sources (with or
+    /// without a last-good value) are due only after `retryInterval` has
+    /// elapsed since the last attempt settled, not since it was admitted
+    /// or started.
+    public static func isAutomaticRefreshDue(
+        snapshot: CachedValue,
+        now: Date,
+        retryInterval: TimeInterval = CommandSource.retryInterval
+    ) -> Bool {
+        switch snapshot.state {
+        case .refreshing, .fresh:
+            return false
+        case .stale, .error, .unavailable:
+            guard let lastAttemptedAt = snapshot.lastAttemptedAt else { return true }
+            return now.timeIntervalSince(lastAttemptedAt) >= retryInterval
+        }
+    }
+
     public func refresh() async -> CachedValue {
-        if isRefreshing {
-            return await withCheckedContinuation { continuation in
-                refreshWaiters.append(continuation)
+        if Task.isCancelled { return snapshot() }
+        let work: Task<CachedValue, Never>
+        let flightID: UUID
+        if let inFlight, let currentFlightID = inFlightID, !inFlight.isCancelled || runnerStarted {
+            work = inFlight
+            flightID = currentFlightID
+        } else {
+            let newFlightID = UUID()
+            let task = Task { await self.performExclusiveRefresh(flightID: newFlightID) }
+            inFlight = task
+            inFlightID = newFlightID
+            work = task
+            flightID = newFlightID
+        }
+        let joinerID = UUID()
+        let slot = RefreshJoinerSlot()
+        joiners[joinerID] = RefreshJoiner(flightID: flightID, slot: slot)
+        Task {
+            let value = await work.value
+            await self.finishJoiner(joinerID, value: value)
+        }
+        return await withTaskCancellationHandler {
+            await withCheckedContinuation { continuation in
+                slot.install(continuation)
             }
+        } onCancel: {
+            Task { await self.cancelJoiner(joinerID) }
         }
-        isRefreshing = true
-        let value = await performRefresh()
-        isRefreshing = false
-        let waiters = refreshWaiters
-        refreshWaiters.removeAll()
-        for waiter in waiters {
-            waiter.resume(returning: value)
-        }
-        return value
     }
 
     private func performRefresh() async -> CachedValue {
@@ -189,7 +272,6 @@ public actor CommandSource {
         runnerStarted = true
         let outcome = await runner.runIfIdle()
         let execution = await runner.awaitSettledExecution()
-        runnerStarted = false
         await scheduler.releasePermit()
         guard refreshGeneration == generation,
               case .completed = outcome,
@@ -197,31 +279,58 @@ public actor CommandSource {
         else { return snapshot() }
 
         let successful = execution.terminalReason == .exited(code: 0)
+        let settledAt = clock.now()
         cachedValue = CachedValue(
             value: successful ? execution.stdout : cachedValue.value,
             state: successful ? .fresh : .error,
-            lastAttemptedAt: attemptedAt,
-            lastSuccessfulAt: successful ? clock.now() : cachedValue.lastSuccessfulAt,
+            lastAttemptedAt: settledAt,
+            lastSuccessfulAt: successful ? settledAt : cachedValue.lastSuccessfulAt,
             lastExecution: execution,
             diagnostic: successful ? nil : Self.diagnostic(for: execution)
         )
         return snapshot()
     }
 
-    public func requestRefresh() {
-        guard refreshTask == nil, !isRefreshing else { return }
-        refreshTask = Task { [weak self] in
-            guard let self else { return }
-            _ = await self.refresh()
-            await self.clearRefreshTask()
+    private func performExclusiveRefresh(flightID: UUID) async -> CachedValue {
+        defer {
+            if inFlightID == flightID {
+                inFlight = nil
+                inFlightID = nil
+                runnerStarted = false
+            }
         }
+        return await performRefresh()
+    }
+
+    private func finishJoiner(_ joinerID: UUID, value: CachedValue) {
+        guard let joiner = joiners.removeValue(forKey: joinerID) else { return }
+        joiner.slot.resume(value)
+    }
+
+    private func cancelJoiner(_ joinerID: UUID) {
+        guard let joiner = joiners.removeValue(forKey: joinerID) else { return }
+        joiner.slot.resume(snapshot())
+        let hasPeer = joiners.values.contains { $0.flightID == joiner.flightID }
+        guard !hasPeer, inFlightID == joiner.flightID, !runnerStarted else { return }
+        inFlight?.cancel()
+        generation &+= 1
     }
 
     public func cancel() async {
         generation &+= 1
-        refreshTask?.cancel()
-        refreshTask = nil
+        if !runnerStarted {
+            inFlight?.cancel()
+        }
         await runner.cancelActive()
+    }
+
+    /// Waits for an in-flight refresh to settle, or returns the current
+    /// snapshot. Does not start a refresh and does not count as a joiner.
+    public func waitForIdleValue() async -> CachedValue {
+        if let inFlight {
+            return await inFlight.value
+        }
+        return snapshot()
     }
 
     public func runnerSnapshot() async -> CommandRunnerSnapshot {
@@ -229,12 +338,8 @@ public actor CommandSource {
     }
 
     public func recordSkippedRefresh() async {
-        guard isRefreshing, runnerStarted else { return }
+        guard inFlight != nil, runnerStarted else { return }
         await runner.recordSkippedRefresh()
-    }
-
-    private func clearRefreshTask() {
-        refreshTask = nil
     }
 
     private static func diagnostic(for execution: CommandExecution) -> String {

@@ -174,8 +174,7 @@ final class RecoveryLifecycleTests: XCTestCase {
             snapshot.fullOutput == "old\n" && item.renderedTitle == "old"
         }
 
-        item.refreshNow()
-        try await waitForRunning(item)
+        try await startAndWaitForRunning(item)
         item.refreshNow()
         _ = try await waitForSkippedRefresh(item)
 
@@ -1002,6 +1001,25 @@ final class RecoveryLifecycleTests: XCTestCase {
     private func waitForRunning(_ item: ManagedItem) async throws {
         let deadline = Date().addingTimeInterval(pollTimeout)
         while Date() < deadline {
+            if await item.runnerSnapshot().isRunning {
+                return
+            }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        throw NSError(
+            domain: "RecoveryLifecycleTests",
+            code: 4,
+            userInfo: [NSLocalizedDescriptionKey: "manual refresh did not become active"]
+        )
+    }
+
+    /// Refresh Now can no-op while a just-finished apply-task still occupies
+    /// `pendingRefreshPermitTask`. Keep clicking until a run is actually active.
+    @MainActor
+    private func startAndWaitForRunning(_ item: ManagedItem) async throws {
+        let deadline = Date().addingTimeInterval(pollTimeout)
+        while Date() < deadline {
+            item.refreshNow()
             if await item.runnerSnapshot().isRunning {
                 return
             }
