@@ -363,17 +363,25 @@ final class ManagedItem: ManagedItemLifecycle {
             primarySourceLease = pendingUpdate.primarySourceLease!
         }
         if pendingUpdate.menuRowsChanged {
-            menuRows = commandConfig.menu
-            menuRowRunners = pendingUpdate.menuRowRunners ?? Self.makeMenuRowRunners(for: menuRows, config: commandConfig)
-            menuRowSources = pendingUpdate.menuRowSources ?? Self.makeMenuRowSourceLeases(
-                for: menuRows,
+            let incomingSources = pendingUpdate.menuRowSources ?? Self.makeMenuRowSourceLeases(
+                for: commandConfig.menu,
                 config: commandConfig,
                 scheduler: scheduler,
                 registry: sourceRegistry,
                 clock: sourceClock
             ).mapValues(\.source)
+            var carried: [Int: CachedValue] = [:]
+            for (newIndex, newSource) in incomingSources {
+                if let old = menuRowSources.first(where: { $0.value === newSource }),
+                   let cached = menuRowCaches[old.key] {
+                    carried[newIndex] = cached
+                }
+            }
+            menuRows = commandConfig.menu
+            menuRowRunners = pendingUpdate.menuRowRunners ?? Self.makeMenuRowRunners(for: menuRows, config: commandConfig)
+            menuRowSources = incomingSources
             menuRowSourceLeases = pendingUpdate.menuRowSourceLeases ?? [:]
-            menuRowCaches.removeAll()
+            menuRowCaches = carried
             startMenuRowSources()
         }
         applyIcon()

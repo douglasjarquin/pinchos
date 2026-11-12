@@ -149,9 +149,9 @@ public actor CommandSource {
     private var runnerStarted = false
     private var generation: UInt64 = 0
     /// At most one in-flight execution. Additional `refresh()` callers join
-    /// this task instead of appending waiters. The shared task is cancelled
-    /// when every joiner has cancelled, so a cancelled caller can abort a
-    /// queued `acquirePermit()` without waiting for the command.
+    /// this task instead of appending waiters. Cancelling the last joiner
+    /// cancels a queued permit wait; a command that already started still
+    /// records its result in the shared cache.
     private var inFlight: Task<CachedValue, Never>?
     private var inFlightID: UUID?
     private var joiners: [UUID: RefreshJoinerSlot] = [:]
@@ -213,7 +213,7 @@ public actor CommandSource {
     public func refresh() async -> CachedValue {
         if Task.isCancelled { return snapshot() }
         let work: Task<CachedValue, Never>
-        if let inFlight, !inFlight.isCancelled {
+        if let inFlight, !inFlight.isCancelled || runnerStarted {
             work = inFlight
         } else {
             let flightID = UUID()
@@ -262,7 +262,6 @@ public actor CommandSource {
         runnerStarted = true
         let outcome = await runner.runIfIdle()
         let execution = await runner.awaitSettledExecution()
-        runnerStarted = false
         await scheduler.releasePermit()
         guard refreshGeneration == generation,
               case .completed = outcome,
@@ -287,6 +286,7 @@ public actor CommandSource {
             if inFlightID == flightID {
                 inFlight = nil
                 inFlightID = nil
+                runnerStarted = false
             }
         }
         return await performRefresh()
@@ -301,8 +301,10 @@ public actor CommandSource {
         guard let slot = joiners.removeValue(forKey: joinerID) else { return }
         slot.resume(snapshot())
         guard joiners.isEmpty else { return }
-        generation &+= 1
         inFlight?.cancel()
+        if !runnerStarted {
+            generation &+= 1
+        }
     }
 
     public func cancel() async {

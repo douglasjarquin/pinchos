@@ -439,6 +439,54 @@ final class ManagedItemRefreshTests: XCTestCase {
     }
 
     @MainActor
+    func testUnchangedMenuRowKeepsRetryGateWhenAnotherRowChanges() async throws {
+        let log = path("kept-row.log")
+        let clock = TestItemClock()
+        let kept = counting(log, output: "kept")
+        let item = makeItem(
+            config: ItemConfig(
+                name: "item",
+                run: "printf primary",
+                interval: .manual,
+                menu: [
+                    MenuRowConfig(label: "Kept", run: kept, cache: 60),
+                    MenuRowConfig(label: "Other", run: "printf other", cache: 60)
+                ]
+            ),
+            clock: clock
+        )
+
+        _ = item.menuRowValue(at: 0)
+        let first = await waitUntil { item.menuRowValue(at: 0) == "kept" }
+        XCTAssertTrue(first)
+        let idle = await waitForMenuRowIdle(item)
+        XCTAssertTrue(idle)
+        XCTAssertEqual(lineCount(log), 1)
+
+        await item.prepareUpdate(config: ItemConfig(
+            name: "item",
+            run: "printf primary",
+            interval: .manual,
+            menu: [
+                MenuRowConfig(label: "Kept", run: kept, cache: 60),
+                MenuRowConfig(label: "Other", run: "printf other-new", cache: 60)
+            ]
+        ))
+        item.commitPreparedUpdate()
+
+        for _ in 0..<8 {
+            _ = item.menuRowValue(at: 0)
+        }
+        XCTAssertEqual(
+            lineCount(log),
+            1,
+            "an unchanged row lost its retry gate across a menu edit and re-ran immediately"
+        )
+        XCTAssertEqual(item.menuRowValue(at: 0), "kept")
+        XCTAssertEqual(item.menuRowRefreshTaskCountForTesting, 0)
+    }
+
+    @MainActor
     func testMenuRowValueDoesNotWaitOnASlowRefresh() async throws {
         let item = makeItem(config: ItemConfig(
             name: "item",

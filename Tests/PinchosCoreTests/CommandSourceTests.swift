@@ -226,6 +226,66 @@ final class CommandSourceTests: XCTestCase {
         XCTAssertEqual(runCount, 1)
     }
 
+    func testCancellingLastJoinerAfterRunnerStartsStillRecordsResult() async throws {
+        let (source, runner, _) = source(
+            outcomes: [.completed(success)],
+            holdUntilReleased: true
+        )
+
+        let refresh = Task { await source.refresh() }
+        await runner.waitUntilRunStarts()
+        refresh.cancel()
+        let cancelled = await refresh.value
+        XCTAssertEqual(cancelled.state, .refreshing)
+
+        await runner.release()
+        try await waitUntil { await source.snapshot().state == .fresh }
+        let cached = await source.snapshot()
+        let runCount = await runner.runCount
+        XCTAssertEqual(cached.value, "72%\n")
+        XCTAssertEqual(cached.state, .fresh)
+        XCTAssertEqual(runCount, 1)
+    }
+
+    func testRefreshJoinsCancelledFlightThatAlreadyStartedTheRunner() async throws {
+        let scheduler = CommandScheduler(maxActiveSessions: 2)
+        let runner = FakeSourceRunner(
+            outcomes: [.completed(success), .completed(execution("second\n"))],
+            holdUntilReleased: true
+        )
+        let source = CommandSource(
+            configuration: CommandSourceConfiguration(command: "ignored", timeout: 1),
+            scheduler: scheduler,
+            runner: runner
+        )
+
+        let first = Task { await source.refresh() }
+        await runner.waitUntilRunStarts()
+        first.cancel()
+        _ = await first.value
+
+        let second = Task { await source.refresh() }
+        try await waitUntil {
+            await scheduler.diagnostics().activeSessions >= 1
+        }
+        try await Task.sleep(for: .milliseconds(50))
+        let diagnostics = await scheduler.diagnostics()
+        let runCountWhileHeld = await runner.runCount
+        let maxActiveRuns = await runner.maxActiveRuns
+        XCTAssertEqual(diagnostics.activeSessions, 1, "a second flight took another permit")
+        XCTAssertEqual(runCountWhileHeld, 1)
+        XCTAssertEqual(maxActiveRuns, 1)
+
+        await runner.release()
+        let secondValue = await second.value
+        let runCount = await runner.runCount
+        XCTAssertEqual(secondValue.value, "72%\n")
+        XCTAssertEqual(secondValue.state, .fresh)
+        XCTAssertEqual(runCount, 1)
+        let diagnosticsAfter = await scheduler.diagnostics()
+        XCTAssertEqual(diagnosticsAfter.activeSessions, 0)
+    }
+
     func testRefreshPublishesBoundedCachedValueAndTerminalState() async {
         let (source, _, _) = source(outcomes: [.completed(success)])
 
