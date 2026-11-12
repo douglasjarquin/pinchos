@@ -408,6 +408,10 @@ final class ManagedItem: ManagedItemLifecycle {
         }
         if pendingUpdate.presentationNeedsUpdate {
             lastSuccessfulTitle = lastSuccessfulOutput.map { applyFormat(commandConfig.format, output: lastTrimmedLine(of: $0)) }
+        }
+        // A mid-flight source replacement returns from refresh() without the
+        // closing paint, and the timer restarts without an initial tick.
+        if pendingUpdate.presentationNeedsUpdate || pendingUpdate.primarySource != nil {
             requestPresentationUpdate()
         }
         lifecycle = .live
@@ -797,11 +801,8 @@ final class ManagedItem: ManagedItemLifecycle {
         lastSuccessfulOutput = cached.value
         lastAttemptedAt = cached.lastAttemptedAt
         lastUpdatedAt = cached.lastSuccessfulAt
-        if let execution = cached.lastExecution, execution.terminalReason == .exited(code: 0) {
-            lastSuccessfulTitle = applyFormat(
-                commandConfig.format,
-                output: lastTrimmedLine(of: execution.stdout)
-            )
+        lastSuccessfulTitle = lastSuccessfulOutput.map {
+            applyFormat(commandConfig.format, output: lastTrimmedLine(of: $0))
         }
     }
 

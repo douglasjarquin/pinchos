@@ -104,10 +104,11 @@ final class ManagedItemFreshnessTests: XCTestCase {
         )
 
         item.refreshNow()
-        let ready = await waitUntil { await item.runtimeSnapshot().fullOutput == "72" }
+        let ready = await waitUntil {
+            item.renderedTitle == "72"
+                && item.renderedAccessibilityLabel == "72, fresh"
+        }
         XCTAssertTrue(ready)
-        XCTAssertEqual(item.renderedTitle, "72")
-        XCTAssertEqual(item.renderedAccessibilityLabel, "72, fresh")
         let success = await item.runtimeSnapshot()
         let lastSuccess = try XCTUnwrap(success.lastUpdatedAt)
         XCTAssertEqual(lineCount(log), 1)
@@ -403,6 +404,127 @@ final class ManagedItemFreshnessTests: XCTestCase {
         XCTAssertEqual(long.renderedTitle, "99")
         XCTAssertEqual(longSnapshot.lastUpdatedAt, shortSnapshot.lastUpdatedAt)
         XCTAssertEqual(longSnapshot.freshness.state, .fresh)
+    }
+
+    @MainActor
+    func testSharedFailureAfterPeerSuccessUsesLastGoodValueForTitle() async throws {
+        let clock = TestItemClock()
+        let registry = CommandSourceRegistry()
+        let log = path("peer-fail.log")
+        let command = """
+        printf 'x\\n' >> '\(log.path)'; \
+        count=$(wc -l < '\(log.path)' | tr -d ' '); \
+        if [ "$count" -eq 1 ]; then printf '72'; \
+        elif [ "$count" -eq 2 ]; then printf '99'; \
+        else exit 1; fi
+        """
+        let peer = makeItem(
+            config: ItemConfig(name: "peer", run: command, interval: .scheduled(60), format: "{output}%"),
+            clock: clock,
+            sourceRegistry: registry
+        )
+        let item = makeItem(
+            config: ItemConfig(name: "item", run: command, interval: .scheduled(60), format: "{output}%"),
+            clock: clock,
+            sourceRegistry: registry
+        )
+
+        peer.refreshNow()
+        item.refreshNow()
+        let first = await waitUntil { peer.renderedTitle == "72%" && item.renderedTitle == "72%" }
+        XCTAssertTrue(first)
+        try await Task.sleep(for: .milliseconds(50))
+
+        peer.refreshNow()
+        let second = await waitUntil { peer.renderedTitle == "99%" }
+        XCTAssertTrue(second)
+        try await Task.sleep(for: .milliseconds(50))
+
+        peer.refreshNow()
+        let failed = await waitUntil {
+            peer.renderedTitle == "99%\(ValueFreshness.warningMarker)"
+        }
+        XCTAssertTrue(failed)
+
+        let snapshot = await item.runtimeSnapshot()
+        XCTAssertEqual(snapshot.freshness.state, .failedWithValue)
+        XCTAssertEqual(snapshot.fullOutput, "99")
+        XCTAssertEqual(item.renderedTitle, "99%\(ValueFreshness.warningMarker)")
+        XCTAssertEqual(item.renderedAccessibilityLabel, "99%, failed, showing last good value")
+    }
+
+    @MainActor
+    func testNewSharedConsumerShowsLastGoodValueWhileSourceIsFailed() async throws {
+        let clock = TestItemClock()
+        let registry = CommandSourceRegistry()
+        let log = path("late-join.log")
+        let command = failAfterFirstSuccess(log: log, output: "72")
+        let peer = makeItem(
+            config: ItemConfig(name: "peer", run: command, interval: .scheduled(60)),
+            clock: clock,
+            sourceRegistry: registry
+        )
+
+        peer.refreshNow()
+        let first = await waitUntil { peer.renderedTitle == "72" }
+        XCTAssertTrue(first)
+        try await Task.sleep(for: .milliseconds(50))
+
+        peer.refreshNow()
+        let failed = await waitUntil {
+            peer.renderedTitle == "72\(ValueFreshness.warningMarker)"
+        }
+        XCTAssertTrue(failed)
+
+        let added = makeItem(
+            config: ItemConfig(name: "added", run: command, interval: .scheduled(60)),
+            clock: clock,
+            sourceRegistry: registry
+        )
+        let snapshot = await added.runtimeSnapshot()
+        XCTAssertEqual(snapshot.freshness.state, .failedWithValue)
+        XCTAssertEqual(snapshot.fullOutput, "72")
+        XCTAssertEqual(added.renderedTitle, "72\(ValueFreshness.warningMarker)")
+        XCTAssertEqual(added.renderedAccessibilityLabel, "72, failed, showing last good value")
+    }
+
+    @MainActor
+    func testSourceReplacementClearsForcedRefreshingWithoutWaitingForATick() async throws {
+        let clock = TestItemClock()
+        let scheduler = CommandScheduler(maxActiveSessions: 1)
+        let log = path("replace-source.log")
+        let command = counting(log, output: "72")
+        let item = makeItem(
+            config: ItemConfig(name: "item", run: command, interval: .scheduled(60), timeout: 5),
+            clock: clock,
+            scheduler: scheduler
+        )
+
+        item.refreshNow()
+        let ready = await waitUntil { item.renderedTitle == "72" }
+        XCTAssertTrue(ready)
+        try await Task.sleep(for: .milliseconds(50))
+
+        try await scheduler.acquirePermit()
+        item.refreshNow()
+        let refreshing = await waitUntil {
+            item.renderedTitle == "72"
+                && item.renderedAccessibilityLabel == "72, refreshing"
+        }
+        XCTAssertTrue(refreshing)
+
+        await item.prepareUpdate(
+            config: ItemConfig(name: "item", run: command, interval: .scheduled(60), timeout: 30),
+            deadline: ContinuousClock.now.advanced(by: .seconds(2))
+        )
+        item.commitPreparedUpdate()
+        await scheduler.releasePermit()
+
+        let settled = await waitUntil {
+            item.renderedTitle == "72"
+                && item.renderedAccessibilityLabel == "72, fresh"
+        }
+        XCTAssertTrue(settled)
     }
 
     @MainActor
