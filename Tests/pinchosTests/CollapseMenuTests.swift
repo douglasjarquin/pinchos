@@ -239,6 +239,41 @@ final class CollapseMenuTests: XCTestCase {
         XCTAssertEqual(row.accessibilityLabel(), "12, stale, scheduler delayed")
     }
 
+    func testCollapsedFirstLevelKeepsStaleMarkerWhileRefreshing() async throws {
+        let factory = CollapseFakeFactory()
+        let host = CollapseFakeStatusItemHost()
+        let controller = makeController(factory: factory, host: host)
+        addTeardownBlock { @MainActor in await controller.shutdown() }
+
+        await controller.apply(config: PinchosConfig(items: [command("disk")]))
+        let success = Date(timeIntervalSince1970: 1_700_000_000)
+        factory.created[0].runtimeSnapshotValue = ItemRuntimeSnapshot(
+            isRunning: true,
+            fullOutput: "12",
+            lastAttemptedAt: success.addingTimeInterval(180),
+            lastUpdatedAt: success,
+            lastExecution: CommandExecution(
+                terminalReason: .exited(code: 0),
+                stdout: "12",
+                stderr: "",
+                stdoutBytesRead: 2,
+                stderrBytesRead: 0,
+                stdoutTruncated: false,
+                stderrTruncated: false,
+                duration: 0.1
+            ),
+            staleAfter: 60,
+            skippedRefreshes: 0,
+            now: success.addingTimeInterval(180),
+            isRefreshing: true
+        )
+
+        let collapsed = await controller.makeCollapsedMenu()
+        let row = try XCTUnwrap(collapsed.items.first(where: { $0.submenu != nil }))
+        XCTAssertEqual(row.title, "12\(ValueFreshness.staleMarker)")
+        XCTAssertEqual(row.accessibilityLabel(), "12, stale, refreshing")
+    }
+
     func testCollapsedFirstLevelShowsCommandValueInsteadOfName() async throws {
         let factory = CollapseFakeFactory()
         let host = CollapseFakeStatusItemHost()

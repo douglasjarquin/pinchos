@@ -63,7 +63,14 @@ Registration order cannot change that: two consumers of one command with 60s and
 
 The fixed states are unavailable, fresh, age-stale, queued/refreshing, failed-with-value, and failed-without-value.
 Last-good text stays visible while a refresh is queued or running and after a failed command.
-Age expiry and a missed/delayed scheduler tick share the stale marker and spoken "stale, scheduler delayed"; a failed command uses the warning marker and keeps the last-good value.
+Age-stale and scheduler-delayed share the ⌛︎ marker.
+VoiceOver says "stale, scheduler delayed" when the value aged out and no later attempt has started.
+It says "stale" when the value aged out without that scheduler delay.
+A value that has aged out while a refresh is queued or running keeps the ⌛︎ marker and is spoken "stale, refreshing".
+A value still inside its window is spoken "refreshing" with no marker.
+A failed command uses the warning marker and keeps the last-good value.
+There is no separate scheduler-delay glyph.
+Diagnostics add `Delay: scheduler` when that delay is why the value aged out.
 Initial failure does not invent a success timestamp or value.
 The same interpretation is used for the menu-bar title, submenu values, collapsed first-level rows, VoiceOver labels, and diagnostic snapshots (`State`, `Stale`, and `Delay: scheduler` when the scheduler has not attempted since the value aged out).
 

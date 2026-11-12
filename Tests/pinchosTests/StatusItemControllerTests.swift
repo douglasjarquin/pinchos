@@ -347,6 +347,43 @@ final class StatusItemControllerTests: XCTestCase {
         XCTAssertTrue(titles.contains("Last success: 2023-11-14T22:13:20Z"))
     }
 
+    func testLifecycleMenuOmitsSchedulerDelayWhileAnAgedValueIsRefreshing() async throws {
+        let factory = FakeManagedItemFactory()
+        let controller = makeController(factory: factory)
+        addTeardownBlock { @MainActor in
+            await controller.shutdown()
+        }
+
+        await controller.apply(config: PinchosConfig(items: [item("alpha")]))
+        let success = Date(timeIntervalSince1970: 1_700_000_000)
+        factory.created[0].runtimeSnapshotValue = ItemRuntimeSnapshot(
+            isRunning: true,
+            fullOutput: "72%",
+            lastAttemptedAt: success.addingTimeInterval(180),
+            lastUpdatedAt: success,
+            lastExecution: CommandExecution(
+                terminalReason: .exited(code: 0),
+                stdout: "72%",
+                stderr: "",
+                stdoutBytesRead: 3,
+                stderrBytesRead: 0,
+                stdoutTruncated: false,
+                stderrTruncated: false,
+                duration: 0.1
+            ),
+            staleAfter: 60,
+            skippedRefreshes: 0,
+            now: success.addingTimeInterval(180),
+            isRefreshing: true
+        )
+
+        let menu = await controller.makeLifecycleMenu(forManagedItem: factory.created[0])
+        let titles = menu.items.map(\.title)
+        XCTAssertTrue(titles.contains("State: running"))
+        XCTAssertTrue(titles.contains("Stale: yes"))
+        XCTAssertFalse(titles.contains("Delay: scheduler"))
+    }
+
     func testCompactLifecycleMenuShowsOnlyActions() async throws {
         let factory = FakeManagedItemFactory()
         let controller = makeController(factory: factory)

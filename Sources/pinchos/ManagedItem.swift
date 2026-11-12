@@ -751,15 +751,15 @@ final class ManagedItem: ManagedItemLifecycle {
     private func refresh() async {
         guard isLive else { return }
         let generation = configurationGeneration
-        lastAttemptedAt = now()
-        let cached = await primarySource.refresh()
+        _ = await primarySource.refresh()
         guard !isRetired, generation == configurationGeneration else { return }
+        let cached = await primarySource.snapshot()
+        let hasInFlightRefresh = await primarySource.hasInFlightRefresh()
         applyMenuRowCachedValue(cached, from: primarySource)
-        guard let execution = cached.lastExecution else { return }
         lastSuccessfulOutput = cached.value
         lastAttemptedAt = cached.lastAttemptedAt
         lastUpdatedAt = cached.lastSuccessfulAt
-        if execution.terminalReason == .exited(code: 0) {
+        if let execution = cached.lastExecution, execution.terminalReason == .exited(code: 0) {
             lastSuccessfulTitle = applyFormat(
                 commandConfig.format,
                 output: lastTrimmedLine(of: execution.stdout)
@@ -767,7 +767,11 @@ final class ManagedItem: ManagedItemLifecycle {
         }
         let runnerSnapshot = await primarySource.runnerSnapshot()
         guard !isRetired, generation == configurationGeneration else { return }
-        let snapshot = makeRuntimeSnapshot(runnerSnapshot, cached: cached)
+        let snapshot = makeRuntimeSnapshot(
+            runnerSnapshot,
+            cached: cached,
+            hasInFlightRefresh: hasInFlightRefresh
+        )
         renderPresentation(snapshot)
     }
 
@@ -780,8 +784,13 @@ final class ManagedItem: ManagedItemLifecycle {
     private func updatePresentation() async {
         let runnerSnapshot = await primarySource.runnerSnapshot()
         let cached = await primarySource.snapshot()
+        let hasInFlightRefresh = await primarySource.hasInFlightRefresh()
         guard !isRetired else { return }
-        let snapshot = makeRuntimeSnapshot(runnerSnapshot, cached: cached)
+        let snapshot = makeRuntimeSnapshot(
+            runnerSnapshot,
+            cached: cached,
+            hasInFlightRefresh: hasInFlightRefresh
+        )
         renderPresentation(snapshot)
     }
 
@@ -804,15 +813,17 @@ final class ManagedItem: ManagedItemLifecycle {
 
     private func makeRuntimeSnapshot(
         _ runnerSnapshot: CommandRunnerSnapshot,
-        cached: CachedValue? = nil
+        cached: CachedValue? = nil,
+        hasInFlightRefresh: Bool = false
     ) -> ItemRuntimeSnapshot {
-        let isRefreshing = runnerSnapshot.isRunning || cached?.state == .refreshing
+        let isRefreshing = runnerSnapshot.isRunning
+            || (cached?.state == .refreshing && hasInFlightRefresh)
         return ItemRuntimeSnapshot(
             isRunning: runnerSnapshot.isRunning,
             fullOutput: lastSuccessfulOutput,
-            lastAttemptedAt: lastAttemptedAt,
-            lastUpdatedAt: lastUpdatedAt,
-            lastExecution: runnerSnapshot.lastExecution ?? cached?.lastExecution,
+            lastAttemptedAt: cached?.lastAttemptedAt ?? lastAttemptedAt,
+            lastUpdatedAt: cached?.lastSuccessfulAt ?? lastUpdatedAt,
+            lastExecution: cached?.lastExecution ?? runnerSnapshot.lastExecution,
             staleAfter: freshnessInterval(commandConfig.interval),
             skippedRefreshes: runnerSnapshot.skippedRefreshes,
             now: now(),
@@ -823,7 +834,12 @@ final class ManagedItem: ManagedItemLifecycle {
     func runtimeSnapshot() async -> ItemRuntimeSnapshot {
         let runnerSnapshot = await primarySource.runnerSnapshot()
         let cached = await primarySource.snapshot()
-        let snapshot = makeRuntimeSnapshot(runnerSnapshot, cached: cached)
+        let hasInFlightRefresh = await primarySource.hasInFlightRefresh()
+        let snapshot = makeRuntimeSnapshot(
+            runnerSnapshot,
+            cached: cached,
+            hasInFlightRefresh: hasInFlightRefresh
+        )
         renderPresentation(snapshot)
         return snapshot
     }

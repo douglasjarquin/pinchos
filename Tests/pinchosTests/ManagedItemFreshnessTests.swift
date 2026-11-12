@@ -253,10 +253,116 @@ final class ManagedItemFreshnessTests: XCTestCase {
                 && item.renderedTitle == "72"
         }
         XCTAssertTrue(refreshing)
+        // Clock has not advanced past the 60s window, so this stays plain refreshing.
         XCTAssertEqual(item.renderedAccessibilityLabel, "72, refreshing")
         let settled = await waitUntil { await item.runtimeSnapshot().fullOutput == "99" }
         XCTAssertTrue(settled)
         XCTAssertEqual(item.renderedTitle, "99")
+    }
+
+    @MainActor
+    func testAgedValueKeepsStaleMarkerWhileARefreshIsInFlight() async throws {
+        let clock = TestItemClock()
+        let hold = path("stale-refresh-hold")
+        let command = "if [ ! -e '\(hold.path)' ]; then printf '72'; touch '\(hold.path)'; else sleep 0.5; printf '99'; fi"
+        let item = makeItem(
+            config: ItemConfig(
+                name: "item",
+                run: command,
+                interval: .scheduled(60),
+                menu: [MenuRowConfig(label: "Usage", run: command, cache: 60)]
+            ),
+            clock: clock
+        )
+
+        item.refreshNow()
+        let ready = await waitUntil {
+            let snapshot = await item.runtimeSnapshot()
+            return snapshot.fullOutput == "72" && item.menuRowValue(at: 0) == "72"
+        }
+        XCTAssertTrue(ready)
+
+        item.refreshNow()
+        let inWindow = await waitUntil {
+            let snapshot = await item.runtimeSnapshot()
+            return snapshot.freshness.state == .refreshing
+                && !snapshot.freshness.isAgeExpired
+                && item.renderedTitle == "72"
+        }
+        XCTAssertTrue(inWindow)
+        XCTAssertEqual(item.renderedAccessibilityLabel, "72, refreshing")
+
+        // Sleep/wake: the injected clock jumps past expiry while the refresh
+        // is still in flight. Refreshing must not hide the aged-out marker.
+        clock.date = clock.date.addingTimeInterval(180)
+        let snapshot = await item.runtimeSnapshot()
+        XCTAssertEqual(snapshot.freshness.state, .refreshing)
+        XCTAssertTrue(snapshot.freshness.isAgeExpired)
+        XCTAssertFalse(snapshot.freshness.isSchedulerDelayed)
+        XCTAssertEqual(item.renderedTitle, "72\(ValueFreshness.staleMarker)")
+        XCTAssertEqual(item.renderedAccessibilityLabel, "72, stale, refreshing")
+
+        let row = item.menuRowFreshness(at: 0)
+        XCTAssertEqual(row.state, .refreshing)
+        XCTAssertTrue(row.isAgeExpired)
+        XCTAssertEqual(row.marker, ValueFreshness.staleMarker)
+        XCTAssertEqual(row.spokenDescription(valueText: "72"), "72, stale, refreshing")
+        XCTAssertEqual(item.menuRowValue(at: 0), "72")
+
+        let settled = await waitUntil { await item.runtimeSnapshot().fullOutput == "99" }
+        XCTAssertTrue(settled)
+        XCTAssertEqual(item.renderedTitle, "99")
+        XCTAssertEqual(item.renderedAccessibilityLabel, "99, fresh")
+    }
+
+    @MainActor
+    func testAbandonedQueuedRefreshDoesNotStayRefreshing() async throws {
+        let clock = TestItemClock()
+        let log = path("abandon.log")
+        let scheduler = CommandScheduler(maxActiveSessions: 1)
+        let command = counting(log, output: "72")
+        let item = makeItem(
+            config: ItemConfig(name: "item", run: command, interval: .scheduled(60)),
+            clock: clock,
+            scheduler: scheduler
+        )
+
+        item.refreshNow()
+        let ready = await waitUntil { await item.runtimeSnapshot().fullOutput == "72" }
+        XCTAssertTrue(ready)
+        let successSnapshot = await item.runtimeSnapshot()
+        let successAt = try XCTUnwrap(successSnapshot.lastUpdatedAt)
+        XCTAssertEqual(lineCount(log), 1)
+
+        try await scheduler.acquirePermit()
+        item.refreshNow()
+        let queued = await waitUntil { await scheduler.diagnostics().queuedSessions == 1 }
+        XCTAssertTrue(queued)
+
+        // Identity change drops the last lease, so the queued flight is
+        // cancelled before it can acquire a permit. Interval-only edits keep
+        // the shared source (#124) and are not this path.
+        await item.prepareUpdate(
+            config: ItemConfig(name: "item", run: counting(log, output: "99"), interval: .scheduled(60)),
+            deadline: ContinuousClock.now.advanced(by: .seconds(2))
+        )
+        item.commitPreparedUpdate()
+        await scheduler.releasePermit()
+
+        let afterCancel = await item.runtimeSnapshot()
+        XCTAssertNotEqual(afterCancel.freshness.state, .refreshing)
+        XCTAssertEqual(afterCancel.fullOutput, "72")
+        XCTAssertEqual(afterCancel.lastUpdatedAt, successAt)
+        XCTAssertEqual(afterCancel.lastAttemptedAt, successAt)
+        XCTAssertEqual(item.renderedTitle, "72")
+        XCTAssertEqual(lineCount(log), 1)
+
+        clock.date = clock.date.addingTimeInterval(180)
+        let aged = await item.runtimeSnapshot()
+        XCTAssertEqual(aged.freshness.state, .ageStale)
+        XCTAssertTrue(aged.freshness.isSchedulerDelayed)
+        XCTAssertEqual(item.renderedTitle, "72\(ValueFreshness.staleMarker)")
+        XCTAssertEqual(item.renderedAccessibilityLabel, "72, stale, scheduler delayed")
     }
 
     @MainActor

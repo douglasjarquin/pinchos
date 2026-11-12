@@ -37,9 +37,11 @@ public struct ValueFreshness: Equatable, Sendable {
         switch state {
         case .ageStale:
             return Self.staleMarker
+        case .refreshing:
+            return isAgeExpired ? Self.staleMarker : ""
         case .failedWithValue, .failedWithoutValue:
             return Self.warningMarker
-        case .unavailable, .fresh, .refreshing:
+        case .unavailable, .fresh:
             return ""
         }
     }
@@ -53,7 +55,7 @@ public struct ValueFreshness: Equatable, Sendable {
         case .ageStale:
             return isSchedulerDelayed ? "stale, scheduler delayed" : "stale"
         case .refreshing:
-            return "refreshing"
+            return isAgeExpired ? "stale, refreshing" : "refreshing"
         case .failedWithValue:
             return "failed, showing last good value"
         case .failedWithoutValue:

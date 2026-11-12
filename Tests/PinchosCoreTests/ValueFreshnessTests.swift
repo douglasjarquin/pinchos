@@ -42,7 +42,21 @@ final class ValueFreshnessTests: XCTestCase {
         XCTAssertEqual(freshness.runtimeStatus, .stale)
     }
 
-    func testRefreshingKeepsLastGoodAndDoesNotLookFailed() {
+    func testRefreshingInsideTheWindowHasNoStaleMarker() {
+        let freshness = interpret(
+            value: "72%",
+            isRefreshing: true,
+            lastSuccessfulAt: t0,
+            lastAttemptedAt: t0,
+            now: t0.addingTimeInterval(10)
+        )
+        XCTAssertEqual(freshness.state, .refreshing)
+        XCTAssertFalse(freshness.isAgeExpired)
+        XCTAssertEqual(freshness.marker, "")
+        XCTAssertEqual(freshness.spokenDescription(valueText: "72%"), "72%, refreshing")
+    }
+
+    func testRefreshingAfterAgeKeepsStaleMarkerAndSpeaksStaleRefreshing() {
         let freshness = interpret(
             value: "72%",
             isRefreshing: true,
@@ -53,8 +67,23 @@ final class ValueFreshnessTests: XCTestCase {
         XCTAssertEqual(freshness.state, .refreshing)
         XCTAssertTrue(freshness.isAgeExpired)
         XCTAssertFalse(freshness.isSchedulerDelayed)
-        XCTAssertEqual(freshness.marker, "")
-        XCTAssertEqual(freshness.spokenDescription(valueText: "72%"), "72%, refreshing")
+        XCTAssertEqual(freshness.marker, ValueFreshness.staleMarker)
+        XCTAssertEqual(freshness.spokenDescription(valueText: "72%"), "72%, stale, refreshing")
+        XCTAssertEqual(freshness.runtimeStatus, .running)
+    }
+
+    func testAgeStaleWithoutSchedulerDelaySpeaksStale() {
+        let freshness = interpret(
+            value: "72%",
+            lastSuccessfulAt: t0,
+            lastAttemptedAt: t0.addingTimeInterval(90),
+            now: t0.addingTimeInterval(90)
+        )
+        XCTAssertEqual(freshness.state, .ageStale)
+        XCTAssertTrue(freshness.isAgeExpired)
+        XCTAssertFalse(freshness.isSchedulerDelayed)
+        XCTAssertEqual(freshness.spokenState, "stale")
+        XCTAssertEqual(freshness.marker, ValueFreshness.staleMarker)
     }
 
     func testFailedWithValueIsDistinctFromAgeExpiry() {

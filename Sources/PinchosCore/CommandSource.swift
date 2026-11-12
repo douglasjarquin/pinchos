@@ -251,23 +251,24 @@ public actor CommandSource {
     private func performRefresh() async -> CachedValue {
         generation &+= 1
         let refreshGeneration = generation
+        let previous = cachedValue
         let attemptedAt = clock.now()
         cachedValue = CachedValue(
-            value: cachedValue.value,
+            value: previous.value,
             state: .refreshing,
             lastAttemptedAt: attemptedAt,
-            lastSuccessfulAt: cachedValue.lastSuccessfulAt,
-            lastExecution: cachedValue.lastExecution,
-            diagnostic: cachedValue.diagnostic
+            lastSuccessfulAt: previous.lastSuccessfulAt,
+            lastExecution: previous.lastExecution,
+            diagnostic: previous.diagnostic
         )
         do {
             try await scheduler.acquirePermit()
         } catch {
-            return snapshot()
+            return abandonRefresh(previous)
         }
         guard refreshGeneration == generation, !Task.isCancelled else {
             await scheduler.releasePermit()
-            return snapshot()
+            return abandonRefresh(previous)
         }
         runnerStarted = true
         let outcome = await runner.runIfIdle()
@@ -276,7 +277,7 @@ public actor CommandSource {
         guard refreshGeneration == generation,
               case .completed = outcome,
               let execution
-        else { return snapshot() }
+        else { return abandonRefresh(previous) }
 
         let successful = execution.terminalReason == .exited(code: 0)
         let settledAt = clock.now()
@@ -289,6 +290,23 @@ public actor CommandSource {
             diagnostic: successful ? nil : Self.diagnostic(for: execution)
         )
         return snapshot()
+    }
+
+    /// Permit wait cancelled, generation moved, or the runner never produced a
+    /// completed execution: put the pre-flight cache back so `.refreshing`
+    /// cannot outlive the flight. A started command still records its result
+    /// on the live flight (#124); this only runs when that flight is giving up.
+    private func abandonRefresh(_ previous: CachedValue) -> CachedValue {
+        if cachedValue.state == .refreshing {
+            cachedValue = previous
+        }
+        return snapshot()
+    }
+
+    /// True while an exclusive refresh task is still attached, including the
+    /// permit wait before the runner starts.
+    public func hasInFlightRefresh() -> Bool {
+        inFlight != nil
     }
 
     private func performExclusiveRefresh(flightID: UUID) async -> CachedValue {
