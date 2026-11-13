@@ -232,6 +232,15 @@ private func commandName(from run: String) -> CommandNameResult {
             continue
         }
 
+        if escaped {
+            if token.isEmpty {
+                tokenQuoted = true
+            }
+            token.append(character)
+            escaped = false
+            continue
+        }
+
         if character == "'" || character == "\"" {
             if token.isEmpty {
                 tokenQuoted = true
