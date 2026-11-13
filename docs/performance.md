@@ -195,20 +195,25 @@ Historical P1 samples stay historical: commit `44bb2b3d` recorded 13.78–13.81 
 This section records a new controlled-Mac run of the selected profiles after #123, #124, #125, and #126 landed on `main` (`51462ca`).
 #168 accessibility work is parked on a separate branch and is not in these binaries.
 
-`mise run verify` on this machine exited 0 in 131.42s: 208 `pinchosTests` and 215 `PinchosCoreTests`, then a release build.
+`mise run verify` on this machine exited 0 in 122.46s: 208 `pinchosTests` and 215 `PinchosCoreTests`, then a release build.
 
 `mise run perf` on 2026-11-13, Mac16,7, arm64, 24 GB, macOS 27.0.1, Apple Swift 6.4 (swiftlang-6.4.0.34.1 clang-2100.3.34.1).
-Measured commit: `c4aa8b1c67b63b053e14f30bd5f46d114611e33d`, dirty=false.
+Measured commit: `46610dd9c5ab657b66ea119fa20ca945731759c6`, dirty=false.
+Accessibility and Screen Recording were granted to the Cursor worker (`node`) and `python3.14` before this run.
 Raw JSON: `/tmp/pinchos-129/measure-clean.json`.
 
-| Profile | `phys_footprint` | CPU (`ps`) | `idlew` (60s window) | Numeric FDs | Threads | Children at sample | Descendants at SIGTERM | Leftover after SIGTERM |
-|---|---|---|---|---|---|---|---|---|
-| P1 three-item / 60s | 13.50 MB (14156568, 14156568, 14156568) | 0.0% | 0 | 7 | 5 | 0 | 0 | 0 |
-| five-item mixed (in-flight `sleep 120`) | 14.56 MB (15270680, 15270680, 15270680) | 0.8-1.0% | 1 | 11 | 10 | 2 | 3 | 0 |
+| Profile | `phys_footprint` | CPU (`ps`) | `idlew` (60s window) | Numeric FDs | Threads | Children at sample | Descendants at SIGTERM | Leftover after SIGTERM | Compact menu open (median of 3) |
+|---|---|---|---|---|---|---|---|---|---|
+| P1 three-item / 60s | 11.38-11.39 MB (11928320, 11944704, 11944704) | 0.0% | 0 | 7 | 5 | 0 | 0 | 0 | 18.7 ms (11.0, 18.7, 33.2) |
+| five-item mixed (in-flight `sleep 120`) | 12.13 MB (12714752, 12714752, 12714752) | 0.8-1.7% | 1 | 11 | 9 | 2 | 3 | 0 | 32.3 ms (30.4, 32.3, 39.8) |
 
 The P1 three-item reference stays under the ratified **< 15 MB** budget.
 The five-item mixed workload is characterization only; it also landed under 15 MB on this machine, but that is not a new product threshold.
 Five-item CPU is not an idle sample: `sleep 120` is still running, which is required for the descendant cleanup check.
+Issue #129 has no ratified millisecond menu-open budget; these compact-menu samples are recorded evidence, not a new threshold.
+P1 opened the `42` extra in 18.7 ms median and two Down-arrow events selected `Collapse Pinchos`.
+The five-item `42` extra opened in 32.3 ms median with cache-only rows `Cached: 42` and `Manual: manual-row` already present, while the in-flight `sleep 120` descendant set stayed at 3.
+That is enough live GUI evidence to close the issue: **`Closes #129`**.
 
 P1 idle CPU between ticks was 0.0% in `ps` samples after the 15s settle.
 The 60s `top` window's second sample also showed 0.1% CPU on P1 and 1.2% on the in-flight five-item profile.
