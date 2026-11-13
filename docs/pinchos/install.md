@@ -48,7 +48,8 @@ brew trust douglasjarquin/pinchos
 brew install --cask pinchos
 ```
 
-Until `v0.1.0` is published, the cask pins a placeholder SHA-256 and fails checksum verification by design.
+Until `v0.1.0` is published, the cask fails closed on the missing artifact.
+Its placeholder SHA-256 would also fail verification.
 
 Current Homebrew refuses casks from untrusted third-party taps; `brew trust` records your decision to run this tap's cask code.
 

@@ -9,32 +9,34 @@
 #   `brew install awscli`).
 # Account/auth requirement: a working AWS CLI profile, already configured
 #   with `aws configure --profile <name>` (or SSO via `aws configure
-#   sso`), with permission to call `sts:GetCallerIdentity`. `AWS_PROFILE`
-#   below is a profile *name* placeholder, not a credential — replace
-#   "default" with whichever profile you configured; no access key,
-#   secret key, or session token belongs in this file or in Pinchos.
+#   sso`), with permission to call `sts:GetCallerIdentity`. The run
+#   command passes `--profile default`. Replace `default` in
+#   `--profile default` with whichever profile you configured.
+#   `AWS_PROFILE` from your shell is not inherited; Pinchos copies only
+#   `CommandExecutionPolicy.inheritedKeys`. No access key, secret key, or
+#   session token belongs in this file or in Pinchos.
 #
 # Expected output: "123456789012" (a 12-digit AWS account ID, from
-#   `aws sts get-caller-identity --query Account --output text`).
+#   `aws sts get-caller-identity --profile default --query Account --output text`).
 #   Account-dependent by design — that is the point of the recipe. An
 #   account ID is not a secret, but it does identify which AWS account
 #   your shell is pointed at; treat the rendered menu-bar text with the
 #   same care you'd give any visible account identifier on your screen.
 # Limitations: an expired SSO session, a missing profile, or no network
-#   route to AWS all make `aws` exit non-zero with a message on stderr;
-#   credentials or network. This recipe is not exercised in CI (no AWS
-#   account or network there); it is syntax-checked only.
+#   route to AWS all make `aws` exit non-zero with a message on stderr.
+#   This recipe is not exercised in CI (no AWS account or network there);
+#   it is syntax-checked only.
 #   This is a single command (no shell pipeline), so it is easy to review.
 #
 # Copy this file's [item.*] table(s) into your pinchos.toml, replace
-# "default" with your own profile name, then:
+# `default` in `--profile default` with your own profile name, then:
 #   .build/release/pinchos validate
 #   .build/release/pinchos doctor
 #   .build/release/pinchos run aws_account
 
 [item.aws_account]
 
-run = "aws sts get-caller-identity --query Account --output text"
+run = "aws sts get-caller-identity --profile default --query Account --output text"
 interval = "10m"
 timeout = "10s"
 format = "AWS {output}"

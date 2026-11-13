@@ -170,6 +170,42 @@ final class PinchosCLITests: XCTestCase {
         let cli = PinchosCLI(configPath: configURL.path, output: capture.output)
         let exampleCode = await cli.run(arguments: ["validate"])
         XCTAssertEqual(exampleCode, 0, capture.stderr)
+        XCTAssertTrue(capture.stdout.contains("Valid config"), capture.stdout)
+    }
+
+    func testExecutableValidateUsesXDGConfigHomeForACopiedRecipe() throws {
+        let root = try makeRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let recipeURL = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .appendingPathComponent("recipes/clock.toml")
+        let configDirectory = root.appendingPathComponent("pinchos", isDirectory: true)
+        try FileManager.default.createDirectory(at: configDirectory, withIntermediateDirectories: true)
+        try FileManager.default.copyItem(
+            at: recipeURL,
+            to: configDirectory.appendingPathComponent("pinchos.toml")
+        )
+
+        let process = Process()
+        process.executableURL = try PinchosTestExecutable.resolve()
+        process.arguments = ["validate"]
+        var environment = ProcessInfo.processInfo.environment
+        environment["XDG_CONFIG_HOME"] = root.path
+        process.environment = environment
+        let stdout = Pipe()
+        let stderr = Pipe()
+        process.standardOutput = stdout
+        process.standardError = stderr
+        try process.run()
+        process.waitUntilExit()
+
+        let output = String(data: stdout.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
+        let errors = String(data: stderr.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
+        XCTAssertEqual(process.terminationStatus, 0, errors)
+        XCTAssertTrue(output.contains("Valid config"), output)
+        XCTAssertTrue(output.contains(root.path), output)
     }
 
     func testIssue45SchemaErrorIsSharedAcrossValidateDoctorAndRun() async throws {

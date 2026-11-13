@@ -20,7 +20,7 @@ Release tags, signing, and the first release are in [docs/pinchos/install.md](do
 
 * **Live reload.** Valid edits apply incrementally. A malformed file leaves the last known-good items running. Recovery and the removed 0.1 syntax are in [docs/pinchos/runtime.md](docs/pinchos/runtime.md).
 
-* **Bounded execution.** Output tails share one process-wide memory budget, and sessions share one scheduler. Finder and Terminal use one internal PATH (`/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin`), HOME, and cwd policy rather than the inherited process environment. `SSH_AUTH_SOCK` is not inherited. Safety rules are in [docs/pinchos/runtime.md](docs/pinchos/runtime.md).
+* **Bounded execution.** Output tails share one process-wide memory budget, and sessions share one scheduler. Commands use one internal PATH (`/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin`), HOME, and cwd policy whether Pinchos is launched from Finder or Terminal. `SSH_AUTH_SOCK` is not inherited. Safety rules are in [docs/pinchos/runtime.md](docs/pinchos/runtime.md).
 
 ## Quick Start
 
@@ -108,6 +108,8 @@ Bounds, reload, recovery, and the rejected development syntax are in [docs/pinch
 * [recipes/README.md](recipes/README.md) — the nine-recipe catalog and named-path validation.
 
 * [docs/performance.md](docs/performance.md) — P1 three-item/60s idle `phys_footprint` under 15 MB, sampled at commit `44bb2b3`.
+
+* [CHANGELOG.md](CHANGELOG.md) — unreleased notes; there are no migrations for unreleased experiments.
 
 * [docs/manual-qa](docs/manual-qa) — manual QA evidence.
 

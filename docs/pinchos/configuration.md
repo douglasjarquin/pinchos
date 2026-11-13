@@ -43,13 +43,17 @@ separator = true
 Download, checksum, freshness, and rollback for this example are in [example-setup.md](example-setup.md).
 
 Items appear in declaration order.
+Item ids in `[item.<id>]` and `[[item.<id>.menu]]` may contain only `[A-Za-z0-9_-]`.
+
+Durations are a whole number plus `s`, `m`, or `h`, with a minimum of `1s`.
+Compound values, decimals, and `ms` are rejected (`5m30s`, `1.5s`, and `500ms` are invalid).
 
 | Key | Type | Meaning |
 | --- | --- | --- |
 | `run` | string | Required shell command. |
 | `interval` | duration or `manual` | Refresh cadence for the primary value. Omit for `60s`. |
 | `timeout` | duration | Command timeout. Omit for `15s`. |
-| `format` | string | Optional template that may contain only `{output}`. Omit to show the last stdout line as-is. |
+| `format` | string | Optional template that may contain only `{output}`. Omit to show the last non-empty stdout line, trimmed. |
 | `symbol` | string | Optional macOS SF Symbol name. |
 | `icon` | path | Optional local image path, mutually exclusive with `symbol`. |
 | `menu` | `[[item.<id>.menu]]` rows | Ordered generic submenu rows. |

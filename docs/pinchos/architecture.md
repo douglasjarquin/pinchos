@@ -1,6 +1,6 @@
 # Architecture
 
-Modules, tests, and manual QA. Moved out of the README.
+Modules, tests, and manual QA.
 
 - `Sources/PinchosCore` contains TOML parsing, the config diff, bounded command execution, the scheduler, source/cache actors, formatting, and diagnostics.
 - `Sources/pinchos` contains AppKit ownership, menu projection, live reload coordination, recovery, signals, and shutdown.

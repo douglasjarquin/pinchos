@@ -1,6 +1,6 @@
 # Runtime
 
-Output bounds, reload, recovery, and removed syntax. Moved out of the README.
+Output bounds, reload, recovery, and removed syntax.
 
 ## Runtime safety
 

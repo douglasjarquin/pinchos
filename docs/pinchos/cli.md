@@ -4,6 +4,7 @@
 
 Build the release executable first (`swift build -c release`).
 The commands below are `.build/release/pinchos`.
+`--help` and `-h` work on every subcommand and print usage without running it.
 
 ## Config path
 
@@ -32,7 +33,7 @@ A second `init` prints `Config already exists` and leaves the file unchanged.
 If the file is missing, `open-config` creates an empty file and then opens it.
 It does not overwrite an existing file.
 
-`pinchos doctor` is a fresh CLI inspection, not a live GUI cache snapshot.
+`.build/release/pinchos doctor` is a fresh CLI inspection, not a live GUI cache snapshot.
 It prints the resolved config path and, when available, version and install path.
 It checks primary sources, dynamic menu sources, and actions against the shared execution policy without running them.
 A compound shell expression that cannot be inspected safely is reported as unknown, not missing.
@@ -44,14 +45,29 @@ Doctor does not dump the inherited environment, credential metadata, or login-it
 `run <item>` executes one item for scriptable verification under that same policy.
 The checked-in example item is `codex` and needs Remainder on the fixed PATH or an absolute path; see [example-setup.md](example-setup.md).
 
+## Exit codes
+
+| Code | Meaning |
+| --- | --- |
+| 0 | Success, including `init` when the file already exists |
+| 2 | Usage error (unknown command or extra arguments) |
+| 3 | Config, parse, or open error, including `config contains no items` |
+| 4 | Doctor found one or more problems |
+| 124 | `run` timed out |
+| 125 | `run` skipped, cancelled, or otherwise failed to execute |
+| 127 | `run` failed to launch |
+
+`--help`/`-h` exits 0.
+For `run`, any other command exit code is returned capped at 255.
+
 ## Recover from a malformed file
 
 `validate`, `doctor`, `run`, and `init` never delete or rewrite an existing config.
 
-1. Run `pinchos validate` to print the parse error.
-2. Open the existing file with `pinchos open-config` or an editor.
+1. Run `.build/release/pinchos validate` to print the parse error.
+2. Open the existing file with `.build/release/pinchos open-config` or an editor.
 3. Do not run `init` expecting a reset: it refuses to overwrite.
-4. Repair the file, then `pinchos validate` again.
+4. Repair the file, then `.build/release/pinchos validate` again.
 5. If the menu-bar app is running, it kept the last known-good items.
    Use Reload from the recovery menu, or save a valid file and let the watcher apply it.
 
