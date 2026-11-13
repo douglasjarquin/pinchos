@@ -5,7 +5,7 @@ It is not a VoiceOver speech sign-off.
 
 Live AppKit dump and release-binary launch: `e14050a4351ebcfa98af1a45dccca5c829225aa5` on 2026-11-13.
 CRLF splitting, sanitize-then-truncate, and spoken-value caps: `508b39b7aa9b62edbd5f34af9be1ab48c09ca2bb`.
-Failed-without-value then refreshing no longer speaks `⚠︎`/`⌛︎` from the previous title; that fix is the head of `cursor/menu-accessibility-168-7dc5` after this review.
+Failed-without-value then refreshing no longer speaks `⚠︎`/`⌛︎` from the previous title: `039b2b3096f2ceeb4477d12d1300ed1e6a51a476`.
 `#168` stays parked until a human runs the checklist below with Accessibility granted.
 
 ## What the product does now
