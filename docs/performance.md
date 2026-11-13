@@ -197,13 +197,13 @@ This section records a new controlled-Mac run of the selected profiles after #12
 `mise run verify` on this machine exited 0 in 127.82s: 208 `pinchosTests` and 215 `PinchosCoreTests`, then a release build.
 
 `mise run perf` on 2026-11-13, Mac16,7, arm64, 24 GB, macOS 27.0.1, Apple Swift 6.4 (swiftlang-6.4.0.34.1 clang-2100.3.34.1).
+Measured commit: `8b4ad9b61703f160f0e6033bdab9d88fe3fe6e46`, dirty=false.
 Raw JSON: `/tmp/pinchos-129/measure-clean.json`.
-The SHA and dirty flag in that file are the tree that produced the samples.
 
 | Profile | `phys_footprint` | CPU (`ps`) | `idlew` (60s window) | Numeric FDs | Threads | Children at sample | Descendants at SIGTERM | Leftover after SIGTERM |
 |---|---|---|---|---|---|---|---|---|
-| P1 three-item / 60s | 13.44 MB (14091056, 14091056, 14091056) | 0.0% | 1 | 7 | 5 | 0 | 0 | 0 |
-| five-item mixed (in-flight `sleep 120`) | 14.33 MB (15024944, 15024944, 15024944) | 0.8-0.9% | 1 | 11 | 9 | 2 | 3 | 0 |
+| P1 three-item / 60s | 13.38-13.39 MB (14025520, 14041904, 14041904) | 0.0% | 0 | 7 | 5 | 0 | 0 | 0 |
+| five-item mixed (in-flight `sleep 120`) | 14.55 MB (15254296, 15254296, 15254296) | 0.9-1.0% | 0 | 11 | 10 | 2 | 3 | 0 |
 
 The P1 three-item reference stays under the ratified **< 15 MB** budget.
 The five-item mixed workload is characterization only; it also landed under 15 MB on this machine, but that is not a new product threshold.
