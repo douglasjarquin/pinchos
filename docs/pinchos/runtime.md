@@ -28,8 +28,16 @@ This makes supported system and Homebrew tools resolve consistently.
 It does not make Finder and Terminal identical arbitrary user environments.
 
 `pinchos doctor` inspects the same PATH and HOME policy without running user commands.
-Missing tools are reported as not found on that PATH.
-Doctor output does not dump the inherited environment or secret values.
+It checks primary `run`, submenu `run`, and submenu `action` the same way.
+A compound shell expression is `[UNKNOWN]`, not a missing-tool failure.
+Unquoted `~/` expands against HOME the way `/bin/sh` does.
+Shell builtins such as `export` and `eval` are unknown, not missing.
+An unterminated quote or trailing backslash is `[FAIL]`.
+Missing tools are reported as not found on that PATH, with a reminder to install onto it or use an absolute path.
+Unreadable icon files suggest a readable path or `symbol`.
+Doctor labels itself as a CLI inspection so it is not mistaken for a live GUI cache.
+It prints the resolved config path and available version/install information.
+Doctor output does not dump the inherited environment, credential metadata, or login-item state.
 
 ## Refresh Now, retries, and coalescing
 
@@ -71,6 +79,11 @@ A value still inside its window is spoken "refreshing" with no marker.
 A failed command uses the warning marker and keeps the last-good value.
 There is no separate scheduler-delay glyph.
 Diagnostics add `Delay: scheduler` when that delay is why the value aged out.
+Option-click diagnostics show last attempt, last success, queued or active refresh, and the last terminal reason for both the primary value and each dynamic menu `run` row.
+Those menus read this process's cache snapshots.
+They do not run commands merely to inspect them, and `pinchos doctor` does not invent that live cache.
+Age, failure, and scheduler delay stay distinguishable on those rows.
+Copied summaries stay the existing Copy Full Output/Error actions: previews are bounded and sanitized; copy still uses the retained text.
 Initial failure does not invent a success timestamp or value.
 The same interpretation is used for the menu-bar title, submenu values, collapsed first-level rows, VoiceOver labels, and diagnostic snapshots (`State`, `Stale`, and `Delay: scheduler` when the scheduler has not attempted since the value aged out).
 

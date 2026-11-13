@@ -48,6 +48,7 @@ protocol ManagedItemLifecycle: AnyObject {
     func runtimeSnapshot() async -> ItemRuntimeSnapshot
     func menuRowValue(at index: Int) -> String?
     func menuRowFreshness(at index: Int) -> ValueFreshness
+    func menuRowRuntimeSnapshot(at index: Int) -> ItemRuntimeSnapshot?
     func menuRowSnapshot(at index: Int) async -> CommandRunnerSnapshot?
     func invokeMenuRow(at index: Int)
     func refreshNow()
@@ -84,6 +85,10 @@ extension ManagedItemLifecycle {
             freshnessInterval: row.cache,
             now: Date()
         )
+    }
+
+    func menuRowRuntimeSnapshot(at index: Int) -> ItemRuntimeSnapshot? {
+        nil
     }
 
 }
@@ -192,7 +197,7 @@ final class StatusItemController: StatusItemMenuDelegate {
     private var order: [String] = []
     private var warningItem: NSStatusItem?
     private var collapsedStatusItem: NSStatusItem?
-    private var collapsedMenuGeneration = 0
+    private var menuGeneration = 0
     private var barPresentation: BarPresentation = .expanded
     private var recoveryState: RecoveryState = .hidden
     private let configPath: String
@@ -227,7 +232,7 @@ final class StatusItemController: StatusItemMenuDelegate {
     }
 
     private func applyNow(config: PinchosConfig) async {
-        collapsedMenuGeneration += 1
+        menuGeneration += 1
         let old = currentConfig()
         let diff = ConfigDiffEngine.diff(old: old, new: config)
         recoveryState.apply(config: config)
@@ -288,14 +293,28 @@ final class StatusItemController: StatusItemMenuDelegate {
     /// -- the same way Option-clicking the system WiFi item shows signal details.
     func showLifecycleMenu(for statusItem: NSStatusItem) {
         let revealsDiagnostics = NSApp.currentEvent?.modifierFlags.contains(.option) == true
-        // AppKit's click callback is already on the main actor. Present a
-        // cheap menu synchronously; never await command snapshots here.
-        let menu: NSMenu
         if collapsedStatusItem === statusItem {
-            menu = makeCollapsedMenuImmediately(revealsDiagnostics: revealsDiagnostics)
-        } else {
-            menu = makeLifecycleMenuImmediately(for: statusItem, revealsDiagnostics: revealsDiagnostics)
+            _ = requestCollapsedMenu()
+            return
         }
+        // Compact click stays synchronous and cache-only. Option-click uses
+        // the same in-process snapshots as tests; it never invents cache
+        // health and does not run commands merely to inspect them.
+        if revealsDiagnostics {
+            menuGeneration += 1
+            let generation = menuGeneration
+            Task { @MainActor [weak self, statusItem, generation] in
+                guard let self else { return }
+                let menu = await self.makeLifecycleMenu(for: statusItem, revealsDiagnostics: true)
+                guard self.barPresentation == .expanded,
+                      self.menuGeneration == generation,
+                      self.items.values.contains(where: { $0.owns(statusItem: statusItem) })
+                else { return }
+                self.present(menu: menu, on: statusItem)
+            }
+            return
+        }
+        let menu = makeLifecycleMenuImmediately(for: statusItem)
         present(menu: menu, on: statusItem)
     }
 
@@ -464,7 +483,7 @@ final class StatusItemController: StatusItemMenuDelegate {
         statusItem.button?.action = #selector(handleCollapsedClick)
         statusItem.button?.sendAction(on: [.leftMouseUp, .rightMouseUp])
         collapsedStatusItem = statusItem
-        collapsedMenuGeneration += 1
+        menuGeneration += 1
         return true
     }
 
@@ -473,7 +492,7 @@ final class StatusItemController: StatusItemMenuDelegate {
             statusItemHost.removeStatusItem(collapsedStatusItem)
         }
         collapsedStatusItem = nil
-        collapsedMenuGeneration += 1
+        menuGeneration += 1
     }
 
     @objc private func collapseAction() {
@@ -499,13 +518,13 @@ final class StatusItemController: StatusItemMenuDelegate {
     func requestCollapsedMenu() -> Task<Void, Never>? {
         guard barPresentation == .collapsed, let collapsedStatusItem else { return nil }
         let revealsDiagnostics = NSApp.currentEvent?.modifierFlags.contains(.option) == true
-        let menuGeneration = collapsedMenuGeneration
-        return Task { @MainActor [weak self, collapsedStatusItem, menuGeneration, revealsDiagnostics] in
+        let generation = menuGeneration
+        return Task { @MainActor [weak self, collapsedStatusItem, generation, revealsDiagnostics] in
             guard let self else { return }
             let menu = await self.makeCollapsedMenu(revealsDiagnostics: revealsDiagnostics)
             guard self.barPresentation == .collapsed,
                   self.collapsedStatusItem === collapsedStatusItem,
-                  self.collapsedMenuGeneration == menuGeneration else { return }
+                  self.menuGeneration == generation else { return }
             self.present(menu: menu, on: collapsedStatusItem)
         }
     }
@@ -548,12 +567,8 @@ final class StatusItemController: StatusItemMenuDelegate {
         return menu
     }
 
-    private func makeLifecycleMenuImmediately(for statusItem: NSStatusItem, revealsDiagnostics: Bool) -> NSMenu {
+    private func makeLifecycleMenuImmediately(for statusItem: NSStatusItem) -> NSMenu {
         let item = items.values.first(where: { $0.owns(statusItem: statusItem) })
-        return makeLifecycleMenuImmediately(forManagedItem: item, revealsDiagnostics: revealsDiagnostics)
-    }
-
-    private func makeLifecycleMenuImmediately(forManagedItem item: (any ManagedItemLifecycle)?, revealsDiagnostics: Bool) -> NSMenu {
         let menu = NSMenu()
         if let item {
             addCommandContentImmediately(item: item, commandConfig: item.config, to: menu)
@@ -578,22 +593,6 @@ final class StatusItemController: StatusItemMenuDelegate {
         refresh.target = self
         refresh.representedObject = RefreshActionTarget(item: item)
         menu.addItem(refresh)
-    }
-
-    private func makeCollapsedMenuImmediately(revealsDiagnostics: Bool) -> NSMenu {
-        let menu = NSMenu()
-        if recoveryState.isVisible {
-            menu.addItem(makeCollapsedRecoveryItem())
-        }
-        for item in topLevelManagedItems() {
-            let title = "–"
-            let row = NSMenuItem(title: title, action: nil, keyEquivalent: "")
-            row.submenu = makeLifecycleMenuImmediately(forManagedItem: item, revealsDiagnostics: revealsDiagnostics)
-            menu.addItem(row)
-        }
-        menu.addItem(NSMenuItem.separator())
-        addGlobalMenuContentImmediately(to: menu)
-        return menu
     }
 
     func makeLifecycleMenu(for statusItem: NSStatusItem?, revealsDiagnostics: Bool = true) async -> NSMenu {
@@ -764,6 +763,15 @@ final class StatusItemController: StatusItemMenuDelegate {
         }
         menu.addItem(NSMenuItem.separator())
         addDiagnostics(from: runtime.runnerSnapshot, to: menu)
+        var addedSourceRows = false
+        for index in item.menuRows.indices where item.menuRows[index].run != nil {
+            guard let snapshot = item.menuRowRuntimeSnapshot(at: index) else { continue }
+            if !addedSourceRows {
+                menu.addItem(NSMenuItem.separator())
+                addedSourceRows = true
+            }
+            addRuntimeState(from: snapshot, to: menu, label: item.menuRows[index].label)
+        }
         var menuRowSnapshots: [(index: Int, snapshot: CommandRunnerSnapshot?)] = []
         for index in item.menuRows.indices where item.menuRows[index].action != nil {
             menuRowSnapshots.append((index: index, snapshot: await item.menuRowSnapshot(at: index)))
@@ -926,34 +934,49 @@ final class StatusItemController: StatusItemMenuDelegate {
         NSPasteboard.general.setString(target.text, forType: .string)
     }
 
-    private func addRuntimeState(from snapshot: ItemRuntimeSnapshot, to menu: NSMenu) {
-        menu.addItem(disabledItem(title: "State: \(snapshot.status.rawValue)"))
+    private func addRuntimeState(
+        from snapshot: ItemRuntimeSnapshot,
+        to menu: NSMenu,
+        label: String? = nil
+    ) {
+        let prefix = sourceDiagnosticPrefix(label)
+        menu.addItem(disabledItem(title: prefix + "State: \(snapshot.status.rawValue)"))
         if let fullOutput = snapshot.fullOutput {
-            menu.addItem(valuePreviewItem(prefix: "Value: ", fullText: fullOutput))
+            menu.addItem(valuePreviewItem(prefix: prefix + "Value: ", fullText: fullOutput))
         } else {
-            menu.addItem(disabledItem(title: "Value: unavailable"))
+            menu.addItem(disabledItem(title: prefix + "Value: unavailable"))
         }
-        menu.addItem(disabledItem(title: "Last attempt: \(snapshot.lastAttemptedAt.map(formatTimestamp) ?? "unavailable")"))
-        menu.addItem(disabledItem(title: "Last success: \(snapshot.lastUpdatedAt.map(formatTimestamp) ?? "unavailable")"))
-        menu.addItem(disabledItem(title: "Stale: \(snapshot.isStale ? "yes" : "no")"))
+        menu.addItem(disabledItem(title: prefix + "Last attempt: \(snapshot.lastAttemptedAt.map(formatTimestamp) ?? "unavailable")"))
+        menu.addItem(disabledItem(title: prefix + "Last success: \(snapshot.lastUpdatedAt.map(formatTimestamp) ?? "unavailable")"))
+        menu.addItem(disabledItem(title: prefix + "Stale: \(snapshot.isStale ? "yes" : "no")"))
         if snapshot.freshness.isSchedulerDelayed {
-            menu.addItem(disabledItem(title: "Delay: scheduler"))
+            menu.addItem(disabledItem(title: prefix + "Delay: scheduler"))
+        }
+        if snapshot.freshness.state == .refreshing {
+            menu.addItem(disabledItem(title: prefix + "Refresh: queued or active"))
         }
         if let duration = snapshot.lastRunDuration {
-            menu.addItem(disabledItem(title: String(format: "Last duration: %.3fs", duration)))
+            menu.addItem(disabledItem(title: prefix + String(format: "Last duration: %.3fs", duration)))
         }
         if let exitStatus = snapshot.exitStatus {
-            menu.addItem(disabledItem(title: "Last exit: \(exitStatus)"))
+            menu.addItem(disabledItem(title: prefix + "Last exit: \(exitStatus)"))
         }
         if let errorSummary = snapshot.errorSummary {
-            menu.addItem(stderrPreviewItem(prefix: "Error: ", fullText: errorSummary))
+            menu.addItem(stderrPreviewItem(prefix: prefix + "Error: ", fullText: errorSummary))
         }
         if let fullOutput = snapshot.fullOutput, !fullOutput.isEmpty {
-            menu.addItem(copyItem(title: "Copy Full Output", text: fullOutput))
+            let copyTitle = label.map { "Copy \"\($0)\" Output" } ?? "Copy Full Output"
+            menu.addItem(copyItem(title: copyTitle, text: fullOutput))
         }
         if let stderr = snapshot.lastExecution?.stderr, !stderr.isEmpty {
-            menu.addItem(copyItem(title: "Copy Full Error", text: stderr))
+            let copyTitle = label.map { "Copy \"\($0)\" Error" } ?? "Copy Full Error"
+            menu.addItem(copyItem(title: copyTitle, text: stderr))
         }
+    }
+
+    private func sourceDiagnosticPrefix(_ label: String?) -> String {
+        guard let label else { return "" }
+        return "Value \"\(label)\": "
     }
 
     private func addDiagnostics(from snapshot: CommandRunnerSnapshot, to menu: NSMenu) {

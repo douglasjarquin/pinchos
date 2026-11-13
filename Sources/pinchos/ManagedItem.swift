@@ -870,6 +870,9 @@ final class ManagedItem: ManagedItemLifecycle {
     }
 
     func menuRowFreshness(at index: Int) -> ValueFreshness {
+        if let snapshot = menuRowRuntimeSnapshot(at: index) {
+            return snapshot.freshness
+        }
         guard menuRows.indices.contains(index) else {
             return ValueFreshness.interpret(
                 value: nil,
@@ -881,17 +884,33 @@ final class ManagedItem: ManagedItemLifecycle {
                 now: now()
             )
         }
-        requestMenuRowRefreshIfNeeded(at: index)
-        let cached = menuRowCaches[index]
-        let lastExecutionFailed = cached?.lastExecution.map { $0.terminalReason != .exited(code: 0) } ?? false
         return ValueFreshness.interpret(
-            value: menuRows[index].value ?? cached?.value,
-            isRefreshing: menuRowRefreshTasks[index] != nil,
-            lastSuccessfulAt: cached?.lastSuccessfulAt,
-            lastAttemptedAt: cached?.lastAttemptedAt,
-            lastExecutionFailed: lastExecutionFailed,
+            value: menuRows[index].value,
+            isRefreshing: false,
+            lastSuccessfulAt: nil,
+            lastAttemptedAt: nil,
+            lastExecutionFailed: false,
             freshnessInterval: menuRows[index].cache,
             now: now()
+        )
+    }
+
+    func menuRowRuntimeSnapshot(at index: Int) -> ItemRuntimeSnapshot? {
+        guard menuRows.indices.contains(index), menuRows[index].run != nil else {
+            return nil
+        }
+        requestMenuRowRefreshIfNeeded(at: index)
+        let cached = menuRowCaches[index]
+        return ItemRuntimeSnapshot(
+            isRunning: menuRowRefreshTasks[index] != nil,
+            fullOutput: menuRows[index].value ?? cached?.value,
+            lastAttemptedAt: cached?.lastAttemptedAt,
+            lastUpdatedAt: cached?.lastSuccessfulAt,
+            lastExecution: cached?.lastExecution,
+            staleAfter: menuRows[index].cache,
+            skippedRefreshes: 0,
+            now: now(),
+            isRefreshing: menuRowRefreshTasks[index] != nil
         )
     }
 

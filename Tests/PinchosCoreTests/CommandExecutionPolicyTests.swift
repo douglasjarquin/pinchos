@@ -115,6 +115,241 @@ final class CommandExecutionPolicyTests: XCTestCase {
         XCTAssertEqual(staleInherited.workingDirectory, stale)
     }
 
+    func testInspectExecutableReportsFoundMissingAndUnknownWithoutExecuting() throws {
+        let policy = CommandExecutionPolicy(inheritedEnvironment: [
+            "PATH": "/usr/bin:/bin:/usr/sbin:/sbin",
+            "HOME": NSHomeDirectory(),
+            "PINCHOS_SECRET": secret
+        ])
+
+        switch policy.inspectExecutable("ls -1") {
+        case .found(let path):
+            XCTAssertEqual(path, "/bin/ls")
+        case .missing, .unknown, .invalidSyntax:
+            XCTFail("ls must be found on the execution PATH")
+        }
+
+        switch policy.inspectExecutable("definitely_missing_pinchos_command_126 --help") {
+        case .missing(let command):
+            XCTAssertEqual(command, "definitely_missing_pinchos_command_126")
+        case .found, .unknown, .invalidSyntax:
+            XCTFail("an absent simple command must be missing, not unknown")
+        }
+
+        switch policy.inspectExecutable("cd /tmp; definitely_missing_pinchos_command") {
+        case .unknown:
+            break
+        case .found, .missing, .invalidSyntax:
+            XCTFail("a compound expression must be unknown, not missing")
+        }
+
+        switch policy.inspectExecutable("env PINCHOS_PROBE=1 ls") {
+        case .found(let path):
+            XCTAssertEqual(path, "/bin/ls")
+        case .missing, .unknown, .invalidSyntax:
+            XCTFail("env PREFIX=value command must inspect the command, not the env wrapper")
+        }
+
+        XCTAssertEqual(
+            CommandExecutionPolicy.unknownInspectionMessage,
+            "compound shell expression; not statically inspected"
+        )
+        XCTAssertFalse(String(describing: policy.inspectExecutable("ls")).contains(secret))
+        XCTAssertFalse(policy.missingCommandMessage("ls").contains(secret))
+    }
+
+    func testInspectExecutableExpandsUnquotedTildeAgainstHOME() throws {
+        let home = FileManager.default.temporaryDirectory
+            .appendingPathComponent("pinchos-policy-tilde-\(UUID().uuidString)")
+        let remainder = home.appendingPathComponent(".local/opt/remainder/v0.2.1/remainder")
+        try FileManager.default.createDirectory(
+            at: remainder.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        defer { try? FileManager.default.removeItem(at: home) }
+        try "#!/bin/sh\nexit 0\n".write(to: remainder, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: remainder.path)
+        let policy = CommandExecutionPolicy(inheritedEnvironment: [
+            "PATH": "/usr/bin:/bin:/usr/sbin:/sbin",
+            "HOME": home.path
+        ])
+
+        switch policy.inspectExecutable("~/.local/opt/remainder/v0.2.1/remainder value") {
+        case .found(let path):
+            XCTAssertEqual(path, remainder.path)
+        case .missing, .unknown, .invalidSyntax:
+            XCTFail("unquoted ~/ must expand against HOME like /bin/sh")
+        }
+
+        switch policy.inspectExecutable("'~/.local/opt/remainder/v0.2.1/remainder' value") {
+        case .missing(let command):
+            XCTAssertEqual(command, "~/.local/opt/remainder/v0.2.1/remainder")
+        case .found, .unknown, .invalidSyntax:
+            XCTFail("a quoted tilde must stay literal, not expand")
+        }
+    }
+
+    func testInspectExecutableTreatsShellBuiltinsAsUnknownNotMissing() {
+        let policy = CommandExecutionPolicy(inheritedEnvironment: [
+            "PATH": "/usr/bin:/bin:/usr/sbin:/sbin",
+            "HOME": NSHomeDirectory()
+        ])
+        for expression in ["export FOO=1", "eval ls", "source ~/.profile", ".", "exec ls"] {
+            switch policy.inspectExecutable(expression) {
+            case .unknown:
+                break
+            case .found, .missing, .invalidSyntax:
+                XCTFail("\(expression) must be unknown, not a missing executable")
+            }
+        }
+        switch policy.inspectExecutable("echo `date`") {
+        case .unknown:
+            break
+        case .found, .missing, .invalidSyntax:
+            XCTFail("a backtick command word must be unknown, not missing")
+        }
+    }
+
+    func testInspectExecutableReportsUnterminatedQuoteAsInvalidSyntax() {
+        let policy = CommandExecutionPolicy(inheritedEnvironment: [
+            "PATH": "/usr/bin:/bin:/usr/sbin:/sbin",
+            "HOME": NSHomeDirectory()
+        ])
+        switch policy.inspectExecutable("echo 'hi") {
+        case .invalidSyntax:
+            break
+        case .found, .missing, .unknown:
+            XCTFail("an unterminated quote must be invalid syntax, not unknown")
+        }
+        switch policy.inspectExecutable("echo hi\\") {
+        case .invalidSyntax:
+            break
+        case .found, .missing, .unknown:
+            XCTFail("a trailing backslash must be invalid syntax, not unknown")
+        }
+        XCTAssertEqual(
+            CommandExecutionPolicy.invalidSyntaxMessage,
+            "unterminated quote or escape"
+        )
+    }
+
+    func testInspectExecutableKeepsEscapedSpacesAndLiteralTilde() throws {
+        let home = FileManager.default.temporaryDirectory
+            .appendingPathComponent("pinchos-policy-escape-\(UUID().uuidString)")
+        let spaced = home.appendingPathComponent("My Tools/bin/tool")
+        let expanded = home.appendingPathComponent("x")
+        try FileManager.default.createDirectory(
+            at: spaced.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        defer { try? FileManager.default.removeItem(at: home) }
+        try "#!/bin/sh\nexit 0\n".write(to: spaced, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: spaced.path)
+        try "#!/bin/sh\nexit 0\n".write(to: expanded, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: expanded.path)
+        let policy = CommandExecutionPolicy(inheritedEnvironment: [
+            "PATH": "/usr/bin:/bin:/usr/sbin:/sbin",
+            "HOME": home.path
+        ])
+
+        switch policy.inspectExecutable("\(spaced.path.replacingOccurrences(of: " ", with: "\\ ")) --help") {
+        case .found(let path):
+            XCTAssertEqual(path, spaced.path)
+        case .missing, .unknown, .invalidSyntax:
+            XCTFail("an escaped space in the command word must not be invalidSyntax")
+        }
+
+        switch policy.inspectExecutable("/definitely/missing/My\\ Tools/bin/tool") {
+        case .missing(let command):
+            XCTAssertEqual(command, "/definitely/missing/My Tools/bin/tool")
+        case .found, .unknown, .invalidSyntax:
+            XCTFail("a missing escaped-space path must be missing, not invalidSyntax")
+        }
+
+        switch policy.inspectExecutable("~/x") {
+        case .found(let path):
+            XCTAssertEqual(path, expanded.path)
+        case .missing, .unknown, .invalidSyntax:
+            XCTFail("unquoted ~/x must still expand")
+        }
+
+        switch policy.inspectExecutable("\\~/x") {
+        case .missing(let command):
+            XCTAssertEqual(command, "~/x")
+        case .found:
+            XCTFail("\\~/x must stay a literal path and not expand against HOME")
+        case .unknown, .invalidSyntax:
+            XCTFail("\\~/x must not be unknown or invalidSyntax")
+        }
+
+        switch policy.inspectExecutable("grep foo\\.bar file") {
+        case .found:
+            break
+        case .missing, .unknown, .invalidSyntax:
+            XCTFail("an escaped dot in an argument must not make the command invalidSyntax")
+        }
+    }
+
+    func testInspectExecutableJoinsBackslashNewlineContinuations() throws {
+        let home = FileManager.default.temporaryDirectory
+            .appendingPathComponent("pinchos-policy-continuation-\(UUID().uuidString)")
+        let tool = home.appendingPathComponent("bin/mytool")
+        try FileManager.default.createDirectory(
+            at: tool.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        defer { try? FileManager.default.removeItem(at: home) }
+        try "#!/bin/sh\nexit 0\n".write(to: tool, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: tool.path)
+        let policy = CommandExecutionPolicy(inheritedEnvironment: [
+            "PATH": "/usr/bin:/bin:/usr/sbin:/sbin",
+            "HOME": home.path
+        ])
+        let bin = tool.deletingLastPathComponent().path
+
+        switch policy.inspectExecutable("FOO=1 \\\n  \(tool.path) --x") {
+        case .found(let path):
+            XCTAssertEqual(path, tool.path)
+        case .missing, .unknown, .invalidSyntax:
+            XCTFail("a line continuation after an env assignment must not be invalidSyntax")
+        }
+
+        switch policy.inspectExecutable("\(bin)/my\\\ntool --x") {
+        case .found(let path):
+            XCTAssertEqual(path, tool.path)
+        case .missing, .unknown, .invalidSyntax:
+            XCTFail("a line continuation inside the command word must join the path")
+        }
+    }
+
+    func testInspectExecutableKeepsLiteralBackslashInsideDoubleQuotes() throws {
+        let home = FileManager.default.temporaryDirectory
+            .appendingPathComponent("pinchos-policy-dquote-escape-\(UUID().uuidString)")
+        let weird = home.appendingPathComponent("my\\tool")
+        try FileManager.default.createDirectory(at: home, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: home) }
+        try "#!/bin/sh\nexit 0\n".write(to: weird, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: weird.path)
+        let policy = CommandExecutionPolicy(inheritedEnvironment: [
+            "PATH": "/usr/bin:/bin:/usr/sbin:/sbin",
+            "HOME": home.path
+        ])
+
+        switch policy.inspectExecutable("\"\(weird.path)\"") {
+        case .found(let path):
+            XCTAssertEqual(path, weird.path)
+        case .missing, .unknown, .invalidSyntax:
+            XCTFail("a backslash before t inside double quotes must stay literal")
+        }
+
+        switch policy.inspectExecutable("\"/x/my\\tool\"") {
+        case .missing(let command):
+            XCTAssertEqual(command, "/x/my\\tool")
+        case .found, .unknown, .invalidSyntax:
+            XCTFail("\"/x/my\\tool\" must stay /x/my\\tool, not collapse to /x/mytool")
+        }
+    }
+
     func testRelativeExecutableResolvesAgainstHOMEEvenWhenHOMEDoesNotExist() throws {
         let parent = FileManager.default.temporaryDirectory
             .appendingPathComponent("pinchos-policy-missing-home-\(UUID().uuidString)")
