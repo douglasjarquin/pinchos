@@ -185,21 +185,21 @@ This section records a new controlled-Mac run of the selected profiles after #12
 `mise run verify` on this machine exited 0 in 121.35s: 208 `pinchosTests` and 215 `PinchosCoreTests`, then a release build.
 
 `mise run perf` on 2026-11-13, Mac16,7, arm64, 24 GB, macOS 27.0.1, Apple Swift 6.4 (swiftlang-6.4.0.34.1 clang-2100.3.34.1).
-Raw JSON: `/tmp/pinchos-129/measure.json`.
-The first capture was dirty against `51462ca`; the numbers below are that capture.
-A clean-tree recapture of the same profiles is in `/tmp/pinchos-129/EVIDENCE.md` when present.
+Measured commit: `1b85252854e03dc4bd102829bf710e5f203db2ed`, dirty=false.
+Raw JSON: `/tmp/pinchos-129/measure-clean.json`.
+An earlier dirty capture against `51462ca` is kept as `/tmp/pinchos-129/measure.json` and agrees to ~0.1 MB.
 
-| Profile | `phys_footprint` samples | Idle CPU | Descriptors | Threads | Cleanup |
-|---|---|---|---|---|---|
-| P1 three-item / 60s | 13.20–13.22 MB (13845272, 13861656, 13861656) | 0.0% | 32 | 4 | SIGTERM exited; 0 leftover children |
-| five-item mixed | 14.30–14.31 MB (14992176, 15008560, 15008560) | 0.0% | 32 | 5 | SIGTERM exited; 0 leftover children |
+| Profile | `phys_footprint` samples | Idle CPU | Descriptors | Threads | Children | Cleanup |
+|---|---|---|---|---|---|---|
+| P1 three-item / 60s | 13.22–13.24 MB (13861656, 13878040, 13878040) | 0.0% | 32 | 5 | 0 | SIGTERM exited; 0 leftover children |
+| five-item mixed | 14.47–14.49 MB (15172376, 15188760, 15188760) | 0.0% | 32 | 4 | 0 | SIGTERM exited; 0 leftover children |
 
 The P1 three-item reference stays under the ratified **< 15 MB** budget.
 The five-item mixed workload is characterization only; it also landed under 15 MB on this machine, but that is not a new product threshold.
 
 Idle CPU between ticks was 0.0% in `ps` samples after the 15s settle.
-`top -l 2 -pid` showed `%CPU 0.0` on the Pinchos PID.
-`pgrep -P` reported no live children at sample time (commands use 60s intervals and the slow `sleep 2` had already finished).
+`top -l 2 -pid` showed `%CPU 0.0` on the Pinchos PID (not a clean wakeup counter; the sample is system header plus that PID line).
+`pgrep -P` reported 0 live children at sample time (commands use 60s intervals and the slow `sleep 2` had already finished).
 
 Live GUI menu latency was not measured: `AXIsProcessTrusted()` returned untrusted/disabled, matching the earlier session that could not use Accessibility or screen capture.
 In-process tests prove menu construction does not wait on background work and that menu titles stay a small bound independent of retained output.
