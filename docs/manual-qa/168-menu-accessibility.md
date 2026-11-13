@@ -4,7 +4,7 @@ This is the factory pass for current native menus.
 It is not a VoiceOver speech sign-off.
 
 Live AppKit dump and release-binary launch: `e14050a4351ebcfa98af1a45dccca5c829225aa5` on 2026-11-13.
-CRLF splitting, sanitize-then-truncate, and spoken-value caps landed in a follow-up commit on `cursor/menu-accessibility-168-7dc5`.
+CRLF splitting, sanitize-then-truncate, and spoken-value caps: `508b39b7aa9b62edbd5f34af9be1ab48c09ca2bb` on `cursor/menu-accessibility-168-7dc5`.
 `#168` stays parked until a human runs the checklist below with Accessibility granted.
 
 ## What the product does now
@@ -19,7 +19,7 @@ Titles and spoken values run through `boundedVisibleText` (sanitize, then cap at
 ## Automated evidence
 
 `mise run verify` on `e14050a` exited 0 in 118.83s: 212 `pinchosTests` and 213 `PinchosCoreTests`, then a release build.
-The CRLF / sanitize-then-truncate / spoken-cap follow-up re-ran `mise run verify` on this Mac and exited 0: 216 `pinchosTests`, 220 `PinchosCoreTests`, then a release build.
+The CRLF / sanitize-then-truncate / spoken-cap follow-up (`508b39b7aa9b62edbd5f34af9be1ab48c09ca2bb`) re-ran `mise run verify` on this Mac and exited 0: 216 `pinchosTests`, 220 `PinchosCoreTests`, then a release build.
 Targeted AppKit property tests live in `Tests/pinchosTests/MenuAccessibilityTests.swift` and the recovery presentation tests.
 Follow-up tests cover `42\r\n` rendering as `42`, last-line selection for multi-line CRLF, and bounded spoken labels for long values.
 
