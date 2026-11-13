@@ -495,14 +495,16 @@ run_profile() (
     trap cleanup EXIT
 
     # SIGTERM is after settle + 1s per sample + the IDLEW window + the live
-    # menu probe. The probe exits on the first missed AXPress; the real worst
-    # case is three successful timed opens, about 14s total, plus a Cached-row
-    # scout on the five profile. Keep 20s of slack.
+    # menu probe. The probe exits on the first missed AXPress. Three timed
+    # opens are about 14s; a Cached-row scout of two "42" extras can add
+    # about 8-9s, so the worst case is about 23s. Allow 25s
+    # (15+3+60+25=103, under the 120s in-flight lifetime). An overrun
+    # fails later through the in-flight descendant check, not this guard.
     # Reject a settle that would fire SIGTERM after the in-flight sleep 120
     # has already exited.
     if [[ "$expect_inflight" == "true" ]]; then
         inflight_lifetime_seconds=120
-        menu_probe_allowance_seconds=20
+        menu_probe_allowance_seconds=25
         elapsed_before_sigterm=$((settle_seconds + samples + wakeup_window_seconds + menu_probe_allowance_seconds))
         if [[ "$elapsed_before_sigterm" -ge "$inflight_lifetime_seconds" ]]; then
             echo "error: settle_seconds ($settle_seconds) + samples ($samples) + wakeup_window_seconds ($wakeup_window_seconds) + menu_probe_allowance_seconds ($menu_probe_allowance_seconds) = ${elapsed_before_sigterm}s would SIGTERM after the in-flight command's ${inflight_lifetime_seconds}s lifetime" >&2

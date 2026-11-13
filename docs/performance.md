@@ -141,7 +141,7 @@ It builds the release binary once and runs the two selected profiles against dis
 | **five** (`five`) | 5 items, 60s intervals, cached and manual menu values, duplicate `echo 42` sources, in-flight `sleep 120`, `exit 1` | no network, no provider credentials |
 
 Both profiles print commit SHA, dirty state, macOS version, hardware model, architecture, memory size, Swift toolchain, `phys_footprint` samples, RSS, idle CPU, numeric FD counts (`lsof -a -d 0-65535`), thread/child counts, `top` IDLEW over a 60s interval (the timer cadence), SIGTERM cleanup of recorded descendants, an Accessibility probe, and live compact-menu open latency when `AXIsProcessTrusted()` is true.
-When Accessibility is trusted but the extras item cannot be reached (menu-bar overflow or notch), `mise run perf` exits 1.
+When Accessibility is trusted but the extras item cannot be reached (menu-bar overflow or notch), the Python probe prints JSON with a null latency and `SystemExit` 0; the shell then exits 1 from its null-latency check.
 Numeric first arguments still mean settle seconds and sample count for compatibility:
 
 ```sh
@@ -213,6 +213,7 @@ The five-item mixed workload is characterization only; it also landed under 15 M
 Five-item CPU is not an idle sample: `sleep 120` is still running, which is required for the descendant cleanup check.
 Issue #129 has no ratified millisecond menu-open budget; these compact-menu samples are recorded evidence, not a new threshold.
 P1 opened the `42` extra in 32.2 ms median and two Down-arrow events selected `Collapse Pinchos`.
+P1's probe path is unchanged from `46610dd`; the 18.7 ms to 32.2 ms shift is run-to-run variance within that earlier spread (11.0, 18.7, 33.2).
 The five-item `42` extra with a `Cached:` row opened in 39.7 ms median.
 `menu_titles` is the last of the three opens: that last open listed `Cached: 42` and `Manual: manual-row`.
 Direct children at the pre-probe sample were 2.
@@ -231,7 +232,9 @@ The five-item profile records descendants with recursive `pgrep -P` immediately 
 
 Live compact-menu open latency is measured when `AXIsProcessTrusted()` is true.
 P1 times the first extras item titled `42`.
-The five profile scouts extras titled `42` and times the one whose opened menu contains a `Cached:` row; it exits 1 if none does.
+The five profile scouts extras titled `42` and times the one whose opened menu contains a `Cached:` row.
+Those timed samples follow one untimed scout open of the same item, so the old 32.3 ms and the new 39.7 ms are not strictly comparable with each other or with P1.
+If no `Cached:` extra is found, the Python probe prints JSON with a null latency and `SystemExit` 0; the shell then exits 1 from its null-latency check.
 Each sample is the wall time from starting the `AXPress` helper thread until `AXChildren` polling (0.5 ms sleep) sees an `AXMenu` with `AXMenuItem` rows.
 That interval includes Accessibility round-trip and polling overhead.
 It is not render time and not main-thread construction time.
