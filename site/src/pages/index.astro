@@ -38,7 +38,7 @@ const github = 'https://github.com/douglasjarquin/pinchos';
       <article class="feature">
         <div class="overline">03 · footprint</div>
         <h3 class="serif-heading">Native and tiny</h3>
-        <p>Real <code>NSStatusItems</code> and real <code>NSMenus</code>. System typography, template icons, zero idle motion, and no dock icon. It behaves like a built-in menu extra.</p>
+        <p>Real <code>NSStatusItems</code> and real <code>NSMenus</code>. System typography, template icons, zero idle motion, and no dock icon. The P1 three-item/60s idle <code>phys_footprint</code> budget is under 15 MB, sampled at commit <code>44bb2b3</code>; see the <a href="https://github.com/douglasjarquin/pinchos/blob/main/docs/performance.md">performance notes</a>.</p>
       </article>
     </div>
   </section>
@@ -47,7 +47,7 @@ const github = 'https://github.com/douglasjarquin/pinchos';
     <div class="container container--landing install-grid">
       <div class="install-copy">
         <h2 id="install-heading" class="serif-heading">Get pinchos</h2>
-        <p>Clone and build with the Swift toolchain, or start from the README — it covers install, the canonical config format, and the menu-row contract.</p>
+        <p>Clone and build with the Swift toolchain on macOS 14+ Apple Silicon. Until the first signed release, the curl installer and Homebrew cask fail closed. The README covers source-build first run, the canonical config format, and the menu-row contract.</p>
         <a href={github}>Read the README on GitHub →</a>
       </div>
       <CodeBlock lines={['git clone https://github.com/douglasjarquin/pinchos.git', 'cd pinchos', 'swift build -c release']} />

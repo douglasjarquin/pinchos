@@ -20,21 +20,28 @@ final class RecipeCatalogTests: XCTestCase {
         return recipes
     }
 
-    func testEveryRecipeParsesWithConfigParser() throws {
-        for recipeURL in try recipeFiles() {
-            let text = try String(contentsOf: recipeURL, encoding: .utf8)
+    private func exampleFiles() -> [URL] {
+        [repoRoot.appendingPathComponent("example/pinchos.toml")]
+    }
+
+    func testEveryRecipeAndExampleParsesWithConfigParser() throws {
+        let catalog = try recipeFiles() + exampleFiles()
+        XCTAssertEqual(catalog.count, 10, "expected nine recipes plus the canonical example")
+        for fileURL in catalog {
+            let text = try String(contentsOf: fileURL, encoding: .utf8)
             let config: PinchosConfig
             do {
-                config = try ConfigParser.parse(text, relativeTo: recipeURL)
+                config = try ConfigParser.parse(text, relativeTo: fileURL)
             } catch {
-                XCTFail("\(recipeURL.lastPathComponent) failed to parse: \(error)")
+                XCTFail("\(fileURL.lastPathComponent) failed to parse: \(error)")
                 continue
             }
             XCTAssertFalse(
                 config.items.isEmpty,
-                "\(recipeURL.lastPathComponent) declares no [item.<name>] tables"
+                "\(fileURL.lastPathComponent) declares no [item.<name>] tables"
             )
         }
+        XCTAssertNoThrow(try ConfigParser.parse(ExampleConfig.text))
     }
 
     func testEveryRecipeItemHasANonEmptyRunCommand() throws {
@@ -70,6 +77,18 @@ final class RecipeCatalogTests: XCTestCase {
                 "recipes/README.md does not mention \(filename)"
             )
         }
+        XCTAssertTrue(
+            readmeText.contains("config_root=\"$(mktemp -d)\""),
+            "recipes/README.md should create one named temporary config root"
+        )
+        XCTAssertTrue(
+            readmeText.contains("cp recipes/clock.toml \"$config_root/pinchos/pinchos.toml\""),
+            "recipes/README.md should place the recipe at the named path before validate"
+        )
+        XCTAssertTrue(
+            readmeText.contains("XDG_CONFIG_HOME=\"$config_root\" .build/release/pinchos validate"),
+            "recipes/README.md should validate with the same named path"
+        )
     }
 
 }

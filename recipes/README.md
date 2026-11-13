@@ -17,12 +17,17 @@ Each file contains one or more `[item.<id>]` tables and documents its command de
 
 The Codex quota example in [`example/pinchos.toml`](../example/pinchos.toml) demonstrates several cached menu rows, one action, and a separator.
 Its menu opens from cache without running commands during construction.
+Item and menu keys are in [`docs/pinchos/configuration.md`](../docs/pinchos/configuration.md).
 
-Validate a recipe before copying it into the live configuration:
+Validate a recipe before copying it into the live configuration.
+Create one named temporary config path, place the recipe there, then validate with the same path:
 
 ```sh
-XDG_CONFIG_HOME="$(mktemp -d)" .build/release/pinchos validate
+config_root="$(mktemp -d)"
+mkdir -p "$config_root/pinchos"
+cp recipes/clock.toml "$config_root/pinchos/pinchos.toml"
+XDG_CONFIG_HOME="$config_root" .build/release/pinchos validate
 ```
 
-The command must be run after placing the selected recipe at `pinchos/pinchos.toml` in the temporary root.
+Swap `clock.toml` for any other file in this directory.
 Never place credentials or tokens in a recipe.

@@ -2,7 +2,8 @@
 
 The checked-in Codex example, checksums, freshness, and rollback. Moved out of the README.
 
-The canonical configuration is [`example/pinchos.toml`](example/pinchos.toml). The item and menu rows are in [docs/pinchos/configuration.md](docs/pinchos/configuration.md).
+The canonical configuration is [`example/pinchos.toml`](../../example/pinchos.toml).
+The item and menu rows are in [configuration.md](configuration.md).
 
 This example calls [`remainder`](https://github.com/douglasjarquin/remainder) directly for the Codex `default` profile's account-scoped `weekly` remaining percentage and pace.
 It was verified against immutable Remainder `v0.2.1` for macOS Apple Silicon (`darwin_arm64`).
@@ -22,8 +23,10 @@ tar -xzf "$asset"
 
 After the extracted binary passes `--version` and `--help`, copy it to a versioned directory such as `~/.local/opt/remainder/v0.2.1/remainder`.
 The extracted executable SHA-256 is `8f1a4fd0ce7e1466055e733512b41cbd0bcd25ccba0ac125b4f13b58d578d886`.
-Keep that chosen versioned directory in the `PATH` Pinchos inherits, and record its absolute executable path before activating the configuration.
-Keep the versioned executable available while restoring the previous configuration or `PATH` for rollback.
+Pinchos does not inherit the process `PATH`.
+Commands run with the fixed PATH `/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin` documented in [runtime.md](runtime.md).
+Put Remainder on that PATH (for example `/opt/homebrew/bin` or `/usr/local/bin`), or use its absolute path in TOML.
+Keep the versioned executable available while restoring the previous configuration for rollback.
 Record the resolved path and release version before activating the configuration:
 
 ```sh

@@ -26,30 +26,49 @@ Release tags, signing, and the first release are in [docs/pinchos/install.md](do
 
 ### Requirements
 
-Pinchos releases target Apple Silicon (arm64) Macs on macOS 14+.
+Pinchos targets Apple Silicon (arm64) Macs on macOS 14+.
 
-The project is pure Swift Package Manager and has no Xcode project. Until `v0.1.0` is published, the install script and Homebrew cask fail closed on a missing artifact or checksum; build from source in the meantime.
+The project is pure Swift Package Manager and has no Xcode project.
+Until `v0.1.0` is published, the install script and Homebrew cask fail closed on a missing artifact or checksum.
+Build from source in the meantime.
 
-### Install
+### Build from source
 
 ```sh
-curl -fsSL https://douglasjarquin.github.io/pinchos/install.sh | bash
+swift build -c release
 ```
 
-The script refuses non-macOS, non-arm64, and pre-macOS 14 hosts, downloads the release zip, and verifies the published SHA-256 sidecar.
-
-`PINCHOS_VERSION`, `PINCHOS_INSTALL_DIR`, Homebrew, the local build, and the Gatekeeper check are in [docs/pinchos/install.md](docs/pinchos/install.md).
+The release executable is `.build/release/pinchos`.
+`PINCHOS_VERSION`, `PINCHOS_INSTALL_DIR`, Homebrew, the unpublished install script, and the Gatekeeper check are in [docs/pinchos/install.md](docs/pinchos/install.md).
 
 ### First run
 
+The config path is `$XDG_CONFIG_HOME/pinchos/pinchos.toml` when `XDG_CONFIG_HOME` is non-empty, otherwise `~/.config/pinchos/pinchos.toml`.
+
 ```sh
+.build/release/pinchos config-path
 .build/release/pinchos init
 .build/release/pinchos validate
-.build/release/pinchos doctor
-.build/release/pinchos run codex
+.build/release/pinchos open-config
 ```
 
-`init` writes the checked-in example only when no configuration exists. The other commands are in [docs/pinchos/cli.md](docs/pinchos/cli.md).
+`config-path` prints the resolved file and creates nothing.
+`init` writes the checked-in [example](example/pinchos.toml) only when that file does not exist.
+`validate` parses without running commands and without rewriting the file.
+`open-config` opens the same path in the default application.
+It creates an empty file only when the path is missing.
+
+If the file is malformed, `validate` prints the error and exits non-zero.
+`init` still refuses to overwrite.
+Edit the existing file, then `validate` again.
+The running app keeps last known-good items until the file parses.
+The other commands are in [docs/pinchos/cli.md](docs/pinchos/cli.md).
+
+`pinchos doctor` inspects executables against the fixed PATH without running them.
+`pinchos run <item>` executes one item.
+The example item needs Remainder on that PATH or an absolute path; see [docs/pinchos/example-setup.md](docs/pinchos/example-setup.md).
+
+Commands and actions are unsandboxed code executed with the user's permissions.
 
 ## How it works
 
@@ -85,6 +104,10 @@ Bounds, reload, recovery, and the rejected development syntax are in [docs/pinch
 * [docs/pinchos/architecture.md](docs/pinchos/architecture.md) — modules, tests, and manual QA.
 
 * [example/pinchos.toml](example/pinchos.toml) — canonical configuration.
+
+* [recipes/README.md](recipes/README.md) — the nine-recipe catalog and named-path validation.
+
+* [docs/performance.md](docs/performance.md) — P1 three-item/60s idle `phys_footprint` under 15 MB, sampled at commit `44bb2b3`.
 
 * [docs/manual-qa](docs/manual-qa) — manual QA evidence.
 
