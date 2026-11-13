@@ -459,13 +459,16 @@ run_profile() (
     }
     trap cleanup EXIT
 
-    # SIGTERM is after settle + 1s per sample + the IDLEW window. Reject a
-    # settle that would fire it after the in-flight sleep 120 has already exited.
+    # SIGTERM is after settle + 1s per sample + the IDLEW window + the live
+    # menu probe (worst case about 20s: three AXPress timeouts, joins, and
+    # dismissals). Reject a settle that would fire it after the in-flight
+    # sleep 120 has already exited.
     if [[ "$expect_inflight" == "true" ]]; then
         inflight_lifetime_seconds=120
-        elapsed_before_sigterm=$((settle_seconds + samples + wakeup_window_seconds))
+        menu_probe_allowance_seconds=20
+        elapsed_before_sigterm=$((settle_seconds + samples + wakeup_window_seconds + menu_probe_allowance_seconds))
         if [[ "$elapsed_before_sigterm" -ge "$inflight_lifetime_seconds" ]]; then
-            echo "error: settle_seconds ($settle_seconds) + samples ($samples) + wakeup_window_seconds ($wakeup_window_seconds) = ${elapsed_before_sigterm}s would SIGTERM after the in-flight command's ${inflight_lifetime_seconds}s lifetime" >&2
+            echo "error: settle_seconds ($settle_seconds) + samples ($samples) + wakeup_window_seconds ($wakeup_window_seconds) + menu_probe_allowance_seconds ($menu_probe_allowance_seconds) = ${elapsed_before_sigterm}s would SIGTERM after the in-flight command's ${inflight_lifetime_seconds}s lifetime" >&2
             exit 1
         fi
     fi

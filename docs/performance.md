@@ -141,6 +141,7 @@ It builds the release binary once and runs the two selected profiles against dis
 | **five** (`five`) | 5 items, 60s intervals, cached and manual menu values, duplicate `echo 42` sources, in-flight `sleep 120`, `exit 1` | no network, no provider credentials |
 
 Both profiles print commit SHA, dirty state, macOS version, hardware model, architecture, memory size, Swift toolchain, `phys_footprint` samples, RSS, idle CPU, numeric FD counts (`lsof -a -d 0-65535`), thread/child counts, `top` IDLEW over a 60s interval (the timer cadence), SIGTERM cleanup of recorded descendants, an Accessibility probe, and live compact-menu open latency when `AXIsProcessTrusted()` is true.
+When Accessibility is trusted but the extras item cannot be reached (menu-bar overflow or notch), `mise run perf` exits 1.
 Numeric first arguments still mean settle seconds and sample count for compatibility:
 
 ```sh
@@ -212,8 +213,10 @@ The five-item mixed workload is characterization only; it also landed under 15 M
 Five-item CPU is not an idle sample: `sleep 120` is still running, which is required for the descendant cleanup check.
 Issue #129 has no ratified millisecond menu-open budget; these compact-menu samples are recorded evidence, not a new threshold.
 P1 opened the `42` extra in 18.7 ms median and two Down-arrow events selected `Collapse Pinchos`.
-The five-item `42` extra opened in 32.3 ms median with cache-only rows `Cached: 42` and `Manual: manual-row` already present, while the in-flight `sleep 120` descendant set stayed at 3.
-That is enough live GUI evidence to close the issue: **`Closes #129`**.
+The five-item `42` extra opened in 32.3 ms median.
+`menu_titles` is the last of the three opens: that last open listed `Cached: 42` and `Manual: manual-row`.
+Direct children at the pre-probe sample were 2.
+Recursive descendants were counted once, immediately before SIGTERM, after the menu probe, and were 3.
 
 P1 idle CPU between ticks was 0.0% in `ps` samples after the 15s settle.
 The 60s `top` window's second sample also showed 0.1% CPU on P1 and 1.2% on the in-flight five-item profile.
@@ -226,7 +229,11 @@ Numeric FDs are `lsof -nP -a -d 0-65535 -p` (not `lsof | wc -l`).
 P1 idle has no in-flight child at SIGTERM.
 The five-item profile records descendants with recursive `pgrep -P` immediately before SIGTERM (3 pids: session supervisor, shell, `sleep`) and re-checks those pids with `kill -0` afterwards (0 leftover).
 
-Live compact-menu open latency is measured when `AXIsProcessTrusted()` is true: `AXPress` on a pinchos extras `AXMenuBarItem`, poll until an `AXMenu` appears, `CGEventPostToPid` Down twice, read `AXSelectedChildren`, dismiss with `AXCancel`.
+Live compact-menu open latency is measured when `AXIsProcessTrusted()` is true.
+Each sample is the wall time from starting the `AXPress` helper thread until `AXChildren` polling (0.5 ms sleep) sees an `AXMenu` with `AXMenuItem` rows.
+That interval includes Accessibility round-trip and polling overhead.
+It is not render time and not main-thread construction time.
+After the menu appears, the probe posts two Down-arrow events with `CGEventPostToPid`, reads `AXSelectedChildren`, and dismisses with `AXCancel`.
 `#129` has no ratified millisecond budget for that path; the recorded number is evidence, not a new product threshold.
 In-process tests still prove menu construction returns while a command is blocked on a fifo, and that menu titles stay a small bound independent of retained output.
 
