@@ -14,7 +14,7 @@ Release tags, signing, and the first release are in [docs/pinchos/install.md](do
 
 * **Native submenu.** Static values, cached values, actions, and separators, in declaration order. Row rules are in [docs/pinchos/configuration.md](docs/pinchos/configuration.md).
 
-* **Checked-in example.** The example item shells out for one Codex reading. Download, checksum, freshness, and rollback are in [docs/pinchos/example-setup.md](docs/pinchos/example-setup.md).
+* **Checked-in example.** `init` writes a `/bin/date` clock item that works on a fresh Mac. Setup is in [docs/pinchos/example-setup.md](docs/pinchos/example-setup.md). The Codex Remainder example is an opt-in recipe.
 
 * **CLI.** `init`, `validate`, `doctor`, `run`, `config-path`, and `open-config`. What each one does is in [docs/pinchos/cli.md](docs/pinchos/cli.md).
 
@@ -74,7 +74,7 @@ Stop it with Quit Pinchos from its menu (Quit in the recovery menu), or Ctrl-C i
 
 `pinchos doctor` inspects executables against the fixed PATH without running them.
 `pinchos run <item>` executes one item.
-The example item needs Remainder on that PATH or an absolute path; see [docs/pinchos/example-setup.md](docs/pinchos/example-setup.md).
+The example item is `clock` and runs `/bin/date`; see [docs/pinchos/example-setup.md](docs/pinchos/example-setup.md).
 
 Commands and actions are unsandboxed code executed with the user's permissions.
 
@@ -105,7 +105,7 @@ Bounds, reload, recovery, and the rejected development syntax are in [docs/pinch
 
 * [docs/pinchos/configuration.md](docs/pinchos/configuration.md) — config path, item keys, and menu rows.
 
-* [docs/pinchos/example-setup.md](docs/pinchos/example-setup.md) — the checked-in Codex example, checksums, freshness, and rollback.
+* [docs/pinchos/example-setup.md](docs/pinchos/example-setup.md) — the checked-in clock example.
 
 * [docs/pinchos/runtime.md](docs/pinchos/runtime.md) — output bounds, reload, recovery, and removed syntax.
 
@@ -113,7 +113,7 @@ Bounds, reload, recovery, and the rejected development syntax are in [docs/pinch
 
 * [example/pinchos.toml](example/pinchos.toml) — canonical configuration.
 
-* [recipes/README.md](recipes/README.md) — the nine-recipe catalog and named-path validation.
+* [recipes/README.md](recipes/README.md) — the recipe catalog and named-path validation.
 
 * [docs/performance.md](docs/performance.md) — P1 three-item/60s idle `phys_footprint` under 15 MB, sampled at commit `44bb2b3`.
 

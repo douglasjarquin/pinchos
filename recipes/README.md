@@ -11,11 +11,13 @@ Each file contains one or more `[item.<id>]` tables and documents its command de
 | [`github-open-prs.toml`](github-open-prs.toml) | Open pull requests | GitHub CLI and an existing login |
 | [`vpn-network.toml`](vpn-network.toml) | Default interface and likely VPN activity | macOS `route` and `ifconfig` |
 | [`ai-quota.toml`](ai-quota.toml) | Provider quota | `quota-axi` and `jq` |
+| [`codex.toml`](codex.toml) | Codex weekly remaining | Remainder |
 | [`http-health.toml`](http-health.toml) | HTTP status | macOS `curl` |
 | [`aws-profile.toml`](aws-profile.toml) | AWS account identity | AWS CLI and an existing profile |
 | [`load-average.toml`](load-average.toml) | One-minute load | macOS `sysctl` and `awk` |
 
-The Codex quota example in [`example/pinchos.toml`](../example/pinchos.toml) demonstrates several cached menu rows, one action, and a separator.
+`init` writes the clock item from [`example/pinchos.toml`](../example/pinchos.toml).
+The Codex Remainder example in [`codex.toml`](codex.toml) is opt-in and demonstrates several cached menu rows, one action, and a separator.
 Its menu opens from cache without running commands during construction.
 Item and menu keys are in [`docs/pinchos/configuration.md`](../docs/pinchos/configuration.md).
 

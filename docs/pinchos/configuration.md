@@ -7,40 +7,17 @@ Otherwise it reads `~/.config/pinchos/pinchos.toml`.
 The config watcher reloads this file after changes, but normal operation never rewrites it.
 
 The canonical source is [`example/pinchos.toml`](../../example/pinchos.toml).
+`init` writes this clock item when no configuration exists.
 
 ```toml
-[item.codex]
-run = "remainder value --provider codex --profile default --window weekly --scope account --field remaining --cache auto --max-age 5s --freshness fresh"
-interval = "5m"
-timeout = "15s"
+[item.clock]
+run = "date '+%H:%M'"
+interval = "30s"
 format = "{output}"
-symbol = "terminal"
-
-[[item.codex.menu]]
-label = "Usage"
-run = "remainder value --provider codex --profile default --window weekly --scope account --field remaining --cache auto --max-age 5s --freshness fresh"
-cache = "5m"
-
-[[item.codex.menu]]
-label = "Pace"
-run = "remainder value --provider codex --profile default --window weekly --scope account --field pace --cache auto --max-age 5s --freshness fresh"
-cache = "5m"
-
-[[item.codex.menu]]
-label = "Refresh"
-run = "remainder value --provider codex --profile default --window weekly --scope account --field remaining --cache auto --max-age 5s --freshness fresh"
-cache = "5m"
-action = "open https://chatgpt.com/codex"
-
-[[item.codex.menu]]
-label = "Open Codex"
-action = "open https://chatgpt.com/codex"
-
-[[item.codex.menu]]
-separator = true
 ```
 
-Download, checksum, freshness, and rollback for this example are in [example-setup.md](example-setup.md).
+Setup for this example is in [example-setup.md](example-setup.md).
+The Codex Remainder example with cached menu rows is the opt-in recipe [`recipes/codex.toml`](../../recipes/codex.toml).
 
 Items appear in declaration order.
 Item ids in `[item.<id>]` and `[[item.<id>.menu]]` may contain only `[A-Za-z0-9_-]`.

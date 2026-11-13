@@ -34,10 +34,10 @@ final class RecoveryTests: XCTestCase {
     func testExampleConfigIsValidAndProvidesNormalItems() throws {
         let config = try ConfigParser.parse(ExampleConfig.text)
 
-        XCTAssertEqual(config.items.map(\.name), ["codex"])
+        XCTAssertEqual(config.items.map(\.name), ["clock"])
     }
 
-    func testGeneratedExampleMatchesCheckedInRemainderConfiguration() throws {
+    func testGeneratedExampleMatchesCheckedInClockConfiguration() throws {
         let checkedInExample = try String(
             contentsOf: repoRoot.appendingPathComponent("example/pinchos.toml"),
             encoding: .utf8
@@ -46,17 +46,14 @@ final class RecoveryTests: XCTestCase {
         XCTAssertEqual(ExampleConfig.text + "\n", checkedInExample)
 
         let item = try XCTUnwrap(ConfigParser.parse(ExampleConfig.text).items.first)
-        let remaining = "remainder value --provider codex --profile default --window weekly --scope account --field remaining --cache auto --max-age 5s --freshness fresh"
-        let pace = "remainder value --provider codex --profile default --window weekly --scope account --field pace --cache auto --max-age 5s --freshness fresh"
-
-        XCTAssertEqual(item.run, remaining)
-        XCTAssertEqual(item.interval, .scheduled(300))
+        XCTAssertEqual(item.name, "clock")
+        XCTAssertEqual(item.run, "date '+%H:%M'")
+        XCTAssertEqual(item.interval, .scheduled(30))
         XCTAssertEqual(item.timeout, 15)
-        XCTAssertEqual(item.symbol, "terminal")
-        XCTAssertEqual(item.menu.map(\.label), ["Usage", "Pace", "Refresh", "Open Codex", nil])
-        XCTAssertEqual(item.menu.map(\.run), [remaining, pace, remaining, nil, nil])
-        XCTAssertEqual(item.menu.map(\.action), [nil, nil, "open https://chatgpt.com/codex", "open https://chatgpt.com/codex", nil])
-        XCTAssertEqual(item.menu.map(\.cache), [300, 300, 300, nil, nil])
+        XCTAssertEqual(item.format, "{output}")
+        XCTAssertNil(item.symbol)
+        XCTAssertTrue(item.menu.isEmpty)
+        XCTAssertFalse(ExampleConfig.text.contains("remainder"))
         XCTAssertFalse(ExampleConfig.text.contains("quota-axi"))
         XCTAssertFalse(ExampleConfig.text.contains("jq"))
     }

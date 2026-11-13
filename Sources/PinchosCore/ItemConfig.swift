@@ -140,34 +140,9 @@ public struct RecoveryMenu: Equatable, Sendable {
 
 public enum ExampleConfig {
     public static let text = """
-    [item.codex]
-    run = "remainder value --provider codex --profile default --window weekly --scope account --field remaining --cache auto --max-age 5s --freshness fresh"
-    interval = "5m"
-    timeout = "15s"
+    [item.clock]
+    run = "date '+%H:%M'"
+    interval = "30s"
     format = "{output}"
-    symbol = "terminal"
-
-    [[item.codex.menu]]
-    label = "Usage"
-    run = "remainder value --provider codex --profile default --window weekly --scope account --field remaining --cache auto --max-age 5s --freshness fresh"
-    cache = "5m"
-
-    [[item.codex.menu]]
-    label = "Pace"
-    run = "remainder value --provider codex --profile default --window weekly --scope account --field pace --cache auto --max-age 5s --freshness fresh"
-    cache = "5m"
-
-    [[item.codex.menu]]
-    label = "Refresh"
-    run = "remainder value --provider codex --profile default --window weekly --scope account --field remaining --cache auto --max-age 5s --freshness fresh"
-    cache = "5m"
-    action = "open https://chatgpt.com/codex"
-
-    [[item.codex.menu]]
-    label = "Open Codex"
-    action = "open https://chatgpt.com/codex"
-
-    [[item.codex.menu]]
-    separator = true
     """
 }

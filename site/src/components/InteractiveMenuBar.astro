@@ -11,22 +11,17 @@ const { compact = false } = Astro.props;
 
 <div class="interactive-menu" data-interactive-menu>
   <p class="interactive-menu__description" id="interactive-menu-description">
-    Static preview of the canonical Pinchos 0.1 configuration. Cached menu values are available immediately, actions run only when selected, and opening a menu does not wait on a command.
+    Static preview of the canonical Pinchos 0.1 configuration. <code>init</code> writes this <code>/bin/date</code> clock item so a fresh Mac gets a working menu.
   </p>
   <details class="menu-disclosure">
-    <summary class="menu-bar" aria-label="Open the Codex menu">
-      <span>codex</span>
-      <span>68%</span>
+    <summary class="menu-bar" aria-label="Open the clock menu">
+      <span>clock</span>
+      <span>14:07</span>
     </summary>
-    {!compact && <div class="example-menu" role="group" aria-label="Codex submenu">
+    {!compact && <div class="example-menu" role="group" aria-label="Clock submenu">
       <div class="example-menu__row-set" role="none">
-        <div class="example-menu__row">Usage: 68% <span class="example-menu__kind">cached</span></div>
-        <div class="example-menu__row">Pace: ahead <span class="example-menu__kind">cached</span></div>
-        <a class="example-menu__action" href="https://chatgpt.com/codex">Refresh: 68% <span class="example-menu__kind">run + action</span></a>
-        <a class="example-menu__action" href="https://chatgpt.com/codex">Open Codex <span class="example-menu__kind">action</span></a>
+        <div class="example-menu__row">The default item has no extra menu rows.</div>
       </div>
-      <div class="menu-rule" role="separator" aria-hidden="true"></div>
-      <div class="example-menu__row" role="none">Rows open from cached values; commands run only after activation.</div>
     </div>}
   </details>
   {!compact && <details class="config-disclosure">

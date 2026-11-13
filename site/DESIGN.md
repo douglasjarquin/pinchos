@@ -84,9 +84,9 @@ The mobile breakpoint is 720px; grids collapse to one column and horizontal padd
 
 ### Product mockup
 
-- **Structure:** dark system-font menu bar, item labels and values, and a native-looking submenu with cached rows, actions, and separators.
+- **Structure:** dark system-font menu bar, item labels and values, and a native-looking submenu.
 - **Variants:** landing hero and docs component specimen.
-- **States:** the landing demo presents the canonical Codex item with cached Usage and Pace rows, a run-plus-action Refresh row, an Open Codex action, a separator, and a config disclosure; opening the menu does not wait on a command.
+- **States:** the landing demo presents the canonical clock item (`date '+%H:%M'`) and a config disclosure; the default item has no extra menu rows.
 - **Accessibility:** `figure` has a meaningful label, menu rows remain selectable text, the action is a keyboard-reachable button, the config disclosure is keyboard reachable, and the example explains its read-only boundary.
 - **Motion:** no idle motion; the landing demo uses instantaneous state changes and the existing 150ms color/background feedback for controls.
 
@@ -120,8 +120,8 @@ The mobile breakpoint is 720px; grids collapse to one column and horizontal padd
 The source designs call for no idle motion.
 Interactive anchors use only a 150ms ease-out transition for affordance feedback.
 The homepage product mockup is a deliberate scoped client-side exception: its script simulates the sample TOML menu without reading local config or executing commands.
-The submenu renders the ordered rows from the canonical TOML sample without executing any command while it opens.
-Cached values are presented immediately and refresh in the background when stale or unavailable.
+The disclosure shows the canonical TOML sample without executing any command.
+The default clock item has no extra menu rows.
 The recipe explorer's search filters the build-generated card list in place and announces the visible count without changing the URL or duplicating the catalog.
 Interactive state changes are instantaneous and respect the same reduced-motion rule as the rest of the site.
 All motion is disabled under `prefers-reduced-motion: reduce`.

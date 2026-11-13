@@ -1,0 +1,64 @@
+# Recipe: codex (optional third-party tool)
+# Category: AI
+#
+# Purpose: show Codex weekly remaining quota and pace, with cached menu rows,
+#   a refresh action, and a separator. This is the previous default example,
+#   kept as an opt-in recipe so a fresh Mac does not need Remainder.
+# Dependencies: Remainder `v0.2.1` for macOS Apple Silicon (`darwin_arm64`).
+#   Source / install: https://github.com/douglasjarquin/remainder
+#   Pinchos does not install Remainder. Put it on the fixed PATH
+#   (`/opt/homebrew/bin` or `/usr/local/bin`) or use an absolute path in
+#   every `run` line. Pinchos does not inherit the process PATH.
+# Account/auth requirement: Remainder reads the Codex CLI's existing login.
+#   No credential belongs in this file.
+# Expected output: "68" when the Codex `default` profile has an account-scoped
+#   weekly remaining percentage; account- and provider-state-dependent.
+# Limitations: unknown, expired, wrong-account, missing-auth, nonzero-exit,
+#   and timeout outcomes are failures, not numeric zero.
+#
+# Download Remainder `v0.2.1` once, verify the selected archive, and extract it:
+#   asset=remainder_v0.2.1_darwin_arm64.tar.gz
+#   release=https://github.com/douglasjarquin/remainder/releases/download/v0.2.1
+#   curl --fail --location --output "$asset" "$release/$asset"
+#   curl --fail --location --output SHA256SUMS "$release/SHA256SUMS"
+#   awk -v name="$asset" '$2 == name { print; count++ } END { if (count != 1) exit 1 }' SHA256SUMS > "$asset.sha256"
+#   shasum -a 256 -c "$asset.sha256"
+#   tar -xzf "$asset"
+# Archive SHA-256: 84f3b21f3a0a30068644e4c6f229af1ec7b183744be30f10c379fe514921af95
+# Extracted executable SHA-256: 8f1a4fd0ce7e1466055e733512b41cbd0bcd25ccba0ac125b4f13b58d578d886
+# Confirm on Pinchos's PATH before activating:
+#   env -i PATH=/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin /bin/sh -c 'command -v remainder && remainder --version'
+#
+# Copy this file's [item.*] table(s) into your pinchos.toml, then:
+#   .build/release/pinchos validate
+#   .build/release/pinchos doctor
+#   .build/release/pinchos run codex
+
+[item.codex]
+run = "remainder value --provider codex --profile default --window weekly --scope account --field remaining --cache auto --max-age 5s --freshness fresh"
+interval = "5m"
+timeout = "15s"
+format = "{output}"
+
+[[item.codex.menu]]
+label = "Usage"
+run = "remainder value --provider codex --profile default --window weekly --scope account --field remaining --cache auto --max-age 5s --freshness fresh"
+cache = "5m"
+
+[[item.codex.menu]]
+label = "Pace"
+run = "remainder value --provider codex --profile default --window weekly --scope account --field pace --cache auto --max-age 5s --freshness fresh"
+cache = "5m"
+
+[[item.codex.menu]]
+label = "Refresh"
+run = "remainder value --provider codex --profile default --window weekly --scope account --field remaining --cache auto --max-age 5s --freshness fresh"
+cache = "5m"
+action = "open https://chatgpt.com/codex"
+
+[[item.codex.menu]]
+label = "Open Codex"
+action = "open https://chatgpt.com/codex"
+
+[[item.codex.menu]]
+separator = true

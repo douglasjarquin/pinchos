@@ -43,7 +43,8 @@ Missing tools and unreadable icons include a short next step.
 Doctor does not dump the inherited environment, credential metadata, or login-item state.
 
 `run <item>` executes one item for scriptable verification under that same policy.
-The checked-in example item is `codex` and needs Remainder on the fixed PATH or an absolute path; see [example-setup.md](example-setup.md).
+The checked-in example item is `clock` and runs macOS `/bin/date`; see [example-setup.md](example-setup.md).
+The Codex Remainder example is the opt-in recipe [`recipes/codex.toml`](../../recipes/codex.toml).
 
 Run `.build/release/pinchos` with no arguments to launch the menu-bar app; any argument goes to the CLI.
 That no-argument launch runs in the foreground and keeps the terminal busy until the app quits, so it has not hung.

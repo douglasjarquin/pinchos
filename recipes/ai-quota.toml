@@ -2,9 +2,8 @@
 # Category: AI
 #
 # Purpose: show a coding-agent provider's remaining weekly quota
-# percentage in the menu bar. This is the same pattern as the Codex
-# example in `example/pinchos.toml`, provided here standalone so it can
-# be copied without pulling in the rest of that file.
+# percentage in the menu bar. This is a standalone `quota-axi` pipeline,
+# distinct from the Remainder Codex recipe in `codex.toml`.
 #
 # Dependencies (both optional, neither ships with macOS or with pinchos):
 #   - `quota-axi`: reads local provider auth sources and reports quota

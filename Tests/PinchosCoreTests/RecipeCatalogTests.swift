@@ -16,7 +16,7 @@ final class RecipeCatalogTests: XCTestCase {
         )
         let recipes = entries.filter { $0.pathExtension == "toml" }.sorted { $0.path < $1.path }
         XCTAssertFalse(recipes.isEmpty, "expected at least one recipe under \(recipesDirectory.path)")
-        XCTAssertEqual(recipes.count, 9, "expected the maintained recipes under \(recipesDirectory.path)")
+        XCTAssertEqual(recipes.count, 10, "expected the maintained recipes under \(recipesDirectory.path)")
         return recipes
     }
 
@@ -26,7 +26,7 @@ final class RecipeCatalogTests: XCTestCase {
 
     func testEveryRecipeAndExampleParsesWithConfigParser() throws {
         let catalog = try recipeFiles() + exampleFiles()
-        XCTAssertEqual(catalog.count, 10, "expected nine recipes plus the canonical example")
+        XCTAssertEqual(catalog.count, 11, "expected ten recipes plus the canonical example")
         for fileURL in catalog {
             let text = try String(contentsOf: fileURL, encoding: .utf8)
             let config: PinchosConfig

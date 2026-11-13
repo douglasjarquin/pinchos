@@ -56,7 +56,8 @@ final class PinchosCLITests: XCTestCase {
         XCTAssertEqual(firstInitCode, 0)
         let initialContents = try Data(contentsOf: configURL)
         XCTAssertTrue(capture.stdout.contains("Created example config"))
-        XCTAssertTrue(String(decoding: initialContents, as: UTF8.self).contains("[item.codex]"))
+        XCTAssertTrue(String(decoding: initialContents, as: UTF8.self).contains("[item.clock]"))
+        XCTAssertTrue(String(decoding: initialContents, as: UTF8.self).contains("date '+%H:%M'"))
 
         capture.stdout = ""
         let secondInitCode = await cli.run(arguments: ["init"])
@@ -142,7 +143,7 @@ final class PinchosCLITests: XCTestCase {
             at: recipesDirectory,
             includingPropertiesForKeys: nil
         ).filter { $0.pathExtension == "toml" }.sorted { $0.path < $1.path }
-        XCTAssertEqual(recipes.count, 9)
+        XCTAssertEqual(recipes.count, 10)
 
         for recipeURL in recipes {
             let configURL = root.appendingPathComponent("pinchos/pinchos.toml")
