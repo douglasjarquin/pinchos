@@ -1,34 +1,43 @@
 # #168 menu accessibility evidence
 
-This is the factory pass for current native menus.
-It is not a VoiceOver speech sign-off.
+Live AX and screenshots on this Mac: 2026-11-13, binary `.build/release/pinchos` at `e0ed634fdbb681a6f46d636ba333f51d6f7c8e98`, Light appearance.
+VoiceOver was not enabled.
+System Events still timed out.
+Q2 product calls stay pending with Douglas.
 
-Live AppKit dump and release-binary launch: `e14050a4351ebcfa98af1a45dccca5c829225aa5` on 2026-11-13.
-CRLF splitting, sanitize-then-truncate, and spoken-value caps: `508b39b7aa9b62edbd5f34af9be1ab48c09ca2bb`.
-Failed-without-value then refreshing no longer speaks `⚠︎`/`⌛︎` from the previous title.
-The durable check is `testFailedWithoutValueThenRefreshingSpeaksWithoutGlyphs` (landed in `039b2b3` on this branch).
-`#168` stays parked until a human runs the checklist below with Accessibility granted.
+## Probe (2026-11-13 11:49)
+
+Douglas granted Accessibility for `/opt/homebrew/Caskroom/cursor-cli/2026.11.11-043ef28/dist-package/node` and `/Users/douglasjarquin/.local/share/mise/installs/python/3.14.7/bin/python3.14`.
+The `cursor-agent` worker (pid 20604) started Thu Nov 12 10:57:37 2026, before that grant.
+
+One non-prompting check from each binary, copying Finder `AXRole`:
+
+- python3.14: `AXIsProcessTrusted=True`, `AXUIElementCopyAttributeValue` err 0, `AXRole=AXApplication`, `AXTitle=Finder`.
+- `/tmp/pinchos-168-probe/a11y-probe-once`: `AXIsProcessTrusted=true`, same Finder role/title, err 0.
+
+Parent chain for both: the leaf binary → `/bin/zsh` → `/opt/homebrew/Caskroom/cursor-cli/2026.11.11-043ef28/dist-package/node` (`cursor-agent` pid 20604) → `/sbin/launchd`.
+Screen Recording was already allowed (`CGRequestScreenCaptureAccess=true`, `screencapture` 3840×2160 PNG).
 
 ## What the product does now
 
-Status-item buttons, collapsed first-level rows, and recovery items expose a spoken `accessibilityLabel` that includes the item or recovery name plus `ValueFreshness.spokenDescription`.
-The visible `⌛︎`/`⚠︎` markers stay in the title only.
-Informational rows keep `action == nil` and `isEnabled == false`.
+Status-item extras expose `AXDescription` as name plus `ValueFreshness.spokenDescription`.
+The visible `⌛︎`/`⚠︎` markers stay in `AXTitle` only.
+Informational rows are `enabled=false`.
 Unreadable icon files get the same text-only diagnostic note as unavailable symbols.
 `lastTrimmedLine` splits on CR, LF, and CRLF the same way `DiagnosticPreviewFormatter` does, so `printf '42\r\n'` renders as `42`.
 Titles and spoken values run through `boundedVisibleText` (sanitize, then cap at 60 graphemes).
 
 ## Automated evidence
 
-`mise run verify` on `e14050a` exited 0 in 118.83s: 212 `pinchosTests` and 213 `PinchosCoreTests`, then a release build.
-The CRLF / sanitize-then-truncate / spoken-cap follow-up (`508b39b7aa9b62edbd5f34af9be1ab48c09ca2bb`) re-ran `mise run verify` on this Mac and exited 0: 216 `pinchosTests`, 220 `PinchosCoreTests`, then a release build.
-Targeted AppKit property tests live in `Tests/pinchosTests/MenuAccessibilityTests.swift` and the recovery presentation tests.
-Follow-up tests cover `42\r\n` rendering as `42`, last-line selection for multi-line CRLF, and bounded spoken labels for long values.
+`mise run verify` on `e14050a` exited 0: 212 `pinchosTests` and 213 `PinchosCoreTests`, then a release build.
+The CRLF / sanitize-then-truncate / spoken-cap follow-up (`508b39b`) exited 0: 216 `pinchosTests`, 220 `PinchosCoreTests`.
+The ellipsis-after-cheap-clip follow-up (`e0ed634`) exited 0: 217 `pinchosTests`, 220 `PinchosCoreTests`.
+Targeted AppKit property tests live in `Tests/pinchosTests/MenuAccessibilityTests.swift`.
+The durable spoken-glyph check is `testFailedWithoutValueThenRefreshingSpeaksWithoutGlyphs` (landed in `039b2b3` on this branch).
 
 ## Sample config used on this Mac
 
 Release binary `.build/release/pinchos` with `XDG_CONFIG_HOME=/tmp/pinchos-168`.
-PID 60372 opened this config (`phys_footprint` 16 MB) and was stopped after capture.
 
 ```toml
 [item.clock]
@@ -86,81 +95,106 @@ interval = "manual"
 symbol = "pinchos.definitely.not.a.real.symbol"
 ```
 
-`pinchos doctor` against that config reported the missing icon file and unavailable symbol.
-A missing-config `XDG_CONFIG_HOME` reported `config: missing; run 'pinchos init'`.
-A malformed file reported a parse error at line 1.
+## Live AX (this session)
 
-## AppKit / NSMenuItem dump summary
+Full transcript: [`168/ax-live-2026-11-13.txt`](168/ax-live-2026-11-13.txt).
+Pinchos pid 49124, Light appearance.
 
-In-process dump of real `NSMenuItem` and status-item button attributes at `e14050a` (full text was under `/tmp/pinchos-168/ax-menus.txt`).
-Effective appearance while dumping: `NSAppearanceNameDarkAqua`.
+Expanded extras, `roleDesc=status menu`, `subrole=AXMenuExtra`, `enabled=true`:
 
-- Informational rows (`Reset`, `Usage`, diagnostics, icon fallback, recovery error text): `enabled=false`, `action=nil`.
-- Action rows, combined value/action rows, Refresh Now, Collapse/Expand, Open Config, Reload Config, Quit, and Copy: `enabled=true`, target `StatusItemController`.
-- Stale/failed titles still show `⌛︎`/`⚠︎`. At `e14050a` the dumped `axLabel` spoke the state in words and did not contain those glyphs. That dump was not re-run after the CRLF follow-up, which briefly spoke `baseTitle` (including a leftover `⚠︎` while refreshing with no last-good value). Spoken text comes from `lastSuccessfulTitle` again. The durable check is `testFailedWithoutValueThenRefreshingSpeaksWithoutGlyphs`, not a new live AX dump.
-- Control characters became Control Pictures (`␀`, `␊`) in title and label.
+- `title=ok` / `desc=badsymbol, ok, fresh`
+- `title=ok` / `desc=badicon, ok, fresh`
+- `title=` 59 `x` plus `…` / `desc=long,` same truncated value `, fresh`
+- `title=– ⚠︎` / `desc=fail, failed` (glyph in title only)
+- `title=72%` / `desc=clock, 72%, fresh`
+
+Clock menu, screenshot [`168/clock-menu-light.png`](168/clock-menu-light.png):
+
+- `Reset: 2026-09-07` and `Usage: 81` are `enabled=false`
+- `Open docs`, `Usage and open: 81`, `Refresh Now`, `Collapse Pinchos`, `Open Config`, `Reload Config`, `Quit Pinchos` are `enabled=true`
+- Separator is an empty `enabled=false` menu item
+
+Fail extra menu: `Retry` is `enabled=true`; Refresh/Collapse/Open/Reload/Quit stay enabled.
+
+AXPress on `Collapse Pinchos` returned 0.
+The bar dropped from five extras to one checkmark `72%` extra ([`168/collapsed-extra-light.png`](168/collapsed-extra-light.png)).
+The AX tree then reported empty `AXChildren` / `AXMenuBar=NoValue`, so collapsed submenu rows were not re-read.
+
+Missing config (`XDG_CONFIG_HOME=/tmp/pinchos-168-missing`), screenshot [`168/missing-config-menu-light.png`](168/missing-config-menu-light.png):
+
+- Extra `title=pinchos` / `desc=pinchos, no configuration found`
+- `Create Example Config`, `Open Config`, `Open Config Directory`, `Reload`, `Quit` all `enabled=true`
+
+Malformed config (`XDG_CONFIG_HOME=/tmp/pinchos-168-bad`), screenshot [`168/malformed-config-menu-light.png`](168/malformed-config-menu-light.png):
+
+- Extra `title=pinchos ⚠︎` / `desc=pinchos, configuration error`
+- Parse-error line `enabled=false`
+- `Open Config`, `Open Config Directory`, `Reload`, `Quit` `enabled=true`
+
+## Earlier in-process dump (e14050a)
+
+In-process `NSMenuItem` dump at `e14050a` (not VoiceOver).
+Effective appearance then: `NSAppearanceNameDarkAqua`.
+
+- Informational rows: `enabled=false`, `action=nil`.
+- Action rows and global controls: `enabled=true`, target `StatusItemController`.
 - Recovery parse error spoke `pinchos, configuration error`; missing config spoke `pinchos, no configuration found`.
-- Live status-item button: title `72`, `axLabel` `clock, 72, fresh`, template symbol image present.
-- Collapsed first-level rows with submenus are enabled with AppKit's native `submenuAction:` so keyboard/VoiceOver can open the submenu.
+- That dump was not a live AX read.
 
-## What was not verified
+## What was not verified in this session
 
-This session had a WindowServer and a console login, but it was not an interactive GUI agent.
+- VoiceOver was not enabled and nothing was spoken by VO.
+- `osascript` System Events timed out (`-1712`) listing pinchos extras.
+- CGEvent Control-F8 moved focus into 1Password's Help menu, not the status extras.
+- Escape dismissed that Help menu.
+- Arrow/Return/Escape were not proven on Pinchos extras via the keyboard.
+- Option-click diagnostics were not invoked from a real menu-bar click.
+- Increase Contrast was not switched.
+- Dark appearance was not re-checked in this live session (only Light).
+- Collapsed submenu AX rows were not captured after the extra count dropped to one.
 
-- `screencapture` failed with `could not create image from display`.
-- Live-process AX returned `kAXErrorAPIDisabled` (`-25211`).
-- System Events timed out (`-1712`).
-- Control-F8, arrows, Return, Escape, and submenu focus were not driven.
-- VoiceOver was not enabled or spoken.
-- Light appearance was not switched.
-- Increase Contrast was unset in `com.apple.universalaccess`.
-- Option-click diagnostics were dumped in-process (`revealsDiagnostics: true`) but not invoked from a real menu-bar click.
+## Q2 product calls (pending, not decided)
 
-Do not treat `e14050a` or this follow-up as VoiceOver speech sign-off or keyboard-navigation sign-off.
+1. Combined name + spoken state on `accessibilityLabel` / `AXDescription` vs splitting value onto another AX attribute.
+2. The three recovery spoken strings.
+3. Option-click diagnostics vs always-visible diagnostics.
+4. Informational rows as native disabled/dimmed `NSMenuItem`s.
+5. Spoken/title bound of 60 graphemes vs a different cap.
 
-## Manual checklist (logged-in session, Accessibility already granted)
+## Manual checklist
 
-Launch `.build/release/pinchos` with the sample config above (`XDG_CONFIG_HOME` pointing at a scratch directory that contains `pinchos/pinchos.toml`).
-Do not claim a row done unless you performed it.
+Launch `.build/release/pinchos` with the sample config above.
 
 ### Keyboard, expanded
 
-1. Control-F8 (or the current menu-extras focus chord) until a Pinchos extra is focused.
-2. Space or Return opens the compact menu.
-3. Down/up arrows reach every informational row (Reset, Usage, separator) and every action (Open docs, Usage and open, Refresh Now, Collapse Pinchos, Open Config, Reload Config, Quit Pinchos).
-4. Return on an informational row does nothing.
-5. Return on Open docs / Usage and open / Refresh Now invokes the action.
-6. Escape dismisses the menu.
-7. Option-open the same extra and confirm Copy Full Output / Copy Full Error are reachable and Return copies.
+1. Control-F8 until a Pinchos extra is focused. Not done (Control-F8 hit 1Password Help).
+2. Space or Return opens the compact menu. Menu opened via AXPress, not keyboard.
+3. Down/up arrows reach every informational and action row. Not driven.
+4. Return on an informational row does nothing. Not driven.
+5. Return on Open docs / Usage and open / Refresh Now invokes the action. Not driven.
+6. Escape dismisses the menu. Escape was sent only to dismiss 1Password Help.
+7. Option-open Copy Full Output / Copy Full Error. Not done.
 
 ### Keyboard, collapsed
 
-1. From an expanded menu, Return on Collapse Pinchos.
-2. Confirm extras collapse to one Pinchos extra.
-3. Open that extra, right-arrow (or Return) into a per-item submenu, left-arrow or Escape returns to the collapsed root.
-4. Confirm Expand Pinchos, Reload Config, and Quit Pinchos are in the collapsed root, not repeated inside every submenu.
-5. Return on Expand Pinchos restores per-item extras.
+1. Return on Collapse Pinchos. Done via AXPress; extras collapsed to one `72%` extra.
+2. Confirm extras collapse to one Pinchos extra. Done (screenshot).
+3. Open that extra, right-arrow into a per-item submenu. AX tree empty after collapse; not done.
+4. Confirm Expand / Reload / Quit sit in the collapsed root. Not re-read.
+5. Return on Expand Pinchos. Not done.
 
 ### Keyboard, recovery
 
-1. Point `XDG_CONFIG_HOME` at a missing config directory, relaunch, open the `pinchos` extra, and reach Create Example Config, Open Config, Reload, and Quit.
-2. Replace the file with invalid TOML, reload, and confirm the error line is not an action and that Open Config / Reload / Quit still work.
-3. Escape dismisses the recovery menu.
+1. Missing config extra and menu captured via AX and screenshot.
+2. Malformed config error line is not an action (`enabled=false`); Open/Reload/Quit stay enabled.
+3. Escape dismisses the recovery menu. Not driven from the keyboard.
 
 ### VoiceOver
 
-1. Enable VoiceOver.
-2. Move the VoiceOver cursor to each Pinchos extra in expanded mode.
-3. Confirm the extra announces name, value, and state in words (`clock, 72, fresh`), not only `⌛︎` or `⚠︎`.
-4. Walk the compact menu: informational rows are readable and not offered as buttons; actions are offered as buttons.
-5. Repeat on a stale item and a failed item.
-6. Repeat in collapsed mode, including submenu entry/exit.
-7. Repeat on missing-config and malformed-config recovery extras (`pinchos, no configuration found` / `pinchos, configuration error`).
-8. Option-open diagnostics and confirm Copy actions are announced as actions.
+Not run.
 
 ### Appearance
 
-1. Repeat the keyboard extra-focus and one VoiceOver extra announcement in Dark (already observed as `NSAppearanceNameDarkAqua` during the dump).
-2. Switch to Light and repeat extra-focus plus one announcement.
-3. Enable Increase Contrast and repeat extra-focus plus one announcement.
-4. Restore the previous appearance when done.
+1. Dark: in-process dump at `e14050a` only.
+2. Light: this live session.
+3. Increase Contrast: not switched.
