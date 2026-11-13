@@ -125,28 +125,28 @@ final class CommandExecutionPolicyTests: XCTestCase {
         switch policy.inspectExecutable("ls -1") {
         case .found(let path):
             XCTAssertEqual(path, "/bin/ls")
-        case .missing, .unknown:
+        case .missing, .unknown, .invalidSyntax:
             XCTFail("ls must be found on the execution PATH")
         }
 
         switch policy.inspectExecutable("definitely_missing_pinchos_command_126 --help") {
         case .missing(let command):
             XCTAssertEqual(command, "definitely_missing_pinchos_command_126")
-        case .found, .unknown:
+        case .found, .unknown, .invalidSyntax:
             XCTFail("an absent simple command must be missing, not unknown")
         }
 
         switch policy.inspectExecutable("cd /tmp; definitely_missing_pinchos_command") {
         case .unknown:
             break
-        case .found, .missing:
+        case .found, .missing, .invalidSyntax:
             XCTFail("a compound expression must be unknown, not missing")
         }
 
         switch policy.inspectExecutable("env PINCHOS_PROBE=1 ls") {
         case .found(let path):
             XCTAssertEqual(path, "/bin/ls")
-        case .missing, .unknown:
+        case .missing, .unknown, .invalidSyntax:
             XCTFail("env PREFIX=value command must inspect the command, not the env wrapper")
         }
 
@@ -156,6 +156,81 @@ final class CommandExecutionPolicyTests: XCTestCase {
         )
         XCTAssertFalse(String(describing: policy.inspectExecutable("ls")).contains(secret))
         XCTAssertFalse(policy.missingCommandMessage("ls").contains(secret))
+    }
+
+    func testInspectExecutableExpandsUnquotedTildeAgainstHOME() throws {
+        let home = FileManager.default.temporaryDirectory
+            .appendingPathComponent("pinchos-policy-tilde-\(UUID().uuidString)")
+        let remainder = home.appendingPathComponent(".local/opt/remainder/v0.2.1/remainder")
+        try FileManager.default.createDirectory(
+            at: remainder.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        defer { try? FileManager.default.removeItem(at: home) }
+        try "#!/bin/sh\nexit 0\n".write(to: remainder, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: remainder.path)
+        let policy = CommandExecutionPolicy(inheritedEnvironment: [
+            "PATH": "/usr/bin:/bin:/usr/sbin:/sbin",
+            "HOME": home.path
+        ])
+
+        switch policy.inspectExecutable("~/.local/opt/remainder/v0.2.1/remainder value") {
+        case .found(let path):
+            XCTAssertEqual(path, remainder.path)
+        case .missing, .unknown, .invalidSyntax:
+            XCTFail("unquoted ~/ must expand against HOME like /bin/sh")
+        }
+
+        switch policy.inspectExecutable("'~/.local/opt/remainder/v0.2.1/remainder' value") {
+        case .missing(let command):
+            XCTAssertEqual(command, "~/.local/opt/remainder/v0.2.1/remainder")
+        case .found, .unknown, .invalidSyntax:
+            XCTFail("a quoted tilde must stay literal, not expand")
+        }
+    }
+
+    func testInspectExecutableTreatsShellBuiltinsAsUnknownNotMissing() {
+        let policy = CommandExecutionPolicy(inheritedEnvironment: [
+            "PATH": "/usr/bin:/bin:/usr/sbin:/sbin",
+            "HOME": NSHomeDirectory()
+        ])
+        for expression in ["export FOO=1", "eval ls", "source ~/.profile", ".", "exec ls"] {
+            switch policy.inspectExecutable(expression) {
+            case .unknown:
+                break
+            case .found, .missing, .invalidSyntax:
+                XCTFail("\(expression) must be unknown, not a missing executable")
+            }
+        }
+        switch policy.inspectExecutable("echo `date`") {
+        case .unknown:
+            break
+        case .found, .missing, .invalidSyntax:
+            XCTFail("a backtick command word must be unknown, not missing")
+        }
+    }
+
+    func testInspectExecutableReportsUnterminatedQuoteAsInvalidSyntax() {
+        let policy = CommandExecutionPolicy(inheritedEnvironment: [
+            "PATH": "/usr/bin:/bin:/usr/sbin:/sbin",
+            "HOME": NSHomeDirectory()
+        ])
+        switch policy.inspectExecutable("echo 'hi") {
+        case .invalidSyntax:
+            break
+        case .found, .missing, .unknown:
+            XCTFail("an unterminated quote must be invalid syntax, not unknown")
+        }
+        switch policy.inspectExecutable("echo hi\\") {
+        case .invalidSyntax:
+            break
+        case .found, .missing, .unknown:
+            XCTFail("a trailing backslash must be invalid syntax, not unknown")
+        }
+        XCTAssertEqual(
+            CommandExecutionPolicy.invalidSyntaxMessage,
+            "unterminated quote or escape"
+        )
     }
 
     func testRelativeExecutableResolvesAgainstHOMEEvenWhenHOMEDoesNotExist() throws {

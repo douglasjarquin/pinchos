@@ -30,6 +30,9 @@ It does not make Finder and Terminal identical arbitrary user environments.
 `pinchos doctor` inspects the same PATH and HOME policy without running user commands.
 It checks primary `run`, submenu `run`, and submenu `action` the same way.
 A compound shell expression is `[UNKNOWN]`, not a missing-tool failure.
+Unquoted `~/` expands against HOME the way `/bin/sh` does.
+Shell builtins such as `export` and `eval` are unknown, not missing.
+An unterminated quote or trailing backslash is `[FAIL]`.
 Missing tools are reported as not found on that PATH, with a reminder to install onto it or use an absolute path.
 Unreadable icon files suggest a readable path or `symbol`.
 Doctor labels itself as a CLI inspection so it is not mistaken for a live GUI cache.

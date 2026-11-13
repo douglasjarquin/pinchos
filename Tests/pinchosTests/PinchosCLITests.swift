@@ -354,6 +354,72 @@ final class PinchosCLITests: XCTestCase {
         XCTAssertFalse(capture.stdout.contains("definitely_missing_pinchos_command"))
     }
 
+    func testDoctorResolvesUnquotedTildeHomePathAndDoesNotCallBuiltinsMissing() async throws {
+        let root = try makeRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let remainder = root.appendingPathComponent(".local/opt/remainder/v0.2.1/remainder")
+        try FileManager.default.createDirectory(
+            at: remainder.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        try "#!/bin/sh\nexit 0\n".write(to: remainder, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: remainder.path)
+        let configURL = root.appendingPathComponent("pinchos/pinchos.toml")
+        try FileManager.default.createDirectory(at: configURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try """
+        [item.remainder]
+        run = "~/.local/opt/remainder/v0.2.1/remainder value"
+
+        [[item.remainder.menu]]
+        label = "Usage"
+        run = "~/.local/opt/remainder/v0.2.1/remainder value"
+
+        [[item.remainder.menu]]
+        label = "Export"
+        action = "export FOO=1"
+        """.write(to: configURL, atomically: true, encoding: .utf8)
+        let policy = CommandExecutionPolicy(inheritedEnvironment: [
+            "PATH": "/usr/bin:/bin:/usr/sbin:/sbin",
+            "HOME": root.path
+        ])
+        let capture = CLIOutputCapture()
+        let cli = PinchosCLI(
+            configPath: configURL.path,
+            output: capture.output,
+            executionPolicy: policy
+        )
+
+        let doctorCode = await cli.run(arguments: ["doctor"])
+
+        XCTAssertEqual(doctorCode, 0)
+        XCTAssertTrue(capture.stdout.contains("[PASS] item.remainder.run"))
+        XCTAssertTrue(capture.stdout.contains(remainder.path))
+        XCTAssertTrue(capture.stdout.contains("[PASS] item.remainder.menu[0].run"))
+        XCTAssertTrue(capture.stdout.contains("[UNKNOWN] item.remainder.menu[1].action"))
+        XCTAssertFalse(capture.stdout.contains("not found"))
+        XCTAssertFalse(capture.stdout.contains("[FAIL] item.remainder"))
+    }
+
+    func testDoctorReportsUnterminatedQuoteAsAProblem() async throws {
+        let root = try makeRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let configURL = root.appendingPathComponent("pinchos/pinchos.toml")
+        try FileManager.default.createDirectory(at: configURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try """
+        [item.broken]
+        run = "echo 'hi"
+        """.write(to: configURL, atomically: true, encoding: .utf8)
+        let capture = CLIOutputCapture()
+        let cli = PinchosCLI(configPath: configURL.path, output: capture.output)
+
+        let doctorCode = await cli.run(arguments: ["doctor"])
+
+        XCTAssertEqual(doctorCode, 4)
+        XCTAssertTrue(capture.stdout.contains("[FAIL] item.broken.run"))
+        XCTAssertTrue(capture.stdout.contains("unterminated quote or escape"))
+        XCTAssertFalse(capture.stdout.contains("[UNKNOWN] item.broken.run"))
+    }
+
     func testDoctorRecognizesExecutablePathContainingSpaces() async throws {
         let root = try makeRoot()
         defer { try? FileManager.default.removeItem(at: root) }

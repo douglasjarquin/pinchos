@@ -197,7 +197,7 @@ final class StatusItemController: StatusItemMenuDelegate {
     private var order: [String] = []
     private var warningItem: NSStatusItem?
     private var collapsedStatusItem: NSStatusItem?
-    private var collapsedMenuGeneration = 0
+    private var menuGeneration = 0
     private var barPresentation: BarPresentation = .expanded
     private var recoveryState: RecoveryState = .hidden
     private let configPath: String
@@ -232,7 +232,7 @@ final class StatusItemController: StatusItemMenuDelegate {
     }
 
     private func applyNow(config: PinchosConfig) async {
-        collapsedMenuGeneration += 1
+        menuGeneration += 1
         let old = currentConfig()
         let diff = ConfigDiffEngine.diff(old: old, new: config)
         recoveryState.apply(config: config)
@@ -301,14 +301,20 @@ final class StatusItemController: StatusItemMenuDelegate {
         // the same in-process snapshots as tests; it never invents cache
         // health and does not run commands merely to inspect them.
         if revealsDiagnostics {
-            Task { @MainActor [weak self, statusItem] in
+            menuGeneration += 1
+            let generation = menuGeneration
+            Task { @MainActor [weak self, statusItem, generation] in
                 guard let self else { return }
                 let menu = await self.makeLifecycleMenu(for: statusItem, revealsDiagnostics: true)
+                guard self.barPresentation == .expanded,
+                      self.menuGeneration == generation,
+                      self.items.values.contains(where: { $0.owns(statusItem: statusItem) })
+                else { return }
                 self.present(menu: menu, on: statusItem)
             }
             return
         }
-        let menu = makeLifecycleMenuImmediately(for: statusItem, revealsDiagnostics: false)
+        let menu = makeLifecycleMenuImmediately(for: statusItem)
         present(menu: menu, on: statusItem)
     }
 
@@ -477,7 +483,7 @@ final class StatusItemController: StatusItemMenuDelegate {
         statusItem.button?.action = #selector(handleCollapsedClick)
         statusItem.button?.sendAction(on: [.leftMouseUp, .rightMouseUp])
         collapsedStatusItem = statusItem
-        collapsedMenuGeneration += 1
+        menuGeneration += 1
         return true
     }
 
@@ -486,7 +492,7 @@ final class StatusItemController: StatusItemMenuDelegate {
             statusItemHost.removeStatusItem(collapsedStatusItem)
         }
         collapsedStatusItem = nil
-        collapsedMenuGeneration += 1
+        menuGeneration += 1
     }
 
     @objc private func collapseAction() {
@@ -512,13 +518,13 @@ final class StatusItemController: StatusItemMenuDelegate {
     func requestCollapsedMenu() -> Task<Void, Never>? {
         guard barPresentation == .collapsed, let collapsedStatusItem else { return nil }
         let revealsDiagnostics = NSApp.currentEvent?.modifierFlags.contains(.option) == true
-        let menuGeneration = collapsedMenuGeneration
-        return Task { @MainActor [weak self, collapsedStatusItem, menuGeneration, revealsDiagnostics] in
+        let generation = menuGeneration
+        return Task { @MainActor [weak self, collapsedStatusItem, generation, revealsDiagnostics] in
             guard let self else { return }
             let menu = await self.makeCollapsedMenu(revealsDiagnostics: revealsDiagnostics)
             guard self.barPresentation == .collapsed,
                   self.collapsedStatusItem === collapsedStatusItem,
-                  self.collapsedMenuGeneration == menuGeneration else { return }
+                  self.menuGeneration == generation else { return }
             self.present(menu: menu, on: collapsedStatusItem)
         }
     }
@@ -561,12 +567,8 @@ final class StatusItemController: StatusItemMenuDelegate {
         return menu
     }
 
-    private func makeLifecycleMenuImmediately(for statusItem: NSStatusItem, revealsDiagnostics: Bool) -> NSMenu {
+    private func makeLifecycleMenuImmediately(for statusItem: NSStatusItem) -> NSMenu {
         let item = items.values.first(where: { $0.owns(statusItem: statusItem) })
-        return makeLifecycleMenuImmediately(forManagedItem: item, revealsDiagnostics: revealsDiagnostics)
-    }
-
-    private func makeLifecycleMenuImmediately(forManagedItem item: (any ManagedItemLifecycle)?, revealsDiagnostics: Bool) -> NSMenu {
         let menu = NSMenu()
         if let item {
             addCommandContentImmediately(item: item, commandConfig: item.config, to: menu)
@@ -591,22 +593,6 @@ final class StatusItemController: StatusItemMenuDelegate {
         refresh.target = self
         refresh.representedObject = RefreshActionTarget(item: item)
         menu.addItem(refresh)
-    }
-
-    private func makeCollapsedMenuImmediately(revealsDiagnostics: Bool) -> NSMenu {
-        let menu = NSMenu()
-        if recoveryState.isVisible {
-            menu.addItem(makeCollapsedRecoveryItem())
-        }
-        for item in topLevelManagedItems() {
-            let title = "–"
-            let row = NSMenuItem(title: title, action: nil, keyEquivalent: "")
-            row.submenu = makeLifecycleMenuImmediately(forManagedItem: item, revealsDiagnostics: revealsDiagnostics)
-            menu.addItem(row)
-        }
-        menu.addItem(NSMenuItem.separator())
-        addGlobalMenuContentImmediately(to: menu)
-        return menu
     }
 
     func makeLifecycleMenu(for statusItem: NSStatusItem?, revealsDiagnostics: Bool = true) async -> NSMenu {

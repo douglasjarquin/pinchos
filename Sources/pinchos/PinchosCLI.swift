@@ -485,6 +485,9 @@ struct PinchosCLI {
         case .unknown:
             reportUnknown(path, CommandExecutionPolicy.unknownInspectionMessage)
             return 0
+        case .invalidSyntax:
+            reportFailure(path, CommandExecutionPolicy.invalidSyntaxMessage)
+            return 1
         }
     }
 

@@ -123,40 +123,90 @@ public struct CommandExecutionPolicy: Equatable, Sendable {
 
     /// Static inspection of a configured command or action. Never executes it.
     /// Compound shell expressions that cannot be inspected safely are
-    /// `.unknown`, not `.missing`.
+    /// `.unknown`, not `.missing`. Unterminated quotes or a trailing
+    /// backslash are `.invalidSyntax` and count as a doctor problem.
     public enum StaticExecutableCheck: Equatable, Sendable {
         case found(path: String)
         case missing(command: String)
         case unknown
+        case invalidSyntax
     }
 
     public static let unknownInspectionMessage =
         "compound shell expression; not statically inspected"
 
+    public static let invalidSyntaxMessage =
+        "unterminated quote or escape"
+
     public func inspectExecutable(
         _ expression: String,
         fileManager: FileManager = .default
     ) -> StaticExecutableCheck {
-        guard let command = commandName(from: expression) else {
+        switch commandName(from: expression) {
+        case .invalidSyntax:
+            return .invalidSyntax
+        case .unknown:
             return .unknown
+        case .word(let command, let quoted):
+            if command.contains("`") || isUnsafeTildeWord(command, quoted: quoted) {
+                return .unknown
+            }
+            let inspectTarget = expandUnquotedTilde(command, quoted: quoted)
+            if let path = resolveExecutable(inspectTarget, fileManager: fileManager) {
+                return .found(path: path)
+            }
+            return .missing(command: command)
         }
-        if let path = resolveExecutable(command, fileManager: fileManager) {
-            return .found(path: path)
+    }
+
+    /// Unquoted `~` and `~/...` follow `/bin/sh` tilde expansion against HOME.
+    /// Quoted tildes stay literal. `~user/...` is not expanded here.
+    private func expandUnquotedTilde(_ command: String, quoted: Bool) -> String {
+        guard !quoted else { return command }
+        if command == "~" {
+            return home
         }
-        return .missing(command: command)
+        if command.hasPrefix("~/") {
+            return home + String(command.dropFirst(1))
+        }
+        return command
+    }
+
+    private func isUnsafeTildeWord(_ command: String, quoted: Bool) -> Bool {
+        guard !quoted, command.hasPrefix("~") else { return false }
+        return command != "~" && !command.hasPrefix("~/")
     }
 }
 
-private func commandName(from run: String) -> String? {
-    var tokens = [String]()
+private struct CommandToken {
+    var text: String
+    var quoted: Bool
+}
+
+private enum CommandNameResult: Equatable {
+    case word(String, quoted: Bool)
+    case unknown
+    case invalidSyntax
+}
+
+/// Words `/bin/sh` runs without a PATH lookup. Reporting them missing is wrong.
+private let shellBuiltinsAndKeywords: Set<String> = [
+    "!", "if", "for", "while", "until", "case", "function", "{", "}",
+    "exec", "eval", ".", "source", "[[", "export", "set", "unset", "trap"
+]
+
+private func commandName(from run: String) -> CommandNameResult {
+    var tokens = [CommandToken]()
     var token = ""
+    var tokenQuoted = false
     var quote: Character?
     var escaped = false
 
     func appendToken() {
-        guard !token.isEmpty else { return }
-        tokens.append(token)
+        guard !token.isEmpty || tokenQuoted else { return }
+        tokens.append(CommandToken(text: token, quoted: tokenQuoted))
         token.removeAll(keepingCapacity: true)
+        tokenQuoted = false
     }
 
     for character in run {
@@ -174,6 +224,8 @@ private func commandName(from run: String) -> String? {
                 escaped = true
             } else if character == activeQuote {
                 quote = nil
+            } else if character == "`" {
+                return .unknown
             } else {
                 token.append(character)
             }
@@ -181,46 +233,52 @@ private func commandName(from run: String) -> String? {
         }
 
         if character == "'" || character == "\"" {
+            if token.isEmpty {
+                tokenQuoted = true
+            }
             quote = character
         } else if character == "\\" {
             escaped = true
         } else if character.isWhitespace {
             appendToken()
-        } else if ";|&()\n\r".contains(character) {
-            return nil
+        } else if ";|&()\n\r".contains(character) || character == "`" {
+            return .unknown
         } else {
             token.append(character)
         }
     }
 
-    guard quote == nil, !escaped else { return nil }
+    if quote != nil || escaped {
+        return .invalidSyntax
+    }
     appendToken()
 
     var commandIndex = 0
-    while commandIndex < tokens.count, isEnvironmentAssignment(tokens[commandIndex]) {
+    while commandIndex < tokens.count, isEnvironmentAssignment(tokens[commandIndex].text) {
         commandIndex += 1
     }
-    if commandIndex < tokens.count, tokens[commandIndex] == "env" {
+    if commandIndex < tokens.count, tokens[commandIndex].text == "env", !tokens[commandIndex].quoted {
         commandIndex += 1
-        while commandIndex < tokens.count, isEnvironmentAssignment(tokens[commandIndex]) {
+        while commandIndex < tokens.count, isEnvironmentAssignment(tokens[commandIndex].text) {
             commandIndex += 1
         }
-        if commandIndex < tokens.count, tokens[commandIndex] == "--" {
+        if commandIndex < tokens.count, tokens[commandIndex].text == "--" {
             commandIndex += 1
-        } else if commandIndex < tokens.count, tokens[commandIndex].hasPrefix("-") {
-            return nil
+        } else if commandIndex < tokens.count, tokens[commandIndex].text.hasPrefix("-") {
+            return .unknown
         }
     }
-    guard commandIndex < tokens.count else { return nil }
+    guard commandIndex < tokens.count else { return .unknown }
 
     let command = tokens[commandIndex]
-    guard !command.isEmpty,
-          !command.hasPrefix("$"),
-          !command.contains("$("),
-          !["!", "if", "for", "while", "until", "case", "function", "{", "}"].contains(command),
-          !command.hasPrefix(">"),
-          !command.hasPrefix("<") else { return nil }
-    return command
+    guard !command.text.isEmpty,
+          !command.text.hasPrefix("$"),
+          !command.text.contains("$("),
+          !command.text.contains("`"),
+          !shellBuiltinsAndKeywords.contains(command.text),
+          !command.text.hasPrefix(">"),
+          !command.text.hasPrefix("<") else { return .unknown }
+    return .word(command.text, quoted: command.quoted)
 }
 
 private func isEnvironmentAssignment(_ token: String) -> Bool {
