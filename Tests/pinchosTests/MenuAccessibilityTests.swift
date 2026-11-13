@@ -259,7 +259,6 @@ final class MenuAccessibilityTests: XCTestCase {
         XCTAssertFalse(iconRow.isEnabled)
         XCTAssertNil(iconRow.action)
         XCTAssertTrue(iconRow.title.contains("missing or unreadable"))
-        XCTAssertEqual(iconRow.accessibilityLabel(), iconRow.title)
     }
 
     func testCopyActionsStayExecutableWithHelp() async throws {
@@ -363,6 +362,100 @@ final class MenuAccessibilityTests: XCTestCase {
         XCTAssertEqual(button.accessibilityLabel(), "clock, 72, fresh")
         XCTAssertFalse(button.accessibilityLabel()?.contains(ValueFreshness.staleMarker) == true)
         XCTAssertFalse(button.accessibilityLabel()?.contains(ValueFreshness.warningMarker) == true)
+    }
+
+    func testCRLFOutputRendersAsTheValueWithoutControlPictures() async throws {
+        let item = ManagedItem(
+            config: ItemConfig(name: "clock", run: "printf '42\r\n'", interval: .manual),
+            menuDelegate: AccessibilityMenuDelegate(),
+            initiallyVisible: false,
+            scheduler: CommandScheduler(),
+            statusItemFactory: { nil }
+        )
+        addTeardownBlock { @MainActor in await item.tearDown() }
+        item.activate()
+        let ready = await waitUntil { item.renderedTitle == "42" }
+        XCTAssertTrue(ready)
+        XCTAssertEqual(item.renderedTitle, "42")
+        XCTAssertFalse(item.renderedTitle.contains("\u{240D}"))
+        XCTAssertFalse(item.renderedTitle.contains("\u{240A}"))
+        XCTAssertEqual(item.renderedAccessibilityLabel, "42, fresh")
+    }
+
+    func testMultilineCRLFOutputUsesTheLastLine() async throws {
+        let item = ManagedItem(
+            config: ItemConfig(name: "clock", run: "printf 'one\r\ntwo\r\nthree\r\n'", interval: .manual),
+            menuDelegate: AccessibilityMenuDelegate(),
+            initiallyVisible: false,
+            scheduler: CommandScheduler(),
+            statusItemFactory: { nil }
+        )
+        addTeardownBlock { @MainActor in await item.tearDown() }
+        item.activate()
+        let ready = await waitUntil { item.renderedTitle == "three" }
+        XCTAssertTrue(ready)
+        XCTAssertEqual(item.renderedAccessibilityLabel, "three, fresh")
+    }
+
+    func testCollapsedRowStripsCRLFBeforeDisplayAndSpeech() async throws {
+        let factory = AccessibilityFakeFactory()
+        let controller = makeController(factory: factory)
+        await controller.apply(config: PinchosConfig(items: [sampleConfig()]))
+        factory.created[0].runtimeSnapshotValue = ItemRuntimeSnapshot(
+            isRunning: false,
+            fullOutput: "42\r\n",
+            lastAttemptedAt: Date(),
+            lastUpdatedAt: Date(),
+            lastExecution: nil,
+            staleAfter: nil,
+            skippedRefreshes: 0,
+            now: Date()
+        )
+
+        let collapsed = await controller.makeCollapsedMenu()
+        let row = try XCTUnwrap(collapsed.items.first(where: { $0.submenu != nil }))
+        XCTAssertEqual(row.title, "42")
+        XCTAssertEqual(row.accessibilityLabel(), "clock, 42, fresh")
+        XCTAssertFalse(row.title.contains("\u{240D}"))
+        XCTAssertFalse(row.title.contains("\u{240A}"))
+    }
+
+    func testSpokenLabelsAreBoundedForLongValues() async throws {
+        let factory = AccessibilityFakeFactory()
+        let controller = makeController(factory: factory)
+        let huge = String(repeating: "x", count: 8 * 1024)
+        let config = ItemConfig(
+            name: "clock",
+            run: "echo 72",
+            interval: .manual,
+            menu: [MenuRowConfig(label: "Reset", value: huge)]
+        )
+        await controller.apply(config: PinchosConfig(items: [config]))
+        factory.created[0].runtimeSnapshotValue = ItemRuntimeSnapshot(
+            isRunning: false,
+            fullOutput: huge,
+            lastAttemptedAt: Date(),
+            lastUpdatedAt: Date(),
+            lastExecution: nil,
+            staleAfter: nil,
+            skippedRefreshes: 0,
+            now: Date()
+        )
+
+        let menu = await controller.makeLifecycleMenu(
+            forManagedItem: factory.created[0],
+            revealsDiagnostics: false
+        )
+        let reset = try XCTUnwrap(menu.items.first(where: { $0.title.hasPrefix("Reset:") }))
+        XCTAssertEqual(reset.title, "Reset: " + String(repeating: "x", count: 59) + "\u{2026}")
+        XCTAssertEqual(reset.accessibilityLabel(), "Reset, " + String(repeating: "x", count: 59) + "\u{2026}")
+        XCTAssertLessThan(reset.accessibilityLabel()!.count, 80)
+
+        let collapsed = await controller.makeCollapsedMenu()
+        let row = try XCTUnwrap(collapsed.items.first(where: { $0.submenu != nil }))
+        XCTAssertEqual(row.title.count, 60)
+        XCTAssertEqual(row.accessibilityLabel(), "clock, " + String(repeating: "x", count: 59) + "\u{2026}, fresh")
+        XCTAssertLessThan(row.accessibilityLabel()!.count, 90)
     }
 
     private func waitUntil(

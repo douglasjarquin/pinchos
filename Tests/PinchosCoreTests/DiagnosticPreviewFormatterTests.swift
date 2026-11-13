@@ -64,6 +64,31 @@ final class DiagnosticPreviewFormatterTests: XCTestCase {
         XCTAssertEqual(DiagnosticPreviewFormatter.sanitizeVisibleText("72%"), "72%")
     }
 
+    func testLastTrimmedLineStripsACRLFTerminator() {
+        XCTAssertEqual(lastTrimmedLine(of: "42\r\n"), "42")
+        XCTAssertEqual(lastTrimmedLine(of: "42\r"), "42")
+        XCTAssertEqual(lastTrimmedLine(of: "42\n"), "42")
+    }
+
+    func testLastTrimmedLineTakesTheLastCRLFLine() {
+        XCTAssertEqual(lastTrimmedLine(of: "one\r\ntwo\r\nthree\r\n"), "three")
+        XCTAssertEqual(lastTrimmedLine(of: "one\rtwo\nthree"), "three")
+    }
+
+    func testBoundedVisibleTextSanitizesThenCapsToSixty() {
+        let text = String(repeating: "x", count: 59) + "\r\n"
+        let visible = DiagnosticPreviewFormatter.boundedVisibleText(text)
+        XCTAssertLessThanOrEqual(visible.count, 60)
+        XCTAssertFalse(visible.contains("\r"))
+        XCTAssertFalse(visible.contains("\n"))
+    }
+
+    func testBoundedVisibleTextCapsAHugeLine() {
+        let huge = String(repeating: "x", count: 64 * 1024)
+        let visible = DiagnosticPreviewFormatter.boundedVisibleText(huge)
+        XCTAssertEqual(visible.count, 60)
+    }
+
     func testNulAndOtherC0ControlsBecomeVisiblePlaceholders() {
         let preview = DiagnosticPreviewFormatter.preview("a\u{0000}b", limits: .menuValue)
         XCTAssertEqual(preview.text, "a\u{2400}b")

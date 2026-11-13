@@ -86,10 +86,19 @@ public enum DiagnosticPreviewFormatter {
     /// Makes untrusted text safe for a single-line status-item or submenu
     /// title. C0/C1/bidi controls become Control Pictures, including
     /// newlines so they cannot split a native menu. Does not truncate;
-    /// callers that need a length cap use `truncateTitle` after this.
+    /// callers that need a length cap use `boundedVisibleText`.
     public static func sanitizeVisibleText(_ text: String) -> String {
         guard !text.isEmpty else { return text }
         return sanitizeLine(text[text.startIndex...])
+    }
+
+    /// Sanitizes then caps to `maxLength` graphemes. A cheap clip happens
+    /// first so a 64 KiB retained line is not fully sanitized; the second
+    /// clip restores the bound if a control expanded (for example CRLF
+    /// becoming two Control Pictures).
+    public static func boundedVisibleText(_ text: String, maxLength: Int = 60) -> String {
+        let clipped = truncateTitle(text, maxLength: maxLength)
+        return truncateTitle(sanitizeVisibleText(clipped), maxLength: maxLength)
     }
 
     /// Produces a bounded, sanitized preview of `text` under `limits`.
@@ -142,8 +151,8 @@ public enum DiagnosticPreviewFormatter {
     /// clustering treats `\r\n` as a single `Character`, which would make a
     /// plain `Character`-level comparison against `"\r"`/`"\n"` miss it
     /// entirely (`String.Index` is shared across both views, so slicing
-    /// `text` with scalar-view indices is safe).
-    private static func normalizedLines(of text: String) -> [Substring] {
+    /// `text` with scalar-view indices is safe). Shared with `lastTrimmedLine`.
+    static func normalizedLines(of text: String) -> [Substring] {
         var lines: [Substring] = []
         var lineStart = text.startIndex
         let scalars = text.unicodeScalars

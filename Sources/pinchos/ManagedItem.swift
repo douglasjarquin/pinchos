@@ -817,9 +817,12 @@ final class ManagedItem: ManagedItemLifecycle {
             baseTitle = "–"
         }
 
-        let spokenValue = lastSuccessfulTitle.map(DiagnosticPreviewFormatter.sanitizeVisibleText)
-        renderedAccessibilityLabel = snapshot.freshness.spokenDescription(valueText: spokenValue)
-        let visibleBase = DiagnosticPreviewFormatter.sanitizeVisibleText(truncateTitle(baseTitle, maxLength: 60))
+        let visibleBase = baseTitle == "–"
+            ? baseTitle
+            : DiagnosticPreviewFormatter.boundedVisibleText(baseTitle)
+        renderedAccessibilityLabel = snapshot.freshness.spokenDescription(
+            valueText: visibleBase == "–" ? nil : visibleBase
+        )
         setTitle(visibleBase + snapshot.freshness.marker)
         applyIcon(source: commandConfig.iconSource)
         setVisibility(true)

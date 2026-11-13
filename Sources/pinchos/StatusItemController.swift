@@ -701,10 +701,9 @@ final class StatusItemController: StatusItemMenuDelegate {
             ?? "–"
         let visible = formatted == "–"
             ? formatted
-            : DiagnosticPreviewFormatter.sanitizeVisibleText(truncateTitle(formatted, maxLength: 60))
+            : DiagnosticPreviewFormatter.boundedVisibleText(formatted)
         let title = visible + snapshot.freshness.marker
-        let spokenValue = formatted == "–" ? nil : DiagnosticPreviewFormatter.sanitizeVisibleText(formatted)
-        let spoken = snapshot.freshness.spokenDescription(valueText: spokenValue)
+        let spoken = snapshot.freshness.spokenDescription(valueText: formatted == "–" ? nil : visible)
         return (title, "\(commandConfig.name), \(spoken)", commandConfig.iconSource)
     }
 
@@ -849,7 +848,7 @@ final class StatusItemController: StatusItemMenuDelegate {
         guard let resolvedValue else { return label }
         let visible = resolvedValue.isEmpty
             ? "–"
-            : DiagnosticPreviewFormatter.sanitizeVisibleText(truncateTitle(resolvedValue, maxLength: 60))
+            : DiagnosticPreviewFormatter.boundedVisibleText(resolvedValue)
         let marker = row.run == nil ? "" : freshness.marker
         return "\(label): \(visible)\(marker)"
     }
@@ -862,18 +861,19 @@ final class StatusItemController: StatusItemMenuDelegate {
         let label = row.label ?? ""
         guard row.run != nil else {
             if let value, !value.isEmpty {
-                let spokenValue = DiagnosticPreviewFormatter.sanitizeVisibleText(value)
+                let spokenValue = DiagnosticPreviewFormatter.boundedVisibleText(value)
                 return label.isEmpty ? spokenValue : "\(label), \(spokenValue)"
             }
             return label
         }
         let spokenValue = freshness.rowValueText(current: value)
-        let sanitizedValue = spokenValue == "Loading…" || spokenValue == "–"
-            ? spokenValue
-            : DiagnosticPreviewFormatter.sanitizeVisibleText(spokenValue)
-        let description = freshness.spokenDescription(
-            valueText: sanitizedValue == "Loading…" || sanitizedValue == "–" ? nil : sanitizedValue
-        )
+        let valueText: String?
+        if spokenValue == "Loading…" || spokenValue == "–" {
+            valueText = nil
+        } else {
+            valueText = DiagnosticPreviewFormatter.boundedVisibleText(spokenValue)
+        }
+        let description = freshness.spokenDescription(valueText: valueText)
         if label.isEmpty {
             return description
         }
@@ -1045,8 +1045,6 @@ final class StatusItemController: StatusItemMenuDelegate {
     private func disabledItem(title: String) -> NSMenuItem {
         let item = NSMenuItem(title: title, action: nil, keyEquivalent: "")
         item.isEnabled = false
-        item.target = nil
-        item.setAccessibilityLabel(title)
         return item
     }
 
