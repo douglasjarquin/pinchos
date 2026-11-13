@@ -196,14 +196,19 @@ final class MenuAccessibilityTests: XCTestCase {
         let menu = controller.makeLifecycleMenuImmediately(forManagedItem: factory.created[0])
         let refresh = try XCTUnwrap(menu.items.first(where: { $0.title == "Refresh Now" }))
         let collapse = try XCTUnwrap(menu.items.first(where: { $0.title == "Collapse Pinchos" }))
+        let openConfig = try XCTUnwrap(menu.items.first(where: { $0.title == "Open Config" }))
         let reload = try XCTUnwrap(menu.items.first(where: { $0.title == "Reload Config" }))
         let quit = try XCTUnwrap(menu.items.first(where: { $0.title == "Quit Pinchos" }))
 
-        for item in [refresh, collapse, reload, quit] {
+        for item in [refresh, collapse, openConfig, reload, quit] {
             XCTAssertTrue(item.isEnabled, item.title)
             XCTAssertNotNil(item.action, item.title)
             XCTAssertTrue(item.target === controller, item.title)
         }
+        XCTAssertEqual(
+            Array(menu.items.suffix(4).map(\.title)),
+            ["Collapse Pinchos", "Open Config", "Reload Config", "Quit Pinchos"]
+        )
         XCTAssertEqual(reload.keyEquivalent, "r")
         XCTAssertEqual(quit.keyEquivalent, "q")
 
@@ -224,10 +229,7 @@ final class MenuAccessibilityTests: XCTestCase {
         )
         await controller.apply(config: PinchosConfig(items: [config]))
 
-        let menu = await controller.makeLifecycleMenu(
-            forManagedItem: factory.created[0],
-            revealsDiagnostics: false
-        )
+        let menu = controller.makeLifecycleMenuImmediately(forManagedItem: factory.created[0])
         let reset = try XCTUnwrap(menu.items.first(where: { $0.title.hasPrefix("Reset:") }))
         XCTAssertFalse(reset.title.contains("\u{0000}"))
         XCTAssertFalse(reset.title.contains("\n"))
