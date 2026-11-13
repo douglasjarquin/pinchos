@@ -45,6 +45,13 @@ Doctor does not dump the inherited environment, credential metadata, or login-it
 `run <item>` executes one item for scriptable verification under that same policy.
 The checked-in example item is `codex` and needs Remainder on the fixed PATH or an absolute path; see [example-setup.md](example-setup.md).
 
+Run `.build/release/pinchos` with no arguments to launch the menu-bar app; any argument goes to the CLI.
+Stop it with Quit Pinchos from its menu.
+
+```sh
+.build/release/pinchos
+```
+
 ## Exit codes
 
 | Code | Meaning |
@@ -59,6 +66,8 @@ The checked-in example item is `codex` and needs Remainder on the fixed PATH or 
 
 `--help`/`-h` exits 0.
 For `run`, any other command exit code is returned capped at 255.
+A signal-terminated `run` command returns `min(255, 128+signal)`.
+An item's own exit code passes through unchanged, so it can collide with Pinchos's reserved 2/3/4/124/125/127.
 
 ## Recover from a malformed file
 

@@ -64,6 +64,13 @@ Edit the existing file, then `validate` again.
 The running app keeps last known-good items until the file parses.
 The other commands are in [docs/pinchos/cli.md](docs/pinchos/cli.md).
 
+Run `.build/release/pinchos` with no arguments to launch the menu-bar app; any argument goes to the CLI.
+Stop it with Quit Pinchos from its menu.
+
+```sh
+.build/release/pinchos
+```
+
 `pinchos doctor` inspects executables against the fixed PATH without running them.
 `pinchos run <item>` executes one item.
 The example item needs Remainder on that PATH or an absolute path; see [docs/pinchos/example-setup.md](docs/pinchos/example-setup.md).

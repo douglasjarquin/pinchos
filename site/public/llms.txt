@@ -21,9 +21,10 @@ swift build -c release
 .build/release/pinchos config-path
 .build/release/pinchos init
 .build/release/pinchos validate
+.build/release/pinchos
 ```
 
-The release executable is `.build/release/pinchos`. The README covers first run, the canonical config format, and the menu-row contract:
+The release executable is `.build/release/pinchos`. With no arguments it launches the menu-bar app; any argument goes to the CLI. Stop it with Quit Pinchos from its menu. The README covers first run, the canonical config format, and the menu-row contract:
 
 https://github.com/douglasjarquin/pinchos
 

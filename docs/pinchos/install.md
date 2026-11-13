@@ -16,6 +16,13 @@ swift build -c release
 ```
 
 The release executable is `.build/release/pinchos`.
+Run it with no arguments to launch the menu-bar app; any argument goes to the CLI.
+Stop it with Quit Pinchos from its menu.
+
+```sh
+.build/release/pinchos
+```
+
 First-run commands (`config-path`, `init`, `validate`, `open-config`) are in [cli.md](cli.md).
 
 `scripts/package-app.sh` assembles an unsigned `Pinchos.app` from it for local bundle smoke testing (`scripts/smoke-app-bundle.sh`).
