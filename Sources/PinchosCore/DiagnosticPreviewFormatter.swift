@@ -92,12 +92,12 @@ public enum DiagnosticPreviewFormatter {
         return sanitizeLine(text[text.startIndex...])
     }
 
-    /// Sanitizes then caps to `maxLength` graphemes. A cheap clip happens
-    /// first so a 64 KiB retained line is not fully sanitized; the second
-    /// clip restores the bound if a control expanded (for example CRLF
-    /// becoming two Control Pictures).
+    /// Sanitizes then caps to `maxLength` graphemes. A cheap `prefix`
+    /// clip happens first so a 64 KiB retained line is not fully sanitized;
+    /// `truncateTitle` after sanitize restores the bound if a control
+    /// expanded (for example CRLF becoming two Control Pictures).
     public static func boundedVisibleText(_ text: String, maxLength: Int = 60) -> String {
-        let clipped = truncateTitle(text, maxLength: maxLength)
+        let clipped = String(text.prefix(maxLength + 1))
         return truncateTitle(sanitizeVisibleText(clipped), maxLength: maxLength)
     }
 

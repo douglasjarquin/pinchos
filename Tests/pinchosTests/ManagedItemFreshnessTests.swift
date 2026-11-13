@@ -189,6 +189,44 @@ final class ManagedItemFreshnessTests: XCTestCase {
     }
 
     @MainActor
+    func testFailedWithoutValueThenRefreshingSpeaksWithoutGlyphs() async throws {
+        let clock = TestItemClock()
+        let hold = path("fail-then-refresh")
+        let item = makeItem(
+            config: ItemConfig(
+                name: "item",
+                run: "if [ ! -e '\(hold.path)' ]; then touch '\(hold.path)'; printf 'nope' >&2; exit 1; else sleep 0.4; printf '99'; fi",
+                interval: .manual
+            ),
+            clock: clock
+        )
+
+        item.refreshNow()
+        let failed = await waitUntil {
+            await item.runtimeSnapshot().freshness.state == .failedWithoutValue
+                && item.renderedTitle == "–\(ValueFreshness.warningMarker)"
+        }
+        XCTAssertTrue(failed)
+        XCTAssertEqual(item.renderedAccessibilityLabel, "failed")
+
+        item.refreshNow()
+        let refreshing = await waitUntil {
+            await item.runtimeSnapshot().freshness.state == .refreshing
+                && item.renderedAccessibilityLabel == "refreshing"
+        }
+        XCTAssertTrue(refreshing)
+        XCTAssertFalse(item.renderedAccessibilityLabel.contains(ValueFreshness.warningMarker))
+        XCTAssertFalse(item.renderedAccessibilityLabel.contains(ValueFreshness.staleMarker))
+        XCTAssertFalse(item.renderedAccessibilityLabel.contains("–"))
+        XCTAssertFalse(item.renderedAccessibilityLabel.contains("⚠"))
+        XCTAssertFalse(item.renderedAccessibilityLabel.contains("⌛"))
+
+        let settled = await waitUntil { item.renderedTitle == "99" }
+        XCTAssertTrue(settled)
+        XCTAssertEqual(item.renderedAccessibilityLabel, "99, fresh")
+    }
+
+    @MainActor
     func testSharedConsumersWithDifferentIntervalsFollowTheSharedSuccessTimestamp() async throws {
         let command = counting(path("shared.log"), output: "72")
         try await assertSharedFreshness(firstInterval: 60, secondInterval: 300, command: command)

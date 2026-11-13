@@ -820,9 +820,10 @@ final class ManagedItem: ManagedItemLifecycle {
         let visibleBase = baseTitle == "–"
             ? baseTitle
             : DiagnosticPreviewFormatter.boundedVisibleText(baseTitle)
-        renderedAccessibilityLabel = snapshot.freshness.spokenDescription(
-            valueText: visibleBase == "–" ? nil : visibleBase
-        )
+        let spokenValue = lastSuccessfulTitle.map {
+            DiagnosticPreviewFormatter.boundedVisibleText($0)
+        }
+        renderedAccessibilityLabel = snapshot.freshness.spokenDescription(valueText: spokenValue)
         setTitle(visibleBase + snapshot.freshness.marker)
         applyIcon(source: commandConfig.iconSource)
         setVisibility(true)
