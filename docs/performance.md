@@ -132,6 +132,7 @@ mise run perf
 ```
 
 That is `scripts/perf/measure_footprint.sh --profile all`.
+Runtime is about 1.5 minutes per profile (15s settle + samples + 60s IDLEW window) and about 3 minutes for `mise run perf` plus the release build.
 It builds the release binary once and runs the two selected profiles against disposable configs in a scratch `XDG_CONFIG_HOME`:
 
 | Profile | Shape | Local fixtures |
@@ -213,11 +214,12 @@ P1 idle CPU between ticks was 0.0% in `ps` samples after the 15s settle.
 The 60s `top` window's second sample also showed 0.1% CPU on P1 and 1.2% on the in-flight five-item profile.
 Wakeups are macOS `top` `IDLEW` over a 60s window (`top -l 2 -s 60`): a per-interval idle-wakeup count.
 Only the second sample is parsed.
-`top` may suffix the field with `+` when the column clips; the probe stores the integer prefix.
+macOS `top` suffixes IDLEW with `+` or `-` to mark a change since the previous sample, not a clipped column.
+The probe strips those suffixes and stores the integer.
 `IDLEW` is not a process-lifetime cumulative counter and is not a count of all wakeups.
 Numeric FDs are `lsof -nP -a -d 0-65535 -p` (not `lsof | wc -l`).
 P1 idle has no in-flight child at SIGTERM.
-The five-item profile records descendants with recursive `pgrep -P` before SIGTERM (3 pids: session supervisor, shell, `sleep`) and re-checks those pids with `kill -0` afterwards (0 leftover).
+The five-item profile records descendants with recursive `pgrep -P` immediately before SIGTERM (3 pids: session supervisor, shell, `sleep`) and re-checks those pids with `kill -0` afterwards (0 leftover).
 
 Live GUI menu latency is unmeasured: `AXIsProcessTrusted()` is untrusted/disabled on this agent Mac, so Accessibility and screen capture cannot drive the menu.
 In-process tests prove menu construction returns while a command is blocked on a fifo, and that menu titles stay a small bound independent of retained output.

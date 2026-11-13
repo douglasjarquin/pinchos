@@ -1,5 +1,6 @@
 import AppKit
 import Darwin
+import Dispatch
 import XCTest
 @testable import PinchosCore
 @testable import pinchos
@@ -50,7 +51,28 @@ extension HeadlessManagedItemFactory: StatusItemMenuDelegate {
 }
 
 private final class FIFOWatchdog: @unchecked Sendable {
-    var fired = false
+    private let lock = NSLock()
+    private var firedStorage = false
+
+    var fired: Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return firedStorage
+    }
+
+    func markFired() {
+        lock.lock()
+        firedStorage = true
+        lock.unlock()
+    }
+
+    nonisolated static func release(_ url: URL) {
+        let fd = Darwin.open(url.path, O_WRONLY | O_NONBLOCK)
+        guard fd >= 0 else { return }
+        var byte: UInt8 = 0x78
+        _ = Darwin.write(fd, &byte, 1)
+        Darwin.close(fd)
+    }
 }
 
 private final class TestPerfClock: @unchecked Sendable {
@@ -273,8 +295,8 @@ final class PerformanceInvariantTests: XCTestCase {
         try makeFIFO(primaryFifo)
         try makeFIFO(rowFifo)
         addTeardownBlock {
-            self.releaseFIFO(primaryFifo)
-            self.releaseFIFO(rowFifo)
+            FIFOWatchdog.release(primaryFifo)
+            FIFOWatchdog.release(rowFifo)
         }
         await controller.apply(config: PinchosConfig(items: [
             ItemConfig(
@@ -291,17 +313,17 @@ final class PerformanceInvariantTests: XCTestCase {
         let startedPrimary = await waitUntil { FileManager.default.fileExists(atPath: primaryStarted.path) }
         XCTAssertTrue(startedPrimary, "primary command never blocked on the fifo")
         let watchdog = FIFOWatchdog()
-        let watchdogTask = Task { @MainActor in
-            try await Task.sleep(for: .seconds(5))
-            watchdog.fired = true
-            self.releaseFIFO(primaryFifo)
-            self.releaseFIFO(rowFifo)
+        let watchdogWork = DispatchWorkItem {
+            watchdog.markFired()
+            FIFOWatchdog.release(primaryFifo)
+            FIFOWatchdog.release(rowFifo)
         }
-        addTeardownBlock { watchdogTask.cancel() }
+        DispatchQueue.global().asyncAfter(deadline: .now() + 5, execute: watchdogWork)
+        addTeardownBlock { watchdogWork.cancel() }
         let compact = await controller.makeLifecycleMenu(forManagedItem: slow, revealsDiagnostics: false)
         let collapsed = await controller.makeCollapsedMenu(revealsDiagnostics: false)
         let diagnostics = await controller.makeLifecycleMenu(forManagedItem: slow, revealsDiagnostics: true)
-        watchdogTask.cancel()
+        watchdogWork.cancel()
         XCTAssertFalse(
             watchdog.fired,
             "menu construction did not return within 5s; the watchdog released the fifos"
@@ -493,12 +515,16 @@ final class PerformanceInvariantTests: XCTestCase {
 
             func slowItem(_ name: String) -> ItemConfig {
                 let pidFile = pidDir.appendingPathComponent("\(name).pid")
+                let rowPidFile = pidDir.appendingPathComponent("\(name)-row.pid")
                 return ItemConfig(
                     name: name,
                     run: "sleep 30 & echo $! >> '\(pidFile.path)'; wait $!",
                     interval: .scheduled(60),
                     timeout: 60,
-                    menu: [MenuRowConfig(label: "Hold", run: "sleep 30; printf \(name)-row")]
+                    menu: [MenuRowConfig(
+                        label: "Hold",
+                        run: "sleep 30 & echo $! >> '\(rowPidFile.path)'; wait $!; printf \(name)-row"
+                    )]
                 )
             }
 
@@ -535,10 +561,15 @@ final class PerformanceInvariantTests: XCTestCase {
             XCTAssertEqual(diagnostics.registeredTimers, 3)
 
             var removed: ManagedItem? = try XCTUnwrap(self.item(named: "beta", in: factory))
+            let betaRowPidFile = pidDir.appendingPathComponent("beta-row.pid")
             _ = removed?.menuRowValue(at: 0)
             let rowStarted = await waitUntil { (removed?.menuRowRefreshTaskCountForTesting ?? 0) == 1 }
             XCTAssertTrue(rowStarted, "beta menu row never started a refresh task")
             XCTAssertEqual(removed?.menuRowRefreshTaskCountForTesting, 1)
+            let rowPidRecorded = await waitUntil {
+                !self.recordedPids(inFile: betaRowPidFile).isEmpty
+            }
+            XCTAssertTrue(rowPidRecorded, "beta-row.pid never recorded a grandchild pid")
             weak let weakRemoved = removed
             factory.forget(removed)
             var menu: NSMenu? = await controller.makeLifecycleMenu(
@@ -571,6 +602,17 @@ final class PerformanceInvariantTests: XCTestCase {
             XCTAssertFalse(
                 self.recordedPids(inFile: pidDir.appendingPathComponent("beta.pid")).isEmpty,
                 "beta never recorded a grandchild pid"
+            )
+            XCTAssertFalse(
+                self.recordedPids(inFile: betaRowPidFile).isEmpty,
+                "beta-row.pid was empty after the row refresh started"
+            )
+            let betaRowPidsGone = await waitUntil {
+                self.livePids(inFile: betaRowPidFile).isEmpty
+            }
+            XCTAssertTrue(
+                betaRowPidsGone,
+                "removing beta left row grandchild pids \(self.livePids(inFile: betaRowPidFile))"
             )
 
             await controller.apply(config: PinchosConfig(items: [
@@ -701,10 +743,12 @@ final class PerformanceInvariantTests: XCTestCase {
         }
         XCTAssertTrue(replaced, "refresh did not replace the large completed cache")
         let tiny = await blob0.runtimeSnapshot()
-        XCTAssertLessThan(tiny.fullOutput?.utf8.count ?? 32, 8)
-        if let cached = blob0.menuRowCachedValueForTesting(at: 0) {
-            XCTAssertLessThan(retainedCachedValueUTF8Bytes(cached), 32)
-        }
+        XCTAssertLessThan(retainedSnapshotUTF8Bytes(tiny), 32)
+        let cached = try XCTUnwrap(
+            blob0.menuRowCachedValueForTesting(at: 0),
+            "blob-0 menu row cache missing after refresh"
+        )
+        XCTAssertLessThan(retainedCachedValueUTF8Bytes(cached), 32)
     }
 
     private func item(named name: String, in factory: HeadlessManagedItemFactory) -> ManagedItem? {
@@ -765,14 +809,6 @@ final class PerformanceInvariantTests: XCTestCase {
                 NSLocalizedDescriptionKey: "mkfifo \(url.path) failed"
             ])
         }
-    }
-
-    private func releaseFIFO(_ url: URL) {
-        let fd = Darwin.open(url.path, O_WRONLY | O_NONBLOCK)
-        guard fd >= 0 else { return }
-        var byte: UInt8 = 0x78
-        _ = Darwin.write(fd, &byte, 1)
-        Darwin.close(fd)
     }
 
     private func pumpMain() {

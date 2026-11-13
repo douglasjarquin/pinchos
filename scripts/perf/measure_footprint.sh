@@ -14,6 +14,9 @@
 #   scripts/perf/measure_footprint.sh [--profile p1|five|all] [settle_seconds] [samples]
 #   mise run perf
 #
+# Runtime: about 1.5 minutes per profile (15s settle + samples + 60s IDLEW
+# window) and about 3 minutes for --profile all plus the release build.
+#
 # A bare numeric first argument is still settle_seconds for the P1 profile.
 
 set -euo pipefail
@@ -34,6 +37,7 @@ while [[ $# -gt 0 ]]; do
             ;;
         --help|-h)
             echo "Usage: scripts/perf/measure_footprint.sh [--profile p1|five|all] [settle_seconds] [samples]"
+            echo "About 1.5 minutes per profile, about 3 minutes for --profile all plus the release build."
             exit 0
             ;;
         *)
@@ -188,7 +192,7 @@ for line in blocks[1]:
 if header is None or pid_line is None or "IDLEW" not in header:
     print("null")
     raise SystemExit
-raw = pid_line[header.index("IDLEW")].rstrip("+*")
+raw = pid_line[header.index("IDLEW")].rstrip("+*-")
 try:
     print(int(raw))
 except (ValueError, IndexError):
@@ -256,6 +260,17 @@ run_profile() (
     }
     trap cleanup EXIT
 
+    # SIGTERM is after settle + 1s per sample + the IDLEW window. Reject a
+    # settle that would fire it after the in-flight sleep 120 has already exited.
+    if [[ "$expect_inflight" == "true" ]]; then
+        inflight_lifetime_seconds=120
+        elapsed_before_sigterm=$((settle_seconds + samples + wakeup_window_seconds))
+        if [[ "$elapsed_before_sigterm" -ge "$inflight_lifetime_seconds" ]]; then
+            echo "error: settle_seconds ($settle_seconds) + samples ($samples) + wakeup_window_seconds ($wakeup_window_seconds) = ${elapsed_before_sigterm}s would SIGTERM after the in-flight command's ${inflight_lifetime_seconds}s lifetime" >&2
+            exit 1
+        fi
+    fi
+
     mkdir -p "$scratch_dir/pinchos"
     "$writer" "$scratch_dir/pinchos/pinchos.toml"
 
@@ -314,21 +329,6 @@ run_profile() (
     child_count="$( { pgrep -P "$pid" 2>/dev/null || true; } | wc -l | tr -d ' ' )"
     child_count="${child_count:-0}"
 
-    descendants=""
-    while IFS= read -r child; do
-        [ -n "$child" ] || continue
-        descendants="${descendants:+$descendants }$child"
-    done < <(collect_descendants "$pid")
-    descendant_count=0
-    for _descendant in $descendants; do
-        descendant_count=$((descendant_count + 1))
-    done
-    if [[ "$expect_inflight" == "true" && "$descendant_count" -lt 1 ]]; then
-        echo "error: $profile_id expected an in-flight descendant before SIGTERM, found none" >&2
-        dump_pinchos_err
-        exit 1
-    fi
-
     wakeup_file="$json_dir/top.txt"
     set +e
     set +o pipefail
@@ -362,6 +362,21 @@ for line in blocks[1]:
 PY
 )"
     ax_detail="$(ax_probe)" || ax_detail="ax_probe_failed"
+
+    descendants=""
+    while IFS= read -r child; do
+        [ -n "$child" ] || continue
+        descendants="${descendants:+$descendants }$child"
+    done < <(collect_descendants "$pid")
+    descendant_count=0
+    for _descendant in $descendants; do
+        descendant_count=$((descendant_count + 1))
+    done
+    if [[ "$expect_inflight" == "true" && "$descendant_count" -lt 1 ]]; then
+        echo "error: $profile_id expected an in-flight descendant before SIGTERM, found none" >&2
+        dump_pinchos_err
+        exit 1
+    fi
 
     kill -TERM "$pid" 2>/dev/null || true
     waited=0
