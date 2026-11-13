@@ -16,9 +16,11 @@ Each file contains one or more `[item.<id>]` tables and documents its command de
 | [`load-average.toml`](load-average.toml) | One-minute load | macOS `sysctl` and `awk` |
 
 `init` writes the clock item from [`example/pinchos.toml`](../example/pinchos.toml).
+The clock recipe is already that `init` default (`[item.clock]`).
+Copying [`clock.toml`](clock.toml) into a config made by `init` would duplicate `[item.clock]` and fail to parse, so rename the table first.
 The previous Codex Remainder default is the opt-in snippet in [`docs/pinchos/example-setup.md`](../docs/pinchos/example-setup.md#opt-in-codex-example).
 It demonstrates several cached menu rows, one action, and a separator, and its menu opens from cache without running commands during construction.
-It needs the Codex CLI and fails on a fresh Mac without it.
+It needs Remainder on the fixed PATH and a Codex CLI login, and fails on a fresh Mac without those.
 Item and menu keys are in [`docs/pinchos/configuration.md`](../docs/pinchos/configuration.md).
 
 Validate a recipe before copying it into the live configuration.

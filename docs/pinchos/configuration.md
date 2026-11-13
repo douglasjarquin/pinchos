@@ -18,7 +18,7 @@ format = "{output}"
 
 Setup for this example is in [example-setup.md](example-setup.md).
 The previous Codex Remainder default, with cached menu rows and `symbol = "terminal"`, is the opt-in snippet in [example-setup.md](example-setup.md#opt-in-codex-example).
-It needs the Codex CLI and fails on a fresh Mac without it.
+It needs Remainder on the fixed PATH and a Codex CLI login, and fails on a fresh Mac without those.
 
 Items appear in declaration order.
 Item ids in `[item.<id>]` and `[[item.<id>.menu]]` may contain only `[A-Za-z0-9_-]`.
