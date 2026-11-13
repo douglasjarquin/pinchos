@@ -293,14 +293,22 @@ final class StatusItemController: StatusItemMenuDelegate {
     /// -- the same way Option-clicking the system WiFi item shows signal details.
     func showLifecycleMenu(for statusItem: NSStatusItem) {
         let revealsDiagnostics = NSApp.currentEvent?.modifierFlags.contains(.option) == true
-        // AppKit's click callback is already on the main actor. Present a
-        // cheap menu synchronously; never await command snapshots here.
-        let menu: NSMenu
         if collapsedStatusItem === statusItem {
-            menu = makeCollapsedMenuImmediately(revealsDiagnostics: revealsDiagnostics)
-        } else {
-            menu = makeLifecycleMenuImmediately(for: statusItem, revealsDiagnostics: revealsDiagnostics)
+            _ = requestCollapsedMenu()
+            return
         }
+        // Compact click stays synchronous and cache-only. Option-click uses
+        // the same in-process snapshots as tests; it never invents cache
+        // health and does not run commands merely to inspect them.
+        if revealsDiagnostics {
+            Task { @MainActor [weak self, statusItem] in
+                guard let self else { return }
+                let menu = await self.makeLifecycleMenu(for: statusItem, revealsDiagnostics: true)
+                self.present(menu: menu, on: statusItem)
+            }
+            return
+        }
+        let menu = makeLifecycleMenuImmediately(for: statusItem, revealsDiagnostics: false)
         present(menu: menu, on: statusItem)
     }
 
