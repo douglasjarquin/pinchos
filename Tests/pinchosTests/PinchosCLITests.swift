@@ -345,9 +345,13 @@ final class PinchosCLITests: XCTestCase {
 
         let doctorCode = await cli.run(arguments: ["doctor"])
 
-        XCTAssertEqual(doctorCode, 4)
-        XCTAssertTrue(capture.stdout.contains("[FAIL] item.compound.run"))
-        XCTAssertTrue(capture.stdout.contains("single command"))
+        XCTAssertEqual(doctorCode, 0)
+        XCTAssertTrue(capture.stdout.contains("[UNKNOWN] item.compound.run"))
+        XCTAssertTrue(capture.stdout.contains("compound shell expression"))
+        XCTAssertTrue(capture.stdout.contains("not statically inspected"))
+        XCTAssertFalse(capture.stdout.contains("[FAIL] item.compound.run"))
+        XCTAssertFalse(capture.stdout.contains("not found"))
+        XCTAssertFalse(capture.stdout.contains("definitely_missing_pinchos_command"))
     }
 
     func testDoctorRecognizesExecutablePathContainingSpaces() async throws {
@@ -500,6 +504,191 @@ final class PinchosCLITests: XCTestCase {
         XCTAssertEqual(doctorCode, 4)
         XCTAssertTrue(capture.stdout.contains("[FAIL] item.env_prefix.run"))
         XCTAssertTrue(capture.stdout.contains("definitely_missing_pinchos_command"))
+    }
+
+    func testDoctorChecksMenuSourcesAndActionsWithoutExecuting() async throws {
+        let root = try makeRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let configURL = root.appendingPathComponent("pinchos/pinchos.toml")
+        let runMarker = root.appendingPathComponent("menu-run-executed")
+        let actionMarker = root.appendingPathComponent("menu-action-executed")
+        try FileManager.default.createDirectory(at: configURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try """
+        [item.safe]
+        run = "true"
+
+        [[item.safe.menu]]
+        label = "Usage"
+        run = "touch '\(runMarker.path)'"
+
+        [[item.safe.menu]]
+        label = "Open"
+        action = "touch '\(actionMarker.path)'"
+        """.write(to: configURL, atomically: true, encoding: .utf8)
+        let capture = CLIOutputCapture()
+        let cli = PinchosCLI(configPath: configURL.path, output: capture.output)
+
+        let doctorCode = await cli.run(arguments: ["doctor"])
+
+        XCTAssertEqual(doctorCode, 0)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: runMarker.path))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: actionMarker.path))
+        XCTAssertTrue(capture.stdout.contains("[PASS] item.safe.menu[0].run"))
+        XCTAssertTrue(capture.stdout.contains("[PASS] item.safe.menu[1].action"))
+        XCTAssertTrue(capture.stdout.contains("/usr/bin/touch") || capture.stdout.contains("/bin/touch"))
+    }
+
+    func testDoctorReportsUnknownForCompoundMenuAndActionWithoutCallingThemMissing() async throws {
+        let root = try makeRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let configURL = root.appendingPathComponent("pinchos/pinchos.toml")
+        try FileManager.default.createDirectory(at: configURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try """
+        [item.compound]
+        run = "true"
+
+        [[item.compound.menu]]
+        label = "Usage"
+        run = "cd /tmp; definitely_missing_pinchos_menu_command"
+
+        [[item.compound.menu]]
+        label = "Open"
+        action = "cd /tmp && definitely_missing_pinchos_action_command"
+        """.write(to: configURL, atomically: true, encoding: .utf8)
+        let capture = CLIOutputCapture()
+        let cli = PinchosCLI(configPath: configURL.path, output: capture.output)
+
+        let doctorCode = await cli.run(arguments: ["doctor"])
+
+        XCTAssertEqual(doctorCode, 0)
+        XCTAssertTrue(capture.stdout.contains("[UNKNOWN] item.compound.menu[0].run"))
+        XCTAssertTrue(capture.stdout.contains("[UNKNOWN] item.compound.menu[1].action"))
+        XCTAssertFalse(capture.stdout.contains("not found"))
+        XCTAssertFalse(capture.stdout.contains("definitely_missing_pinchos_menu_command"))
+        XCTAssertFalse(capture.stdout.contains("definitely_missing_pinchos_action_command"))
+    }
+
+    func testDoctorLabelsCliInspectionAndAvailableInstallInfo() async throws {
+        let root = try makeRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let configURL = root.appendingPathComponent("pinchos/pinchos.toml")
+        try FileManager.default.createDirectory(at: configURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try """
+        [item.clock]
+        run = "true"
+        """.write(to: configURL, atomically: true, encoding: .utf8)
+        let capture = CLIOutputCapture()
+        let cli = PinchosCLI(configPath: configURL.path, output: capture.output)
+
+        let doctorCode = await cli.run(arguments: ["doctor"])
+
+        XCTAssertEqual(doctorCode, 0)
+        XCTAssertTrue(capture.stdout.contains("Inspection: CLI (fresh static check; not a live GUI cache)"))
+        XCTAssertTrue(capture.stdout.contains("Version:"))
+        XCTAssertTrue(capture.stdout.contains("Install:"))
+        XCTAssertTrue(capture.stdout.contains("Config path: \(configURL.path)"))
+        XCTAssertFalse(capture.stdout.contains("live GUI cache snapshot"))
+        XCTAssertFalse(capture.stdout.contains("launch at login"))
+    }
+
+    func testDoctorRemediatesMissingToolAndUnreadableIcon() async throws {
+        let root = try makeRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let configURL = root.appendingPathComponent("pinchos/pinchos.toml")
+        let iconURL = root.appendingPathComponent("missing.svg")
+        try FileManager.default.createDirectory(at: configURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try """
+        [item.bad]
+        run = "definitely_missing_pinchos_command_126"
+        icon = "\(iconURL.path)"
+
+        [[item.bad.menu]]
+        label = "Usage"
+        run = "definitely_missing_pinchos_menu_126"
+
+        [[item.bad.menu]]
+        label = "Open"
+        action = "definitely_missing_pinchos_action_126"
+        """.write(to: configURL, atomically: true, encoding: .utf8)
+        let capture = CLIOutputCapture()
+        let cli = PinchosCLI(configPath: configURL.path, output: capture.output)
+
+        let doctorCode = await cli.run(arguments: ["doctor"])
+
+        XCTAssertEqual(doctorCode, 4)
+        XCTAssertTrue(capture.stdout.contains("[FAIL] item.bad.run"))
+        XCTAssertTrue(capture.stdout.contains("[FAIL] item.bad.menu[0].run"))
+        XCTAssertTrue(capture.stdout.contains("[FAIL] item.bad.menu[1].action"))
+        XCTAssertTrue(capture.stdout.contains("install it on that PATH or use an absolute path"))
+        XCTAssertTrue(capture.stdout.contains("[FAIL] item.bad.icon"))
+        XCTAssertTrue(capture.stdout.contains("use a readable image file or switch to symbol"))
+    }
+
+    func testDoctorPrivacyFixtureDoesNotCollectInheritedEnvironmentOrCredentials() async throws {
+        let root = try makeRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let configURL = root.appendingPathComponent("pinchos/pinchos.toml")
+        try FileManager.default.createDirectory(at: configURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try """
+        [item.tools]
+        run = "ls"
+
+        [[item.tools.menu]]
+        label = "Usage"
+        run = "ls"
+
+        [[item.tools.menu]]
+        label = "Open"
+        action = "true"
+        """.write(to: configURL, atomically: true, encoding: .utf8)
+        let secret = "pinchos-doctor-privacy-\(UUID().uuidString)"
+        let policy = CommandExecutionPolicy(inheritedEnvironment: [
+            "PATH": "/usr/bin:/bin:/usr/sbin:/sbin",
+            "HOME": NSHomeDirectory(),
+            "PINCHOS_SECRET": secret,
+            "AWS_SECRET_ACCESS_KEY": secret,
+            "SSH_AUTH_SOCK": "/tmp/pinchos-ssh-\(secret).sock"
+        ])
+        let capture = CLIOutputCapture()
+        let cli = PinchosCLI(
+            configPath: configURL.path,
+            output: capture.output,
+            executionPolicy: policy
+        )
+
+        let doctorCode = await cli.run(arguments: ["doctor"])
+
+        XCTAssertEqual(doctorCode, 0)
+        let combined = capture.stdout + capture.stderr
+        XCTAssertFalse(combined.contains(secret))
+        XCTAssertFalse(combined.contains("AWS_SECRET_ACCESS_KEY"))
+        XCTAssertFalse(combined.contains("PINCHOS_SECRET"))
+        XCTAssertFalse(combined.contains("SSH_AUTH_SOCK"))
+        XCTAssertFalse(combined.contains("/usr/bin:/bin:/usr/sbin:/sbin"))
+        XCTAssertFalse(combined.contains("inherited environment"))
+    }
+
+    func testDoctorBoundsLargeUnreadableIconPath() async throws {
+        let root = try makeRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let configURL = root.appendingPathComponent("pinchos/pinchos.toml")
+        try FileManager.default.createDirectory(at: configURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+        let hugeName = String(repeating: "x", count: 8000)
+        try """
+        [item.huge]
+        run = "true"
+        icon = "/tmp/\(hugeName).svg"
+        """.write(to: configURL, atomically: true, encoding: .utf8)
+        let capture = CLIOutputCapture()
+        let cli = PinchosCLI(configPath: configURL.path, output: capture.output)
+
+        let doctorCode = await cli.run(arguments: ["doctor"])
+
+        XCTAssertEqual(doctorCode, 4)
+        let failLine = try XCTUnwrap(capture.stdout.split(separator: "\n").first { $0.hasPrefix("[FAIL] item.huge.icon") })
+        XCTAssertLessThan(failLine.utf8.count, 1024)
+        XCTAssertTrue(failLine.contains("truncated") || failLine.count < 8000)
+        XCTAssertFalse(capture.stdout.contains(hugeName))
     }
 
     func testRunExecutesCanonicalItem() async throws {

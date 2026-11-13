@@ -14,6 +14,7 @@ private final class FakeManagedItem: ManagedItemLifecycle {
     let ownedStatusItem: NSStatusItem?
     var runtimeSnapshotValue: ItemRuntimeSnapshot?
     var menuRowSnapshotValues: [CommandRunnerSnapshot?] = []
+    var menuRowRuntimeSnapshotValues: [Int: ItemRuntimeSnapshot] = [:]
     /// When set, `prepareUpdate`/`prepareRemoval` sleep for this duration
     /// after logging, letting tests prove operations across many fake items
     /// are fired and awaited concurrently (bounded by the slowest one) under
@@ -95,6 +96,10 @@ private final class FakeManagedItem: ManagedItemLifecycle {
     func menuRowSnapshot(at index: Int) async -> CommandRunnerSnapshot? {
         guard menuRowSnapshotValues.indices.contains(index) else { return nil }
         return menuRowSnapshotValues[index]
+    }
+
+    func menuRowRuntimeSnapshot(at index: Int) -> ItemRuntimeSnapshot? {
+        menuRowRuntimeSnapshotValues[index]
     }
 
     func invokeMenuRow(at index: Int) {
@@ -484,6 +489,127 @@ final class StatusItemControllerTests: XCTestCase {
         let refresh = try XCTUnwrap(menu.items.first(where: { $0.title == "Refresh Now" }))
         XCTAssertTrue(NSApplication.shared.sendAction(refresh.action!, to: refresh.target, from: refresh))
         XCTAssertEqual(factory.eventLog.events, ["action:0", "refresh-now:codex"])
+    }
+
+    func testLifecycleMenuShowsDynamicMenuSourceFreshnessDistinctFromSchedulerDelay() async throws {
+        let factory = FakeManagedItemFactory()
+        let controller = makeController(factory: factory)
+        addTeardownBlock { @MainActor in
+            await controller.shutdown()
+        }
+        let config = ItemConfig(
+            name: "codex",
+            run: "echo value",
+            interval: .scheduled(60),
+            menu: [
+                MenuRowConfig(label: "Pace", run: "echo pace", cache: 60),
+                MenuRowConfig(label: "Failed", run: "false", cache: 60)
+            ]
+        )
+        await controller.apply(config: PinchosConfig(items: [config]))
+        let success = Date(timeIntervalSince1970: 1_700_000_000)
+        factory.created[0].menuRowRuntimeSnapshotValues[0] = ItemRuntimeSnapshot(
+            isRunning: false,
+            fullOutput: "72%",
+            lastAttemptedAt: success,
+            lastUpdatedAt: success,
+            lastExecution: CommandExecution(
+                terminalReason: .exited(code: 0),
+                stdout: "72%",
+                stderr: "",
+                stdoutBytesRead: 3,
+                stderrBytesRead: 0,
+                stdoutTruncated: false,
+                stderrTruncated: false,
+                duration: 0.1
+            ),
+            staleAfter: 60,
+            skippedRefreshes: 0,
+            now: success.addingTimeInterval(180)
+        )
+        factory.created[0].menuRowRuntimeSnapshotValues[1] = ItemRuntimeSnapshot(
+            isRunning: false,
+            fullOutput: "old",
+            lastAttemptedAt: success.addingTimeInterval(180),
+            lastUpdatedAt: success,
+            lastExecution: CommandExecution(
+                terminalReason: .exited(code: 1),
+                stdout: "old",
+                stderr: "pace failed\n",
+                stdoutBytesRead: 3,
+                stderrBytesRead: 12,
+                stdoutTruncated: false,
+                stderrTruncated: false,
+                duration: 0.1
+            ),
+            staleAfter: 60,
+            skippedRefreshes: 0,
+            now: success.addingTimeInterval(180)
+        )
+
+        let menu = await controller.makeLifecycleMenu(forManagedItem: factory.created[0])
+        let titles = menu.items.map(\.title)
+
+        XCTAssertTrue(titles.contains("Value \"Pace\": State: stale"))
+        XCTAssertTrue(titles.contains("Value \"Pace\": Last attempt: 2023-11-14T22:13:20Z"))
+        XCTAssertTrue(titles.contains("Value \"Pace\": Last success: 2023-11-14T22:13:20Z"))
+        XCTAssertTrue(titles.contains("Value \"Pace\": Delay: scheduler"))
+        XCTAssertFalse(titles.contains("Value \"Failed\": Delay: scheduler"))
+        XCTAssertTrue(titles.contains("Value \"Failed\": State: error"))
+        XCTAssertTrue(titles.contains("Value \"Failed\": Last exit: 1"))
+        XCTAssertTrue(titles.contains("Value \"Failed\": Error: pace failed"))
+        XCTAssertEqual(Array(titles.suffix(3)), ["Open Config", "Reload Config", "Quit Pinchos"])
+    }
+
+    func testLifecycleMenuBoundsLargeDynamicMenuDiagnosticOutput() async throws {
+        let factory = FakeManagedItemFactory()
+        let controller = makeController(factory: factory)
+        addTeardownBlock { @MainActor in
+            await controller.shutdown()
+        }
+        let config = ItemConfig(
+            name: "codex",
+            run: "echo value",
+            interval: .manual,
+            menu: [MenuRowConfig(label: "Pace", run: "echo pace", cache: 60)]
+        )
+        await controller.apply(config: PinchosConfig(items: [config]))
+        let hugeOutput = (1...5000).map { "line \($0)" }.joined(separator: "\n") + "\n"
+        let hugeError = String(repeating: "e", count: 64 * 1024)
+        factory.created[0].menuRowRuntimeSnapshotValues[0] = ItemRuntimeSnapshot(
+            isRunning: false,
+            fullOutput: hugeOutput,
+            lastAttemptedAt: Date(),
+            lastUpdatedAt: Date(),
+            lastExecution: CommandExecution(
+                terminalReason: .exited(code: 1),
+                stdout: hugeOutput,
+                stderr: hugeError,
+                stdoutBytesRead: hugeOutput.utf8.count,
+                stderrBytesRead: hugeError.utf8.count,
+                stdoutTruncated: false,
+                stderrTruncated: false,
+                duration: 0.1
+            ),
+            staleAfter: 60,
+            skippedRefreshes: 0,
+            now: Date()
+        )
+
+        let menu = await controller.makeLifecycleMenu(forManagedItem: factory.created[0])
+        let titles = menu.items.map(\.title)
+        let valueTitle = try XCTUnwrap(titles.first(where: { $0.hasPrefix("Value \"Pace\": Value: ") }))
+        XCTAssertLessThan(valueTitle.utf8.count, 1024)
+        XCTAssertFalse(valueTitle.contains("\n"))
+        XCTAssertTrue(valueTitle.contains("5000 line"))
+
+        let totalTitleBytes = menu.items.reduce(0) { $0 + $1.title.utf8.count }
+        XCTAssertLessThan(totalTitleBytes, 16 * 1024)
+
+        let copyOutput = try XCTUnwrap(menu.items.first(where: { $0.title == "Copy \"Pace\" Output" }))
+        XCTAssertTrue(NSApplication.shared.sendAction(copyOutput.action!, to: copyOutput.target, from: copyOutput))
+        XCTAssertEqual(NSPasteboard.general.string(forType: .string), hugeOutput)
+        XCTAssertEqual(Array(titles.suffix(3)), ["Open Config", "Reload Config", "Quit Pinchos"])
     }
 
     func testLifecycleMenuShowsDeclarativeActionDiagnostics() async throws {

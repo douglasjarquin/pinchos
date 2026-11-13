@@ -120,4 +120,118 @@ public struct CommandExecutionPolicy: Equatable, Sendable {
     public func missingCommandMessage(_ command: String) -> String {
         "command '\(command)' was not found on the execution PATH (Homebrew, /usr/local/bin, and system directories)"
     }
+
+    /// Static inspection of a configured command or action. Never executes it.
+    /// Compound shell expressions that cannot be inspected safely are
+    /// `.unknown`, not `.missing`.
+    public enum StaticExecutableCheck: Equatable, Sendable {
+        case found(path: String)
+        case missing(command: String)
+        case unknown
+    }
+
+    public static let unknownInspectionMessage =
+        "compound shell expression; not statically inspected"
+
+    public func inspectExecutable(
+        _ expression: String,
+        fileManager: FileManager = .default
+    ) -> StaticExecutableCheck {
+        guard let command = commandName(from: expression) else {
+            return .unknown
+        }
+        if let path = resolveExecutable(command, fileManager: fileManager) {
+            return .found(path: path)
+        }
+        return .missing(command: command)
+    }
+}
+
+private func commandName(from run: String) -> String? {
+    var tokens = [String]()
+    var token = ""
+    var quote: Character?
+    var escaped = false
+
+    func appendToken() {
+        guard !token.isEmpty else { return }
+        tokens.append(token)
+        token.removeAll(keepingCapacity: true)
+    }
+
+    for character in run {
+        if let activeQuote = quote {
+            if activeQuote == "'" {
+                if character == activeQuote {
+                    quote = nil
+                } else {
+                    token.append(character)
+                }
+            } else if escaped {
+                token.append(character)
+                escaped = false
+            } else if character == "\\" {
+                escaped = true
+            } else if character == activeQuote {
+                quote = nil
+            } else {
+                token.append(character)
+            }
+            continue
+        }
+
+        if character == "'" || character == "\"" {
+            quote = character
+        } else if character == "\\" {
+            escaped = true
+        } else if character.isWhitespace {
+            appendToken()
+        } else if ";|&()\n\r".contains(character) {
+            return nil
+        } else {
+            token.append(character)
+        }
+    }
+
+    guard quote == nil, !escaped else { return nil }
+    appendToken()
+
+    var commandIndex = 0
+    while commandIndex < tokens.count, isEnvironmentAssignment(tokens[commandIndex]) {
+        commandIndex += 1
+    }
+    if commandIndex < tokens.count, tokens[commandIndex] == "env" {
+        commandIndex += 1
+        while commandIndex < tokens.count, isEnvironmentAssignment(tokens[commandIndex]) {
+            commandIndex += 1
+        }
+        if commandIndex < tokens.count, tokens[commandIndex] == "--" {
+            commandIndex += 1
+        } else if commandIndex < tokens.count, tokens[commandIndex].hasPrefix("-") {
+            return nil
+        }
+    }
+    guard commandIndex < tokens.count else { return nil }
+
+    let command = tokens[commandIndex]
+    guard !command.isEmpty,
+          !command.hasPrefix("$"),
+          !command.contains("$("),
+          !["!", "if", "for", "while", "until", "case", "function", "{", "}"].contains(command),
+          !command.hasPrefix(">"),
+          !command.hasPrefix("<") else { return nil }
+    return command
+}
+
+private func isEnvironmentAssignment(_ token: String) -> Bool {
+    let bytes = Array(token.utf8)
+    guard let equals = bytes.firstIndex(of: 61), equals > 0 else { return false }
+    let name = bytes[..<equals]
+    guard let first = name.first,
+          first == 95 || first >= 65 && first <= 90 || first >= 97 && first <= 122 else {
+        return false
+    }
+    return name.dropFirst().allSatisfy { byte in
+        byte == 95 || byte >= 48 && byte <= 57 || byte >= 65 && byte <= 90 || byte >= 97 && byte <= 122
+    }
 }

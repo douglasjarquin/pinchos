@@ -232,6 +232,14 @@ final class ManagedItemFreshnessTests: XCTestCase {
         XCTAssertEqual(long.state, .fresh)
         XCTAssertEqual(snapshot.lastUpdatedAt, item.menuRowCachedValueForTesting(at: 0)?.lastSuccessfulAt)
         XCTAssertEqual(snapshot.lastUpdatedAt, item.menuRowCachedValueForTesting(at: 1)?.lastSuccessfulAt)
+        let shortRuntime = try XCTUnwrap(item.menuRowRuntimeSnapshot(at: 0))
+        let longRuntime = try XCTUnwrap(item.menuRowRuntimeSnapshot(at: 1))
+        XCTAssertEqual(shortRuntime.freshness.state, .ageStale)
+        XCTAssertTrue(shortRuntime.freshness.isSchedulerDelayed)
+        XCTAssertEqual(longRuntime.freshness.state, .fresh)
+        XCTAssertFalse(longRuntime.freshness.isSchedulerDelayed)
+        XCTAssertEqual(shortRuntime.lastUpdatedAt, snapshot.lastUpdatedAt)
+        XCTAssertEqual(longRuntime.lastUpdatedAt, snapshot.lastUpdatedAt)
     }
 
     @MainActor
@@ -310,6 +318,10 @@ final class ManagedItemFreshnessTests: XCTestCase {
         XCTAssertTrue(titles.contains("State: running"))
         XCTAssertTrue(titles.contains("Stale: yes"))
         XCTAssertFalse(titles.contains("Delay: scheduler"))
+        XCTAssertTrue(titles.contains("Value \"Usage\": State: running"))
+        XCTAssertTrue(titles.contains("Value \"Usage\": Stale: yes"))
+        XCTAssertTrue(titles.contains("Value \"Usage\": Refresh: queued or active"))
+        XCTAssertFalse(titles.contains("Value \"Usage\": Delay: scheduler"))
 
         let collapsed = await controller.makeCollapsedMenu()
         let collapsedRow = try XCTUnwrap(collapsed.items.first(where: { $0.submenu != nil }))

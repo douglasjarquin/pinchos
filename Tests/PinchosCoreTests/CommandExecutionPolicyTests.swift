@@ -115,6 +115,49 @@ final class CommandExecutionPolicyTests: XCTestCase {
         XCTAssertEqual(staleInherited.workingDirectory, stale)
     }
 
+    func testInspectExecutableReportsFoundMissingAndUnknownWithoutExecuting() throws {
+        let policy = CommandExecutionPolicy(inheritedEnvironment: [
+            "PATH": "/usr/bin:/bin:/usr/sbin:/sbin",
+            "HOME": NSHomeDirectory(),
+            "PINCHOS_SECRET": secret
+        ])
+
+        switch policy.inspectExecutable("ls -1") {
+        case .found(let path):
+            XCTAssertEqual(path, "/bin/ls")
+        case .missing, .unknown:
+            XCTFail("ls must be found on the execution PATH")
+        }
+
+        switch policy.inspectExecutable("definitely_missing_pinchos_command_126 --help") {
+        case .missing(let command):
+            XCTAssertEqual(command, "definitely_missing_pinchos_command_126")
+        case .found, .unknown:
+            XCTFail("an absent simple command must be missing, not unknown")
+        }
+
+        switch policy.inspectExecutable("cd /tmp; definitely_missing_pinchos_command") {
+        case .unknown:
+            break
+        case .found, .missing:
+            XCTFail("a compound expression must be unknown, not missing")
+        }
+
+        switch policy.inspectExecutable("env PINCHOS_PROBE=1 ls") {
+        case .found(let path):
+            XCTAssertEqual(path, "/bin/ls")
+        case .missing, .unknown:
+            XCTFail("env PREFIX=value command must inspect the command, not the env wrapper")
+        }
+
+        XCTAssertEqual(
+            CommandExecutionPolicy.unknownInspectionMessage,
+            "compound shell expression; not statically inspected"
+        )
+        XCTAssertFalse(String(describing: policy.inspectExecutable("ls")).contains(secret))
+        XCTAssertFalse(policy.missingCommandMessage("ls").contains(secret))
+    }
+
     func testRelativeExecutableResolvesAgainstHOMEEvenWhenHOMEDoesNotExist() throws {
         let parent = FileManager.default.temporaryDirectory
             .appendingPathComponent("pinchos-policy-missing-home-\(UUID().uuidString)")

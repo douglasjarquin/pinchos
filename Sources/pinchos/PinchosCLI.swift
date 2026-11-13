@@ -316,6 +316,13 @@ struct PinchosCLI {
 
         var problemCount = 0
         output.stdout("Pinchos doctor\n")
+        output.stdout("Inspection: CLI (fresh static check; not a live GUI cache)\n")
+        if let version = Self.bundleVersion() {
+            output.stdout("Version: \(version)\n")
+        } else {
+            output.stdout("Version: unavailable (not a packaged app)\n")
+        }
+        output.stdout("Install: \(Self.resolvedInstallPath())\n")
         output.stdout("Config path: \(configPath)\n")
 
         var config: PinchosConfig?
@@ -373,16 +380,23 @@ struct PinchosCLI {
                     reportAbsentAsIconNotConfigured: true
                 )
 
-                if let command = commandName(from: item.run) {
-                    if let executablePath = executionPolicy.resolveExecutable(command, fileManager: fileManager) {
-                        reportSuccess("item.\(item.name).run", executablePath)
-                    } else {
-                        reportFailure("item.\(item.name).run", executionPolicy.missingCommandMessage(command))
-                        problemCount += 1
+                problemCount += reportExecutable(
+                    path: "item.\(item.name).run",
+                    expression: item.run
+                )
+                for (index, row) in item.menu.enumerated() {
+                    if let run = row.run {
+                        problemCount += reportExecutable(
+                            path: "item.\(item.name).menu[\(index)].run",
+                            expression: run
+                        )
                     }
-                } else {
-                    reportFailure("item.\(item.name).run", "could not identify a single command to check safely")
-                    problemCount += 1
+                    if let action = row.action {
+                        problemCount += reportExecutable(
+                            path: "item.\(item.name).menu[\(index)].action",
+                            expression: action
+                        )
+                    }
                 }
             }
         }
@@ -437,11 +451,57 @@ struct PinchosCLI {
     }
 
     private func reportSuccess(_ check: String, _ detail: String) {
-        output.stdout("[PASS] \(check): \(detail)\n")
+        reportLine(tag: "PASS", check: check, detail: detail)
     }
 
     private func reportFailure(_ check: String, _ detail: String) {
-        output.stdout("[FAIL] \(check): \(detail)\n")
+        reportLine(tag: "FAIL", check: check, detail: detail)
+    }
+
+    private func reportUnknown(_ check: String, _ detail: String) {
+        reportLine(tag: "UNKNOWN", check: check, detail: detail)
+    }
+
+    private func reportLine(tag: String, check: String, detail: String) {
+        let preview = DiagnosticPreviewFormatter.preview(detail, limits: .menuValue)
+        output.stdout("[\(tag)] \(check): \(preview.text)\n")
+    }
+
+    /// Returns 1 when the check is a doctor problem, 0 otherwise.
+    /// `.unknown` is reported and does not fail doctor: the expression is
+    /// valid config that cannot be inspected without executing it.
+    private func reportExecutable(path: String, expression: String) -> Int {
+        switch executionPolicy.inspectExecutable(expression, fileManager: fileManager) {
+        case .found(let executablePath):
+            reportSuccess(path, executablePath)
+            return 0
+        case .missing(let command):
+            reportFailure(
+                path,
+                executionPolicy.missingCommandMessage(command)
+                    + "; install it on that PATH or use an absolute path"
+            )
+            return 1
+        case .unknown:
+            reportUnknown(path, CommandExecutionPolicy.unknownInspectionMessage)
+            return 0
+        }
+    }
+
+    private static func bundleVersion() -> String? {
+        let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String
+        let trimmed = version?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return trimmed.isEmpty ? nil : trimmed
+    }
+
+    private static func resolvedInstallPath() -> String {
+        if let path = Bundle.main.executablePath, !path.isEmpty {
+            return path
+        }
+        if let launched = CommandLine.arguments.first, !launched.isEmpty {
+            return launched
+        }
+        return "unavailable"
     }
 
     /// Reports the configured icon source. Missing files and unavailable
@@ -459,7 +519,10 @@ struct PinchosCLI {
                 reportSuccess("\(path).icon", icon)
                 return 0
             }
-            reportFailure("\(path).icon", "file is missing or unreadable: \(icon)")
+            reportFailure(
+                "\(path).icon",
+                "file is missing or unreadable: \(icon); use a readable image file or switch to symbol"
+            )
             return 1
         case .symbol(let name):
             if StatusItemIconRenderer.isSymbolAvailable(name) {
@@ -476,95 +539,6 @@ struct PinchosCLI {
                 reportSuccess("\(path).icon", "not configured")
             }
             return 0
-        }
-    }
-
-    private func commandName(from run: String) -> String? {
-        var tokens = [String]()
-        var token = ""
-        var quote: Character?
-        var escaped = false
-
-        func appendToken() {
-            guard !token.isEmpty else { return }
-            tokens.append(token)
-            token.removeAll(keepingCapacity: true)
-        }
-
-        for character in run {
-            if let activeQuote = quote {
-                if activeQuote == "'" {
-                    if character == activeQuote {
-                        quote = nil
-                    } else {
-                        token.append(character)
-                    }
-                } else if escaped {
-                    token.append(character)
-                    escaped = false
-                } else if character == "\\" {
-                    escaped = true
-                } else if character == activeQuote {
-                    quote = nil
-                } else {
-                    token.append(character)
-                }
-                continue
-            }
-
-            if character == "'" || character == "\"" {
-                quote = character
-            } else if character == "\\" {
-                escaped = true
-            } else if character.isWhitespace {
-                appendToken()
-            } else if ";|&()\n\r".contains(character) {
-                return nil
-            } else {
-                token.append(character)
-            }
-        }
-
-        guard quote == nil, !escaped else { return nil }
-        appendToken()
-
-        var commandIndex = 0
-        while commandIndex < tokens.count, isEnvironmentAssignment(tokens[commandIndex]) {
-            commandIndex += 1
-        }
-        if commandIndex < tokens.count, tokens[commandIndex] == "env" {
-            commandIndex += 1
-            while commandIndex < tokens.count, isEnvironmentAssignment(tokens[commandIndex]) {
-                commandIndex += 1
-            }
-            if commandIndex < tokens.count, tokens[commandIndex] == "--" {
-                commandIndex += 1
-            } else if commandIndex < tokens.count, tokens[commandIndex].hasPrefix("-") {
-                return nil
-            }
-        }
-        guard commandIndex < tokens.count else { return nil }
-
-        let command = tokens[commandIndex]
-        guard !command.isEmpty,
-              !command.hasPrefix("$"),
-              !command.contains("$("),
-              !["!", "if", "for", "while", "until", "case", "function", "{", "}"].contains(command),
-              !command.hasPrefix(">"),
-              !command.hasPrefix("<") else { return nil }
-        return command
-    }
-
-    private func isEnvironmentAssignment(_ token: String) -> Bool {
-        let bytes = Array(token.utf8)
-        guard let equals = bytes.firstIndex(of: 61), equals > 0 else { return false }
-        let name = bytes[..<equals]
-        guard let first = name.first,
-              first == 95 || first >= 65 && first <= 90 || first >= 97 && first <= 122 else {
-            return false
-        }
-        return name.dropFirst().allSatisfy { byte in
-            byte == 95 || byte >= 48 && byte <= 57 || byte >= 65 && byte <= 90 || byte >= 97 && byte <= 122
         }
     }
 
@@ -599,7 +573,7 @@ struct PinchosCLI {
     }
 
     private func printDoctorHelp() {
-        output.stdout("Usage: pinchos doctor\n\nInspect config accessibility, commands, icons and SF Symbols, and the execution PATH policy without running commands or dumping the inherited environment.\n")
+        output.stdout("Usage: pinchos doctor\n\nFresh CLI inspection of config, primary/menu/action executables, and icons against the shared execution policy. Does not run commands, dump the inherited environment, or read a live GUI cache.\n")
     }
 
     private func printConfigPathHelp() {

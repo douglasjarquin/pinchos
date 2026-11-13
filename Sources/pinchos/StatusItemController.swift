@@ -48,6 +48,7 @@ protocol ManagedItemLifecycle: AnyObject {
     func runtimeSnapshot() async -> ItemRuntimeSnapshot
     func menuRowValue(at index: Int) -> String?
     func menuRowFreshness(at index: Int) -> ValueFreshness
+    func menuRowRuntimeSnapshot(at index: Int) -> ItemRuntimeSnapshot?
     func menuRowSnapshot(at index: Int) async -> CommandRunnerSnapshot?
     func invokeMenuRow(at index: Int)
     func refreshNow()
@@ -84,6 +85,10 @@ extension ManagedItemLifecycle {
             freshnessInterval: row.cache,
             now: Date()
         )
+    }
+
+    func menuRowRuntimeSnapshot(at index: Int) -> ItemRuntimeSnapshot? {
+        nil
     }
 
 }
@@ -764,6 +769,15 @@ final class StatusItemController: StatusItemMenuDelegate {
         }
         menu.addItem(NSMenuItem.separator())
         addDiagnostics(from: runtime.runnerSnapshot, to: menu)
+        var addedSourceRows = false
+        for index in item.menuRows.indices where item.menuRows[index].run != nil {
+            guard let snapshot = item.menuRowRuntimeSnapshot(at: index) else { continue }
+            if !addedSourceRows {
+                menu.addItem(NSMenuItem.separator())
+                addedSourceRows = true
+            }
+            addRuntimeState(from: snapshot, to: menu, label: item.menuRows[index].label)
+        }
         var menuRowSnapshots: [(index: Int, snapshot: CommandRunnerSnapshot?)] = []
         for index in item.menuRows.indices where item.menuRows[index].action != nil {
             menuRowSnapshots.append((index: index, snapshot: await item.menuRowSnapshot(at: index)))
@@ -926,34 +940,49 @@ final class StatusItemController: StatusItemMenuDelegate {
         NSPasteboard.general.setString(target.text, forType: .string)
     }
 
-    private func addRuntimeState(from snapshot: ItemRuntimeSnapshot, to menu: NSMenu) {
-        menu.addItem(disabledItem(title: "State: \(snapshot.status.rawValue)"))
+    private func addRuntimeState(
+        from snapshot: ItemRuntimeSnapshot,
+        to menu: NSMenu,
+        label: String? = nil
+    ) {
+        let prefix = sourceDiagnosticPrefix(label)
+        menu.addItem(disabledItem(title: prefix + "State: \(snapshot.status.rawValue)"))
         if let fullOutput = snapshot.fullOutput {
-            menu.addItem(valuePreviewItem(prefix: "Value: ", fullText: fullOutput))
+            menu.addItem(valuePreviewItem(prefix: prefix + "Value: ", fullText: fullOutput))
         } else {
-            menu.addItem(disabledItem(title: "Value: unavailable"))
+            menu.addItem(disabledItem(title: prefix + "Value: unavailable"))
         }
-        menu.addItem(disabledItem(title: "Last attempt: \(snapshot.lastAttemptedAt.map(formatTimestamp) ?? "unavailable")"))
-        menu.addItem(disabledItem(title: "Last success: \(snapshot.lastUpdatedAt.map(formatTimestamp) ?? "unavailable")"))
-        menu.addItem(disabledItem(title: "Stale: \(snapshot.isStale ? "yes" : "no")"))
+        menu.addItem(disabledItem(title: prefix + "Last attempt: \(snapshot.lastAttemptedAt.map(formatTimestamp) ?? "unavailable")"))
+        menu.addItem(disabledItem(title: prefix + "Last success: \(snapshot.lastUpdatedAt.map(formatTimestamp) ?? "unavailable")"))
+        menu.addItem(disabledItem(title: prefix + "Stale: \(snapshot.isStale ? "yes" : "no")"))
         if snapshot.freshness.isSchedulerDelayed {
-            menu.addItem(disabledItem(title: "Delay: scheduler"))
+            menu.addItem(disabledItem(title: prefix + "Delay: scheduler"))
+        }
+        if snapshot.freshness.state == .refreshing {
+            menu.addItem(disabledItem(title: prefix + "Refresh: queued or active"))
         }
         if let duration = snapshot.lastRunDuration {
-            menu.addItem(disabledItem(title: String(format: "Last duration: %.3fs", duration)))
+            menu.addItem(disabledItem(title: prefix + String(format: "Last duration: %.3fs", duration)))
         }
         if let exitStatus = snapshot.exitStatus {
-            menu.addItem(disabledItem(title: "Last exit: \(exitStatus)"))
+            menu.addItem(disabledItem(title: prefix + "Last exit: \(exitStatus)"))
         }
         if let errorSummary = snapshot.errorSummary {
-            menu.addItem(stderrPreviewItem(prefix: "Error: ", fullText: errorSummary))
+            menu.addItem(stderrPreviewItem(prefix: prefix + "Error: ", fullText: errorSummary))
         }
         if let fullOutput = snapshot.fullOutput, !fullOutput.isEmpty {
-            menu.addItem(copyItem(title: "Copy Full Output", text: fullOutput))
+            let copyTitle = label.map { "Copy \"\($0)\" Output" } ?? "Copy Full Output"
+            menu.addItem(copyItem(title: copyTitle, text: fullOutput))
         }
         if let stderr = snapshot.lastExecution?.stderr, !stderr.isEmpty {
-            menu.addItem(copyItem(title: "Copy Full Error", text: stderr))
+            let copyTitle = label.map { "Copy \"\($0)\" Error" } ?? "Copy Full Error"
+            menu.addItem(copyItem(title: copyTitle, text: stderr))
         }
+    }
+
+    private func sourceDiagnosticPrefix(_ label: String?) -> String {
+        guard let label else { return "" }
+        return "Value \"\(label)\": "
     }
 
     private func addDiagnostics(from snapshot: CommandRunnerSnapshot, to menu: NSMenu) {
