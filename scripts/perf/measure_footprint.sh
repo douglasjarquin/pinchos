@@ -219,13 +219,14 @@ PY
 # thread and this thread polls AXChildren for AXMenu. Times cache-only
 # construction, not command execution. Dismiss with AXCancel.
 measure_menu_latency() {
-    python3 - "$1" <<'PY'
+    python3 - "$1" "$2" <<'PY'
 import ctypes, json, sys, threading, time
 from ctypes import (
     POINTER, c_bool, c_char_p, c_int32, c_long, c_uint32, c_void_p, byref, cdll
 )
 
 pid = int(sys.argv[1])
+require_cached = len(sys.argv) > 2 and sys.argv[2] == "true"
 ax = cdll.LoadLibrary("/System/Library/Frameworks/ApplicationServices.framework/ApplicationServices")
 cf = cdll.LoadLibrary("/System/Library/Frameworks/CoreFoundation.framework/CoreFoundation")
 cg = cdll.LoadLibrary("/System/Library/Frameworks/CoreGraphics.framework/CoreGraphics")
@@ -325,6 +326,36 @@ def post_key(vk):
     cg.CGEventPostToPid(pid, down)
     cg.CGEventPostToPid(pid, up)
 
+def has_cached_row(titles):
+    return any(t.startswith("Cached:") for t in titles)
+
+def press_open(item):
+    press_err = {"value": None}
+
+    def press():
+        press_err["value"] = ax.AXUIElementPerformAction(item, cfstr("AXPress"))
+
+    t0 = time.perf_counter()
+    thread = threading.Thread(target=press, daemon=True)
+    thread.start()
+    seen = None
+    opened = []
+    while time.perf_counter() - t0 < 2.0:
+        opened = menu_titles(item)
+        if opened:
+            seen = time.perf_counter()
+            break
+        time.sleep(0.0005)
+    ms = round((seen - t0) * 1000, 3) if seen is not None else None
+    return ms, opened, thread, press_err["value"]
+
+def finish_open(item, thread):
+    dismiss(item)
+    thread.join(timeout=2)
+    if menu_element(item) is not None:
+        dismiss(item)
+    time.sleep(0.15)
+
 out = {
     "menu_latency_ms": None,
     "menu_latency_samples_ms": [],
@@ -353,7 +384,25 @@ if not items:
     raise SystemExit
 
 named = [el for el in items if title_of(el) == "42"]
-target = (named or items)[-1]
+candidates = named or items
+target = None
+if require_cached:
+    for el in candidates:
+        ms, opened, thread, _press_err = press_open(el)
+        matched = ms is not None and has_cached_row(opened)
+        finish_open(el, thread)
+        if matched:
+            target = el
+            break
+    if target is None:
+        out["menu_latency_note"] = (
+            "five profile: no extras item titled 42 opened a Cached: row"
+        )
+        print(json.dumps(out))
+        raise SystemExit
+else:
+    target = named[0] if named else items[0]
+
 out["menu_item_title"] = title_of(target)
 _ = children_of(target)
 
@@ -361,31 +410,16 @@ samples = []
 titles = []
 keyboard_selected = None
 for _ in range(3):
-    press_err = {"value": None}
-
-    def press():
-        press_err["value"] = ax.AXUIElementPerformAction(target, cfstr("AXPress"))
-
-    t0 = time.perf_counter()
-    thread = threading.Thread(target=press, daemon=True)
-    thread.start()
-    seen = None
-    while time.perf_counter() - t0 < 2.0:
-        opened = menu_titles(target)
-        if opened:
-            seen = time.perf_counter()
-            titles = opened
-            break
-        time.sleep(0.0005)
-    if seen is None:
-        dismiss(target)
-        thread.join(timeout=2)
+    ms, opened, thread, press_err = press_open(target)
+    if ms is None:
+        finish_open(target, thread)
         out["menu_latency_note"] = (
-            f"live GUI menu did not appear within 2s after AXPress (err={press_err['value']})"
+            f"live GUI menu did not appear within 2s after AXPress (err={press_err})"
         )
         print(json.dumps(out))
         raise SystemExit
-    samples.append(round((seen - t0) * 1000, 3))
+    titles = opened
+    samples.append(ms)
     time.sleep(0.08)
     post_key(0x7D)
     time.sleep(0.15)
@@ -394,11 +428,12 @@ for _ in range(3):
     selected = selected_titles(target)
     if selected:
         keyboard_selected = selected[0]
-    dismiss(target)
-    thread.join(timeout=2)
-    if menu_element(target) is not None:
-        dismiss(target)
-    time.sleep(0.15)
+    finish_open(target, thread)
+
+if require_cached and not has_cached_row(titles):
+    out["menu_latency_note"] = "five profile: measured menu_titles had no Cached: row"
+    print(json.dumps(out))
+    raise SystemExit
 
 samples.sort()
 out["menu_latency_samples_ms"] = samples
@@ -460,9 +495,11 @@ run_profile() (
     trap cleanup EXIT
 
     # SIGTERM is after settle + 1s per sample + the IDLEW window + the live
-    # menu probe (worst case about 20s: three AXPress timeouts, joins, and
-    # dismissals). Reject a settle that would fire it after the in-flight
-    # sleep 120 has already exited.
+    # menu probe. The probe exits on the first missed AXPress; the real worst
+    # case is three successful timed opens, about 14s total, plus a Cached-row
+    # scout on the five profile. Keep 20s of slack.
+    # Reject a settle that would fire SIGTERM after the in-flight sleep 120
+    # has already exited.
     if [[ "$expect_inflight" == "true" ]]; then
         inflight_lifetime_seconds=120
         menu_probe_allowance_seconds=20
@@ -564,7 +601,11 @@ for line in blocks[1]:
 PY
 )"
     ax_detail="$(ax_probe)" || ax_detail="ax_probe_failed"
-    menu_json="$(measure_menu_latency "$pid")" || {
+    require_cached=false
+    if [[ "$item_count" -eq 5 ]]; then
+        require_cached=true
+    fi
+    menu_json="$(measure_menu_latency "$pid" "$require_cached")" || {
         echo "error: menu latency probe failed ($profile_id)" >&2
         dump_pinchos_err
         exit 1

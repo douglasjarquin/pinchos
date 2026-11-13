@@ -230,6 +230,8 @@ P1 idle has no in-flight child at SIGTERM.
 The five-item profile records descendants with recursive `pgrep -P` immediately before SIGTERM (3 pids: session supervisor, shell, `sleep`) and re-checks those pids with `kill -0` afterwards (0 leftover).
 
 Live compact-menu open latency is measured when `AXIsProcessTrusted()` is true.
+P1 times the first extras item titled `42`.
+The five profile scouts extras titled `42` and times the one whose opened menu contains a `Cached:` row; it exits 1 if none does.
 Each sample is the wall time from starting the `AXPress` helper thread until `AXChildren` polling (0.5 ms sleep) sees an `AXMenu` with `AXMenuItem` rows.
 That interval includes Accessibility round-trip and polling overhead.
 It is not render time and not main-thread construction time.
