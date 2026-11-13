@@ -54,6 +54,16 @@ final class DiagnosticPreviewFormatterTests: XCTestCase {
 
     // MARK: - Control-character sanitization fixtures
 
+    func testSanitizeVisibleTextReplacesControlsWithoutTruncating() {
+        let text = "ok\u{0000}go\nOpen Config"
+        XCTAssertEqual(
+            DiagnosticPreviewFormatter.sanitizeVisibleText(text),
+            "ok\u{2400}go\u{240A}Open Config"
+        )
+        XCTAssertEqual(DiagnosticPreviewFormatter.sanitizeVisibleText(""), "")
+        XCTAssertEqual(DiagnosticPreviewFormatter.sanitizeVisibleText("72%"), "72%")
+    }
+
     func testNulAndOtherC0ControlsBecomeVisiblePlaceholders() {
         let preview = DiagnosticPreviewFormatter.preview("a\u{0000}b", limits: .menuValue)
         XCTAssertEqual(preview.text, "a\u{2400}b")

@@ -326,7 +326,7 @@ final class ManagedItemFreshnessTests: XCTestCase {
         let collapsed = await controller.makeCollapsedMenu()
         let collapsedRow = try XCTUnwrap(collapsed.items.first(where: { $0.submenu != nil }))
         XCTAssertEqual(collapsedRow.title, "72\(ValueFreshness.staleMarker)")
-        XCTAssertEqual(collapsedRow.accessibilityLabel(), "72, stale, refreshing")
+        XCTAssertEqual(collapsedRow.accessibilityLabel(), "item, 72, stale, refreshing")
 
         let settled = await waitUntil { item.renderedTitle == "99" }
         XCTAssertTrue(settled)

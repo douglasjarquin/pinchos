@@ -236,7 +236,7 @@ final class CollapseMenuTests: XCTestCase {
         let collapsed = await controller.makeCollapsedMenu()
         let row = try XCTUnwrap(collapsed.items.first(where: { $0.submenu != nil }))
         XCTAssertEqual(row.title, "12\(ValueFreshness.staleMarker)")
-        XCTAssertEqual(row.accessibilityLabel(), "12, stale, scheduler delayed")
+        XCTAssertEqual(row.accessibilityLabel(), "disk, 12, stale, scheduler delayed")
     }
 
     func testCollapsedFirstLevelKeepsStaleMarkerWhileRefreshing() async throws {
@@ -271,7 +271,7 @@ final class CollapseMenuTests: XCTestCase {
         let collapsed = await controller.makeCollapsedMenu()
         let row = try XCTUnwrap(collapsed.items.first(where: { $0.submenu != nil }))
         XCTAssertEqual(row.title, "12\(ValueFreshness.staleMarker)")
-        XCTAssertEqual(row.accessibilityLabel(), "12, stale, refreshing")
+        XCTAssertEqual(row.accessibilityLabel(), "disk, 12, stale, refreshing")
     }
 
     func testCollapsedFirstLevelShowsCommandValueInsteadOfName() async throws {

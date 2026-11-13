@@ -83,6 +83,15 @@ public enum DiagnosticPreviewFormatter {
     public static let menuStderr = Limits.menuStderr
     public static let actionDiagnostics = Limits.actionDiagnostics
 
+    /// Makes untrusted text safe for a single-line status-item or submenu
+    /// title. C0/C1/bidi controls become Control Pictures, including
+    /// newlines so they cannot split a native menu. Does not truncate;
+    /// callers that need a length cap use `truncateTitle` after this.
+    public static func sanitizeVisibleText(_ text: String) -> String {
+        guard !text.isEmpty else { return text }
+        return sanitizeLine(text[text.startIndex...])
+    }
+
     /// Produces a bounded, sanitized preview of `text` under `limits`.
     ///
     /// Pipeline: normalize line endings, cap line count, sanitize each

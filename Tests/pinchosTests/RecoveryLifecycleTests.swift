@@ -1838,4 +1838,50 @@ final class RecoveryPresentationTests: XCTestCase {
             menuTitles: ["broken", "---"] + existingActions
         ))
     }
+
+    func testParseErrorWarningUsesSpokenLabelInsteadOfGlyph() async throws {
+        let (controller, host) = makeController()
+        await controller.showParseError("item.alpha: unknown key")
+
+        let warning = try XCTUnwrap(host.live.first?.button)
+        XCTAssertEqual(warning.title, warningTitle)
+        XCTAssertEqual(warning.accessibilityLabel(), "pinchos, configuration error")
+        XCTAssertFalse(warning.accessibilityLabel()?.contains("\u{26A0}") == true)
+
+        let collapsed = await controller.makeCollapsedMenu()
+        let row = try XCTUnwrap(collapsed.items.first(where: { $0.title.hasPrefix("pinchos") }))
+        XCTAssertEqual(row.accessibilityLabel(), "pinchos, configuration error")
+
+        let errorRow = try XCTUnwrap(row.submenu?.items.first)
+        XCTAssertEqual(errorRow.title, "item.alpha: unknown key")
+        XCTAssertFalse(errorRow.isEnabled)
+        XCTAssertNil(errorRow.action)
+        for title in existingActions {
+            let action = try XCTUnwrap(row.submenu?.items.first(where: { $0.title == title }))
+            XCTAssertTrue(action.isEnabled, title)
+            XCTAssertNotNil(action.action, title)
+            XCTAssertTrue(action.target === controller, title)
+        }
+    }
+
+    func testMissingConfigWarningSpokenLabel() async throws {
+        let (controller, host) = makeController()
+        await controller.showMissingConfig()
+
+        XCTAssertEqual(host.live.first?.button?.accessibilityLabel(), "pinchos, no configuration found")
+        let collapsed = await controller.makeCollapsedMenu()
+        let row = try XCTUnwrap(collapsed.items.first(where: { $0.title.hasPrefix("pinchos") }))
+        XCTAssertEqual(row.accessibilityLabel(), "pinchos, no configuration found")
+        XCTAssertEqual(row.title, "pinchos")
+    }
+
+    func testEmptyConfigWarningSpokenLabel() async throws {
+        let (controller, host) = makeController()
+        await controller.apply(config: PinchosConfig(items: []))
+
+        XCTAssertEqual(host.live.first?.button?.accessibilityLabel(), "pinchos, no items configured")
+        let collapsed = await controller.makeCollapsedMenu()
+        let row = try XCTUnwrap(collapsed.items.first(where: { $0.title.hasPrefix("pinchos") }))
+        XCTAssertEqual(row.accessibilityLabel(), "pinchos, no items configured")
+    }
 }

@@ -817,8 +817,10 @@ final class ManagedItem: ManagedItemLifecycle {
             baseTitle = "–"
         }
 
-        renderedAccessibilityLabel = snapshot.freshness.spokenDescription(valueText: lastSuccessfulTitle)
-        setTitle(truncateTitle(baseTitle, maxLength: 60) + snapshot.freshness.marker)
+        let spokenValue = lastSuccessfulTitle.map(DiagnosticPreviewFormatter.sanitizeVisibleText)
+        renderedAccessibilityLabel = snapshot.freshness.spokenDescription(valueText: spokenValue)
+        let visibleBase = DiagnosticPreviewFormatter.sanitizeVisibleText(truncateTitle(baseTitle, maxLength: 60))
+        setTitle(visibleBase + snapshot.freshness.marker)
         applyIcon(source: commandConfig.iconSource)
         setVisibility(true)
     }
@@ -1087,7 +1089,10 @@ final class ManagedItem: ManagedItemLifecycle {
     private func applyDisplayedTitle() {
         renderedButtonTitle = renderedTitle
         statusItem?.button?.title = renderedTitle
-        statusItem?.button?.setAccessibilityLabel(renderedAccessibilityLabel)
+        // Status bar buttons treat accessibilityValue as button state, so the
+        // spoken name+value+state has to live on the label. Glyphs stay in
+        // the visible title only.
+        statusItem?.button?.setAccessibilityLabel("\(commandConfig.name), \(renderedAccessibilityLabel)")
     }
 
     private func setVisibility(_ visible: Bool) {
