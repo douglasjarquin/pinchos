@@ -5,7 +5,8 @@ It is not a VoiceOver speech sign-off.
 
 Live AppKit dump and release-binary launch: `e14050a4351ebcfa98af1a45dccca5c829225aa5` on 2026-11-13.
 CRLF splitting, sanitize-then-truncate, and spoken-value caps: `508b39b7aa9b62edbd5f34af9be1ab48c09ca2bb`.
-Failed-without-value then refreshing no longer speaks `⚠︎`/`⌛︎` from the previous title: `039b2b3096f2ceeb4477d12d1300ed1e6a51a476`.
+Failed-without-value then refreshing no longer speaks `⚠︎`/`⌛︎` from the previous title.
+The durable check is `testFailedWithoutValueThenRefreshingSpeaksWithoutGlyphs` (landed in `039b2b3` on this branch).
 `#168` stays parked until a human runs the checklist below with Accessibility granted.
 
 ## What the product does now
@@ -96,7 +97,7 @@ Effective appearance while dumping: `NSAppearanceNameDarkAqua`.
 
 - Informational rows (`Reset`, `Usage`, diagnostics, icon fallback, recovery error text): `enabled=false`, `action=nil`.
 - Action rows, combined value/action rows, Refresh Now, Collapse/Expand, Open Config, Reload Config, Quit, and Copy: `enabled=true`, target `StatusItemController`.
-- Stale/failed titles still show `⌛︎`/`⚠︎`. At `e14050a` the dumped `axLabel` spoke the state in words and did not contain those glyphs. That dump was not re-run at `508b39b`/`d3f91d65`; those commits spoke `baseTitle` (including a leftover `⚠︎` while refreshing with no last-good value). The follow-up on this branch restores spoken text from `lastSuccessfulTitle` so that path cannot speak the glyph. That restore is covered by `testFailedWithoutValueThenRefreshingSpeaksWithoutGlyphs`, not by a new live AX dump.
+- Stale/failed titles still show `⌛︎`/`⚠︎`. At `e14050a` the dumped `axLabel` spoke the state in words and did not contain those glyphs. That dump was not re-run after the CRLF follow-up, which briefly spoke `baseTitle` (including a leftover `⚠︎` while refreshing with no last-good value). Spoken text comes from `lastSuccessfulTitle` again. The durable check is `testFailedWithoutValueThenRefreshingSpeaksWithoutGlyphs`, not a new live AX dump.
 - Control characters became Control Pictures (`␀`, `␊`) in title and label.
 - Recovery parse error spoke `pinchos, configuration error`; missing config spoke `pinchos, no configuration found`.
 - Live status-item button: title `72`, `axLabel` `clock, 72, fresh`, template symbol image present.
