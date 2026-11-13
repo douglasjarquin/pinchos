@@ -169,6 +169,7 @@ run_profile() (
     scratch_dir="$(mktemp -d)"
     json_dir="$(mktemp -d)"
     pid=""
+    trap '' TTOU TTIN TSTP
 
     cleanup() {
         if [[ -n "${pid:-}" ]] && kill -0 "$pid" 2>/dev/null; then
@@ -190,7 +191,8 @@ run_profile() (
     mkdir -p "$scratch_dir/pinchos"
     "$writer" "$scratch_dir/pinchos/pinchos.toml"
 
-    XDG_CONFIG_HOME="$scratch_dir" "$repo_root/.build/release/pinchos" &
+    XDG_CONFIG_HOME="$scratch_dir" "$repo_root/.build/release/pinchos" \
+        >/dev/null 2>"$json_dir/pinchos.err" &
     pid=$!
     sleep "$settle_seconds"
 
@@ -213,10 +215,16 @@ run_profile() (
 
     fd_count="$(lsof -nP -p "$pid" 2>/dev/null | wc -l | tr -d ' ' || echo null)"
     thread_count="$(ps -M -p "$pid" 2>/dev/null | tail -n +2 | wc -l | tr -d ' ' || echo null)"
-    child_count="$(pgrep -P "$pid" 2>/dev/null | wc -l | tr -d ' ')"
+    child_count="$( { pgrep -P "$pid" 2>/dev/null || true; } | wc -l | tr -d ' ' )"
     child_count="${child_count:-0}"
-    wakeup_text="$(top -l 2 -s 1 -pid "$pid" -stats pid,cpu,th 2>/dev/null | tail -n 8 || true)"
-    ax_detail="$(ax_probe)"
+    # top can SIGPIPE/SIGTTOU the measuring process group; keep it best-effort.
+    wakeup_text=""
+    set +e
+    set +o pipefail
+    wakeup_text="$(top -l 2 -s 1 -pid "$pid" -stats pid,cpu,th </dev/null 2>/dev/null | tail -n 8)"
+    set -o pipefail
+    set -e
+    ax_detail="$(ax_probe)" || ax_detail="ax_probe_failed"
 
     kill -TERM "$pid" 2>/dev/null || true
     waited=0
@@ -231,7 +239,8 @@ run_profile() (
     fi
     wait "$pid" 2>/dev/null || true
     pid=""
-    leftover_children="$(pgrep -f "$scratch_dir" 2>/dev/null | wc -l | tr -d ' ' || echo 0)"
+    leftover_children="$( { pgrep -f "$scratch_dir" 2>/dev/null || true; } | wc -l | tr -d ' ' )"
+    leftover_children="${leftover_children:-0}"
 
     commit_sha="$(git -C "$repo_root" rev-parse HEAD 2>/dev/null || echo unknown)"
     dirty=false
