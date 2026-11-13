@@ -86,8 +86,8 @@ The mobile breakpoint is 720px; grids collapse to one column and horizontal padd
 
 - **Structure:** dark system-font menu bar, item labels and values, and a native-looking submenu.
 - **Variants:** landing hero and docs component specimen.
-- **States:** the landing demo presents the canonical clock item (`date '+%H:%M'`) and a config disclosure; the default item has no extra menu rows.
-- **Accessibility:** `figure` has a meaningful label, menu rows remain selectable text, the action is a keyboard-reachable button, the config disclosure is keyboard reachable, and the example explains its read-only boundary.
+- **States:** the landing demo presents the canonical clock item (`date '+%H:%M'`), the built-in Refresh Now and global footer rows, and a config disclosure.
+- **Accessibility:** `figure` has a meaningful label, menu rows remain selectable text, there is no action button, the config disclosure is keyboard reachable, and the example explains its read-only boundary.
 - **Motion:** no idle motion; the landing demo uses instantaneous state changes and the existing 150ms color/background feedback for controls.
 
 ### Recipe explorer

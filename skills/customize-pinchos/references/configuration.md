@@ -33,7 +33,8 @@ format = "{output}"
 ```
 
 `init` writes that clock item.
-The Codex Remainder example with cached menu rows is `recipes/codex.toml`.
+The previous Codex Remainder default, with cached menu rows and `symbol = "terminal"`, is the opt-in snippet in `docs/pinchos/example-setup.md`.
+It needs the Codex CLI and fails on a fresh Mac without it.
 
 ## Menu rows
 

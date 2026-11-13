@@ -143,7 +143,7 @@ final class PinchosCLITests: XCTestCase {
             at: recipesDirectory,
             includingPropertiesForKeys: nil
         ).filter { $0.pathExtension == "toml" }.sorted { $0.path < $1.path }
-        XCTAssertEqual(recipes.count, 10)
+        XCTAssertEqual(recipes.count, 9)
 
         for recipeURL in recipes {
             let configURL = root.appendingPathComponent("pinchos/pinchos.toml")

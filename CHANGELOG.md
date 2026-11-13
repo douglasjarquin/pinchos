@@ -3,7 +3,8 @@
 ## Unreleased
 
 `init` writes the built-in `/bin/date` clock example so a fresh Mac gets a working menu.
-The Codex Remainder configuration is the opt-in recipe `recipes/codex.toml`.
+The previous Codex Remainder default is an opt-in snippet in [docs/pinchos/example-setup.md](docs/pinchos/example-setup.md#opt-in-codex-example).
+It needs the Codex CLI and fails on a fresh Mac without it.
 There are no migrations for unreleased experiments.
 The 0.1 schema is the current contract.
 Rejected development syntax is documented in [docs/pinchos/runtime.md](docs/pinchos/runtime.md).

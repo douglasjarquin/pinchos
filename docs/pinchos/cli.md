@@ -44,7 +44,8 @@ Doctor does not dump the inherited environment, credential metadata, or login-it
 
 `run <item>` executes one item for scriptable verification under that same policy.
 The checked-in example item is `clock` and runs macOS `/bin/date`; see [example-setup.md](example-setup.md).
-The Codex Remainder example is the opt-in recipe [`recipes/codex.toml`](../../recipes/codex.toml).
+The previous Codex Remainder default is the opt-in snippet in [example-setup.md](example-setup.md#opt-in-codex-example).
+It needs the Codex CLI and fails on a fresh Mac without it.
 
 Run `.build/release/pinchos` with no arguments to launch the menu-bar app; any argument goes to the CLI.
 That no-argument launch runs in the foreground and keeps the terminal busy until the app quits, so it has not hung.

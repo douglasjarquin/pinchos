@@ -14,7 +14,7 @@ Release tags, signing, and the first release are in [docs/pinchos/install.md](do
 
 * **Native submenu.** Static values, cached values, actions, and separators, in declaration order. Row rules are in [docs/pinchos/configuration.md](docs/pinchos/configuration.md).
 
-* **Checked-in example.** `init` writes a `/bin/date` clock item that works on a fresh Mac. Setup is in [docs/pinchos/example-setup.md](docs/pinchos/example-setup.md). The Codex Remainder example is an opt-in recipe.
+* **Checked-in example.** `init` writes a `/bin/date` clock item that works on a fresh Mac. Setup is in [docs/pinchos/example-setup.md](docs/pinchos/example-setup.md). The previous Codex Remainder default is an opt-in snippet there; it needs the Codex CLI and fails on a fresh Mac without it.
 
 * **CLI.** `init`, `validate`, `doctor`, `run`, `config-path`, and `open-config`. What each one does is in [docs/pinchos/cli.md](docs/pinchos/cli.md).
 
