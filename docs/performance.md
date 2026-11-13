@@ -140,7 +140,7 @@ It builds the release binary once and runs the two selected profiles against dis
 | **P1** (`p1`) | 3 items, 60s intervals | `echo` / `date` only |
 | **five** (`five`) | 5 items, 60s intervals, cached and manual menu values, duplicate `echo 42` sources, in-flight `sleep 120`, `exit 1` | no network, no provider credentials |
 
-Both profiles print commit SHA, dirty state, macOS version, hardware model, architecture, memory size, Swift toolchain, `phys_footprint` samples, RSS, idle CPU, numeric FD counts (`lsof -a -d 0-65535`), thread/child counts, `top` IDLEW over a 60s interval (the timer cadence), SIGTERM cleanup of recorded descendants, and an Accessibility probe.
+Both profiles print commit SHA, dirty state, macOS version, hardware model, architecture, memory size, Swift toolchain, `phys_footprint` samples, RSS, idle CPU, numeric FD counts (`lsof -a -d 0-65535`), thread/child counts, `top` IDLEW over a 60s interval (the timer cadence), SIGTERM cleanup of recorded descendants, an Accessibility probe, and live compact-menu open latency when `AXIsProcessTrusted()` is true.
 Numeric first arguments still mean settle seconds and sample count for compatibility:
 
 ```sh
@@ -221,8 +221,9 @@ Numeric FDs are `lsof -nP -a -d 0-65535 -p` (not `lsof | wc -l`).
 P1 idle has no in-flight child at SIGTERM.
 The five-item profile records descendants with recursive `pgrep -P` immediately before SIGTERM (3 pids: session supervisor, shell, `sleep`) and re-checks those pids with `kill -0` afterwards (0 leftover).
 
-Live GUI menu latency is unmeasured: `AXIsProcessTrusted()` is untrusted/disabled on this agent Mac, so Accessibility and screen capture cannot drive the menu.
-In-process tests prove menu construction returns while a command is blocked on a fifo, and that menu titles stay a small bound independent of retained output.
+Live compact-menu open latency is measured when `AXIsProcessTrusted()` is true: `AXPress` on a pinchos extras `AXMenuBarItem`, poll until an `AXMenu` appears, `CGEventPostToPid` Down twice, read `AXSelectedChildren`, dismiss with `AXCancel`.
+`#129` has no ratified millisecond budget for that path; the recorded number is evidence, not a new product threshold.
+In-process tests still prove menu construction returns while a command is blocked on a fifo, and that menu titles stay a small bound independent of retained output.
 
 Completed-cache measurement: ordinary tests show each retained string is capped at 64 KiB, a source can hold two copies (about 2x cap), truncation is reported above the cap, and a later refresh of the same source replaces those strings.
 The 8 MiB active `OutputMemoryBudget` returns to zero after collectors deallocate.

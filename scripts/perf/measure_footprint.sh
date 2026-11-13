@@ -214,6 +214,205 @@ print("ax_trusted" if lib.AXIsProcessTrusted() else "ax_untrusted_or_disabled")
 PY
 }
 
+# Live compact-menu open via AXPress on the process extras menu bar.
+# AXPress blocks until the menu dismisses, so the press runs on a helper
+# thread and this thread polls AXChildren for AXMenu. Times cache-only
+# construction, not command execution. Dismiss with AXCancel.
+measure_menu_latency() {
+    python3 - "$1" <<'PY'
+import ctypes, json, sys, threading, time
+from ctypes import (
+    POINTER, c_bool, c_char_p, c_int32, c_long, c_uint32, c_void_p, byref, cdll
+)
+
+pid = int(sys.argv[1])
+ax = cdll.LoadLibrary("/System/Library/Frameworks/ApplicationServices.framework/ApplicationServices")
+cf = cdll.LoadLibrary("/System/Library/Frameworks/CoreFoundation.framework/CoreFoundation")
+cg = cdll.LoadLibrary("/System/Library/Frameworks/CoreGraphics.framework/CoreGraphics")
+
+kCFStringEncodingUTF8 = 0x08000100
+cf.CFStringCreateWithCString.argtypes = [c_void_p, c_char_p, c_int32]
+cf.CFStringCreateWithCString.restype = c_void_p
+cf.CFStringGetCString.argtypes = [c_void_p, c_char_p, c_long, c_int32]
+cf.CFStringGetCString.restype = c_bool
+cf.CFArrayGetCount.argtypes = [c_void_p]
+cf.CFArrayGetCount.restype = c_long
+cf.CFArrayGetValueAtIndex.argtypes = [c_void_p, c_long]
+cf.CFArrayGetValueAtIndex.restype = c_void_p
+
+ax.AXIsProcessTrusted.restype = c_bool
+ax.AXUIElementCreateApplication.argtypes = [c_int32]
+ax.AXUIElementCreateApplication.restype = c_void_p
+ax.AXUIElementCopyAttributeValue.argtypes = [c_void_p, c_void_p, POINTER(c_void_p)]
+ax.AXUIElementCopyAttributeValue.restype = c_int32
+ax.AXUIElementPerformAction.argtypes = [c_void_p, c_void_p]
+ax.AXUIElementPerformAction.restype = c_int32
+
+cg.CGEventCreateKeyboardEvent.argtypes = [c_void_p, c_uint32, c_bool]
+cg.CGEventCreateKeyboardEvent.restype = c_void_p
+cg.CGEventPost.argtypes = [c_uint32, c_void_p]
+cg.CGEventPost.restype = None
+cg.CGEventPostToPid.argtypes = [c_int32, c_void_p]
+cg.CGEventPostToPid.restype = None
+
+def cfstr(text):
+    return cf.CFStringCreateWithCString(None, text.encode(), kCFStringEncodingUTF8)
+
+def from_cfstr(ref):
+    if not ref:
+        return None
+    buf = ctypes.create_string_buffer(4096)
+    if cf.CFStringGetCString(ref, buf, 4096, kCFStringEncodingUTF8):
+        return buf.value.decode()
+    return None
+
+def copy_attr(el, name):
+    val = c_void_p()
+    err = ax.AXUIElementCopyAttributeValue(el, cfstr(name), byref(val))
+    return err, val.value
+
+def cfarray_els(ref):
+    if not ref:
+        return []
+    return [cf.CFArrayGetValueAtIndex(ref, i) for i in range(cf.CFArrayGetCount(ref))]
+
+def role_of(el):
+    err, ref = copy_attr(el, "AXRole")
+    return from_cfstr(ref) if err == 0 else None
+
+def title_of(el):
+    err, ref = copy_attr(el, "AXTitle")
+    return from_cfstr(ref) if err == 0 else None
+
+def children_of(el):
+    err, ref = copy_attr(el, "AXChildren")
+    return cfarray_els(ref) if err == 0 else []
+
+def menu_element(item):
+    for child in children_of(item):
+        if role_of(child) == "AXMenu":
+            return child
+    return None
+
+def menu_titles(item):
+    menu = menu_element(item)
+    if menu is None:
+        return []
+    return [title_of(row) or "" for row in children_of(menu) if role_of(row) == "AXMenuItem"]
+
+def selected_titles(item):
+    menu = menu_element(item)
+    if menu is None:
+        return []
+    err, sel = copy_attr(menu, "AXSelectedChildren")
+    if err != 0 or not sel:
+        return []
+    return [title_of(el) or "" for el in cfarray_els(sel)]
+
+def dismiss(item):
+    menu = menu_element(item)
+    if menu is not None:
+        ax.AXUIElementPerformAction(menu, cfstr("AXCancel"))
+        time.sleep(0.02)
+    if menu_element(item) is not None:
+        cg.CGEventPost(1, cg.CGEventCreateKeyboardEvent(None, 0x35, True))
+        cg.CGEventPost(1, cg.CGEventCreateKeyboardEvent(None, 0x35, False))
+        time.sleep(0.02)
+
+def post_key(vk):
+    down = cg.CGEventCreateKeyboardEvent(None, vk, True)
+    up = cg.CGEventCreateKeyboardEvent(None, vk, False)
+    cg.CGEventPostToPid(pid, down)
+    cg.CGEventPostToPid(pid, up)
+
+out = {
+    "menu_latency_ms": None,
+    "menu_latency_samples_ms": [],
+    "menu_titles": [],
+    "menu_keyboard_selected": None,
+    "menu_item_title": None,
+    "menu_latency_note": None,
+}
+
+if not ax.AXIsProcessTrusted():
+    out["menu_latency_note"] = "live GUI menu latency unmeasured: AXIsProcessTrusted() is untrusted/disabled"
+    print(json.dumps(out))
+    raise SystemExit
+
+app = ax.AXUIElementCreateApplication(pid)
+err, extras = copy_attr(app, "AXExtrasMenuBar")
+if err != 0 or not extras:
+    out["menu_latency_note"] = f"live GUI menu latency unmeasured: AXExtrasMenuBar err={err}"
+    print(json.dumps(out))
+    raise SystemExit
+
+items = [el for el in children_of(extras) if role_of(el) == "AXMenuBarItem"]
+if not items:
+    out["menu_latency_note"] = "live GUI menu latency unmeasured: no AXMenuBarItem extras"
+    print(json.dumps(out))
+    raise SystemExit
+
+named = [el for el in items if title_of(el) == "42"]
+target = (named or items)[-1]
+out["menu_item_title"] = title_of(target)
+_ = children_of(target)
+
+samples = []
+titles = []
+keyboard_selected = None
+for _ in range(3):
+    press_err = {"value": None}
+
+    def press():
+        press_err["value"] = ax.AXUIElementPerformAction(target, cfstr("AXPress"))
+
+    t0 = time.perf_counter()
+    thread = threading.Thread(target=press, daemon=True)
+    thread.start()
+    seen = None
+    while time.perf_counter() - t0 < 2.0:
+        opened = menu_titles(target)
+        if opened:
+            seen = time.perf_counter()
+            titles = opened
+            break
+        time.sleep(0.0005)
+    if seen is None:
+        dismiss(target)
+        thread.join(timeout=2)
+        out["menu_latency_note"] = (
+            f"live GUI menu did not appear within 2s after AXPress (err={press_err['value']})"
+        )
+        print(json.dumps(out))
+        raise SystemExit
+    samples.append(round((seen - t0) * 1000, 3))
+    time.sleep(0.08)
+    post_key(0x7D)
+    time.sleep(0.15)
+    post_key(0x7D)
+    time.sleep(0.15)
+    selected = selected_titles(target)
+    if selected:
+        keyboard_selected = selected[0]
+    dismiss(target)
+    thread.join(timeout=2)
+    if menu_element(target) is not None:
+        dismiss(target)
+    time.sleep(0.15)
+
+samples.sort()
+out["menu_latency_samples_ms"] = samples
+out["menu_latency_ms"] = samples[len(samples) // 2]
+out["menu_titles"] = titles
+out["menu_keyboard_selected"] = keyboard_selected
+out["menu_latency_note"] = (
+    "AXPress on the pinchos extras AXMenuBarItem; compact cache-only menu; "
+    "median of 3 opens; CGEventPostToPid Down twice then AXSelectedChildren; dismiss AXCancel"
+)
+print(json.dumps(out))
+PY
+}
+
 collect_descendants() {
     local parent="$1"
     local child
@@ -362,6 +561,19 @@ for line in blocks[1]:
 PY
 )"
     ax_detail="$(ax_probe)" || ax_detail="ax_probe_failed"
+    menu_json="$(measure_menu_latency "$pid")" || {
+        echo "error: menu latency probe failed ($profile_id)" >&2
+        dump_pinchos_err
+        exit 1
+    }
+    if [[ "$ax_detail" == "ax_trusted" ]]; then
+        menu_ms="$(python3 -c 'import json,sys; print(json.loads(sys.argv[1]).get("menu_latency_ms") or "")' "$menu_json")"
+        if [[ -z "$menu_ms" ]]; then
+            echo "error: AX trusted but menu latency unmeasured ($profile_id): $menu_json" >&2
+            dump_pinchos_err
+            exit 1
+        fi
+    fi
 
     descendants=""
     while IFS= read -r child; do
@@ -410,6 +622,7 @@ PY
 
     PINCHOS_WAKEUP_LINE="$wakeup_line" \
     PINCHOS_SWIFT_VERSION="$swift_version" \
+    PINCHOS_MENU_JSON="$menu_json" \
     python3 -c '
 import json, os, sys
 def nums(text):
@@ -428,6 +641,11 @@ def maybe_int(text):
         return int(text)
     except ValueError:
         return None
+menu = {}
+try:
+    menu = json.loads(os.environ.get("PINCHOS_MENU_JSON") or "{}")
+except json.JSONDecodeError:
+    menu = {}
 print(json.dumps({
     "profile": sys.argv[1],
     "label": sys.argv[2],
@@ -445,8 +663,12 @@ print(json.dumps({
     "wakeup_source": "top-idlew-interval",
     "wakeup_note": "macOS top IDLEW is a per-interval idle-wakeup count (first -l sample is zeroed, like %CPU), not a process-lifetime cumulative counter and not all wakeups",
     "wakeup_sample": os.environ.get("PINCHOS_WAKEUP_LINE", "").strip() or None,
-    "menu_latency_ms": None,
-    "menu_latency_note": "live GUI menu latency unmeasured: AXIsProcessTrusted() is untrusted/disabled on this Mac",
+    "menu_latency_ms": menu.get("menu_latency_ms"),
+    "menu_latency_samples_ms": menu.get("menu_latency_samples_ms") or [],
+    "menu_titles": menu.get("menu_titles") or [],
+    "menu_keyboard_selected": menu.get("menu_keyboard_selected"),
+    "menu_item_title": menu.get("menu_item_title"),
+    "menu_latency_note": menu.get("menu_latency_note") or "live GUI menu latency unmeasured",
     "accessibility_probe": sys.argv[13],
     "cleanup": {
         "exited_after_sigterm": sys.argv[14] == "true",
