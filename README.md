@@ -64,6 +64,8 @@ scheduler and source cache
 
 Opening a menu is synchronous and never waits on a command. Never-attempted rows refresh in the background immediately. Stale or failed cached rows may request a background retry only after a fixed 30-second cadence from when the last attempt settled. Refresh Now updates every distinct value source, including manual submenu rows, and never runs actions. Actions execute only when selected.
 
+The last successful value stays visible while a refresh is queued or running and after a failed command. Age uses the shared command-success timestamp against each consumer's `interval` or `cache`. Age-stale and scheduler-delayed share the ⌛︎ marker; VoiceOver says "stale, scheduler delayed" when the scheduler has not attempted since the value aged out, "stale" when it aged out without that delay, and "stale, refreshing" when an aged value is already refreshing. A failed command uses a warning marker. Scalar age starts at command success, not an invented provider timestamp. Details are in [docs/pinchos/runtime.md](docs/pinchos/runtime.md).
+
 Commands and actions are unsandboxed code executed with the user's permissions. Review executables, arguments, paths, network destinations, credentials, and write targets before placing them in TOML.
 
 Bounds, reload, recovery, and the rejected development syntax are in [docs/pinchos/runtime.md](docs/pinchos/runtime.md).

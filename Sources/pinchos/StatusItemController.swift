@@ -47,6 +47,7 @@ protocol ManagedItemLifecycle: AnyObject {
     func runnerSnapshot() async -> CommandRunnerSnapshot
     func runtimeSnapshot() async -> ItemRuntimeSnapshot
     func menuRowValue(at index: Int) -> String?
+    func menuRowFreshness(at index: Int) -> ValueFreshness
     func menuRowSnapshot(at index: Int) async -> CommandRunnerSnapshot?
     func invokeMenuRow(at index: Int)
     func refreshNow()
@@ -58,6 +59,31 @@ extension ManagedItemLifecycle {
     func menuRowValue(at index: Int) -> String? {
         guard menuRows.indices.contains(index) else { return nil }
         return menuRows[index].value
+    }
+
+    func menuRowFreshness(at index: Int) -> ValueFreshness {
+        guard menuRows.indices.contains(index) else {
+            return ValueFreshness.interpret(
+                value: nil,
+                isRefreshing: false,
+                lastSuccessfulAt: nil,
+                lastAttemptedAt: nil,
+                lastExecutionFailed: false,
+                freshnessInterval: nil,
+                now: Date()
+            )
+        }
+        let row = menuRows[index]
+        let value = menuRowValue(at: index)
+        return ValueFreshness.interpret(
+            value: value,
+            isRefreshing: row.run != nil && value == nil,
+            lastSuccessfulAt: nil,
+            lastAttemptedAt: nil,
+            lastExecutionFailed: false,
+            freshnessInterval: row.cache,
+            now: Date()
+        )
     }
 
 }
@@ -619,6 +645,7 @@ final class StatusItemController: StatusItemMenuDelegate {
             if let image = StatusItemIconRenderer.system.render(rowInfo.iconSource).image {
                 row.image = image
             }
+            row.setAccessibilityLabel(rowInfo.spoken)
             row.submenu = submenu
             menu.addItem(row)
         }
@@ -651,13 +678,17 @@ final class StatusItemController: StatusItemMenuDelegate {
     /// `{output}%` keeps its suffix) and, like the bar, falls back to
     /// `error_text` when there is no value -- never its config name. The icon
     /// source follows the bar and the config's icon.
-    private func collapsedRow(for item: any ManagedItemLifecycle) async -> (title: String, iconSource: ItemIconSource?) {
+    private func collapsedRow(
+        for item: any ManagedItemLifecycle
+    ) async -> (title: String, spoken: String, iconSource: ItemIconSource?) {
         let commandConfig = item.config
         let snapshot = await item.runtimeSnapshot()
         let value = snapshot.fullOutput.map { lastTrimmedLine(of: $0) }
-        let base = value.flatMap { $0.isEmpty ? nil : applyFormat(commandConfig.format, output: $0) }
+        let formatted = value.flatMap { $0.isEmpty ? nil : applyFormat(commandConfig.format, output: $0) }
             ?? "–"
-        return (truncateTitle(base, maxLength: 60), commandConfig.iconSource)
+        let title = truncateTitle(formatted, maxLength: 60) + snapshot.freshness.marker
+        let spoken = snapshot.freshness.spokenDescription(valueText: formatted == "–" ? nil : formatted)
+        return (title, spoken, commandConfig.iconSource)
     }
 
     private func makePresentationMenuItem() -> NSMenuItem {
@@ -752,14 +783,19 @@ final class StatusItemController: StatusItemMenuDelegate {
                 addSeparatorIfNeeded(to: menu)
                 continue
             }
-            let title = menuRowTitle(row, value: item.menuRowValue(at: index))
+            let value = item.menuRowValue(at: index)
+            let freshness = item.menuRowFreshness(at: index)
+            let title = menuRowTitle(row, value: value, freshness: freshness)
             if row.action != nil {
                 let menuItem = NSMenuItem(title: title, action: #selector(menuRowAction(_:)), keyEquivalent: "")
                 menuItem.target = self
                 menuItem.representedObject = MenuRowTarget(item: item, index: index)
+                menuItem.setAccessibilityLabel(menuRowSpoken(row, value: value, freshness: freshness))
                 menu.addItem(menuItem)
             } else {
-                menu.addItem(disabledItem(title: title))
+                let menuItem = disabledItem(title: title)
+                menuItem.setAccessibilityLabel(menuRowSpoken(row, value: value, freshness: freshness))
+                menu.addItem(menuItem)
             }
         }
     }
@@ -769,19 +805,47 @@ final class StatusItemController: StatusItemMenuDelegate {
         menu.addItem(NSMenuItem.separator())
     }
 
-    private func menuRowTitle(_ row: MenuRowConfig, value: String?) -> String {
+    private func menuRowTitle(
+        _ row: MenuRowConfig,
+        value: String?,
+        freshness: ValueFreshness
+    ) -> String {
         let label = row.label ?? ""
         guard !row.separator else { return "" }
         let resolvedValue: String?
-        if let value = row.value {
+        if row.value != nil {
             resolvedValue = value
         } else if row.run != nil {
-            resolvedValue = value ?? "Loading…"
+            resolvedValue = freshness.rowValueText(current: value)
         } else {
             resolvedValue = nil
         }
         guard let resolvedValue else { return label }
-        return "\(label): \(resolvedValue.isEmpty ? "–" : truncateTitle(resolvedValue, maxLength: 60))"
+        let visible = resolvedValue.isEmpty ? "–" : truncateTitle(resolvedValue, maxLength: 60)
+        let marker = row.run == nil ? "" : freshness.marker
+        return "\(label): \(visible)\(marker)"
+    }
+
+    private func menuRowSpoken(
+        _ row: MenuRowConfig,
+        value: String?,
+        freshness: ValueFreshness
+    ) -> String {
+        let label = row.label ?? ""
+        guard row.run != nil else {
+            if let value, !value.isEmpty {
+                return label.isEmpty ? value : "\(label), \(value)"
+            }
+            return label
+        }
+        let spokenValue = freshness.rowValueText(current: value)
+        let description = freshness.spokenDescription(
+            valueText: spokenValue == "Loading…" || spokenValue == "–" ? nil : spokenValue
+        )
+        if label.isEmpty {
+            return description
+        }
+        return "\(label), \(description)"
     }
 
     /// A light-touch, always-present line surfacing the one application-scoped
@@ -872,6 +936,9 @@ final class StatusItemController: StatusItemMenuDelegate {
         menu.addItem(disabledItem(title: "Last attempt: \(snapshot.lastAttemptedAt.map(formatTimestamp) ?? "unavailable")"))
         menu.addItem(disabledItem(title: "Last success: \(snapshot.lastUpdatedAt.map(formatTimestamp) ?? "unavailable")"))
         menu.addItem(disabledItem(title: "Stale: \(snapshot.isStale ? "yes" : "no")"))
+        if snapshot.freshness.isSchedulerDelayed {
+            menu.addItem(disabledItem(title: "Delay: scheduler"))
+        }
         if let duration = snapshot.lastRunDuration {
             menu.addItem(disabledItem(title: String(format: "Last duration: %.3fs", duration)))
         }

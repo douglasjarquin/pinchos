@@ -180,6 +180,93 @@ final class CommandSourceTests: XCTestCase {
         let diagnostics = await scheduler.diagnostics()
         XCTAssertEqual(diagnostics.activeSessions, 0)
         XCTAssertEqual(diagnostics.queuedSessions, 0)
+        let cached = await source.snapshot()
+        let inFlight = await source.hasInFlightRefresh()
+        XCTAssertEqual(cached.state, .unavailable)
+        XCTAssertFalse(inFlight)
+    }
+
+    func testAbandonedQueuedRefreshRestoresPreviousState() async throws {
+        let scheduler = CommandScheduler(maxActiveSessions: 1)
+        let runner = FakeSourceRunner(outcomes: [.completed(success), .completed(execution("second\n"))])
+        let clock = TestSourceClock(Date(timeIntervalSince1970: 1_700_000_000))
+        let source = CommandSource(
+            configuration: CommandSourceConfiguration(command: "ignored", timeout: 1),
+            scheduler: scheduler,
+            clock: clock,
+            runner: runner
+        )
+
+        let first = await source.refresh()
+        XCTAssertEqual(first.state, .fresh)
+        let successAt = try XCTUnwrap(first.lastSuccessfulAt)
+        XCTAssertEqual(first.lastAttemptedAt, successAt)
+
+        try await scheduler.acquirePermit()
+        let refresh = Task { await source.refresh() }
+        try await waitUntil { await scheduler.diagnostics().queuedSessions == 1 }
+        let queued = await source.snapshot()
+        XCTAssertEqual(queued.state, .refreshing)
+
+        refresh.cancel()
+        _ = await refresh.value
+        await scheduler.releasePermit()
+        try await Task.sleep(for: .milliseconds(50))
+
+        let cached = await source.snapshot()
+        let runCount = await runner.runCount
+        let inFlight = await source.hasInFlightRefresh()
+        XCTAssertEqual(cached.state, .fresh)
+        XCTAssertEqual(cached.value, "72%\n")
+        XCTAssertEqual(cached.lastSuccessfulAt, successAt)
+        XCTAssertEqual(cached.lastAttemptedAt, successAt)
+        XCTAssertEqual(runCount, 1)
+        XCTAssertFalse(inFlight)
+    }
+
+    func testAbandonedFlightDoesNotRestoreRefreshingOverANewerFlight() async throws {
+        let scheduler = CommandScheduler(maxActiveSessions: 1)
+        let runner = FakeSourceRunner(outcomes: [
+            .completed(success),
+            .completed(execution("second\n"))
+        ])
+        let source = CommandSource(
+            configuration: CommandSourceConfiguration(command: "ignored", timeout: 1),
+            scheduler: scheduler,
+            runner: runner
+        )
+
+        let first = await source.refresh()
+        XCTAssertEqual(first.state, .fresh)
+        let successAt = try XCTUnwrap(first.lastSuccessfulAt)
+
+        try await scheduler.acquirePermit()
+        let flightA = Task { await source.refresh() }
+        try await waitUntil { await scheduler.diagnostics().queuedSessions == 1 }
+
+        flightA.cancel()
+        let flightB = Task { await source.refresh() }
+        _ = await flightA.value
+        try await waitUntil { await source.hasInFlightRefresh() }
+        let duringB = await source.snapshot()
+        XCTAssertEqual(duringB.state, .refreshing)
+        XCTAssertEqual(duringB.value, "72%\n")
+        XCTAssertEqual(duringB.lastSuccessfulAt, successAt)
+
+        flightB.cancel()
+        _ = await flightB.value
+        await scheduler.releasePermit()
+        try await Task.sleep(for: .milliseconds(50))
+
+        let cached = await source.snapshot()
+        let runCount = await runner.runCount
+        let inFlight = await source.hasInFlightRefresh()
+        XCTAssertEqual(cached.state, .fresh)
+        XCTAssertEqual(cached.value, "72%\n")
+        XCTAssertEqual(cached.lastSuccessfulAt, successAt)
+        XCTAssertEqual(cached.lastAttemptedAt, successAt)
+        XCTAssertEqual(runCount, 1)
+        XCTAssertFalse(inFlight)
     }
 
     func testCancellingLastRefreshJoinerAbortsQueuedPermitAndDoesNotRun() async throws {
@@ -204,6 +291,10 @@ final class CommandSourceTests: XCTestCase {
         let diagnostics = await scheduler.diagnostics()
         XCTAssertEqual(diagnostics.queuedSessions, 0)
         XCTAssertEqual(diagnostics.activeSessions, 0)
+        let cached = await source.snapshot()
+        let inFlight = await source.hasInFlightRefresh()
+        XCTAssertEqual(cached.state, .unavailable)
+        XCTAssertFalse(inFlight)
     }
 
     func testCancellingOneJoinerLeavesSharedRefreshRunning() async throws {

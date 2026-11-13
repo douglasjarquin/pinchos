@@ -146,6 +146,11 @@ public actor CommandSource {
     private let scheduler: CommandScheduler
     private let clock: any CommandSourceClock
     private var cachedValue = CachedValue()
+    /// Last non-`.refreshing` cache. Abandoned flights restore this, so a
+    /// superseded flight can never put `.refreshing` back as `previous`.
+    private var lastSettled = CachedValue()
+    /// Generation that wrote the current `.refreshing` value, if any.
+    private var refreshingOwner: UInt64?
     private var runnerStarted = false
     private var generation: UInt64 = 0
     /// At most one in-flight execution. Additional `refresh()` callers join
@@ -251,23 +256,25 @@ public actor CommandSource {
     private func performRefresh() async -> CachedValue {
         generation &+= 1
         let refreshGeneration = generation
+        let previous = lastSettled
         let attemptedAt = clock.now()
         cachedValue = CachedValue(
-            value: cachedValue.value,
+            value: previous.value,
             state: .refreshing,
             lastAttemptedAt: attemptedAt,
-            lastSuccessfulAt: cachedValue.lastSuccessfulAt,
-            lastExecution: cachedValue.lastExecution,
-            diagnostic: cachedValue.diagnostic
+            lastSuccessfulAt: previous.lastSuccessfulAt,
+            lastExecution: previous.lastExecution,
+            diagnostic: previous.diagnostic
         )
+        refreshingOwner = refreshGeneration
         do {
             try await scheduler.acquirePermit()
         } catch {
-            return snapshot()
+            return abandonRefresh(owner: refreshGeneration)
         }
         guard refreshGeneration == generation, !Task.isCancelled else {
             await scheduler.releasePermit()
-            return snapshot()
+            return abandonRefresh(owner: refreshGeneration)
         }
         runnerStarted = true
         let outcome = await runner.runIfIdle()
@@ -276,19 +283,41 @@ public actor CommandSource {
         guard refreshGeneration == generation,
               case .completed = outcome,
               let execution
-        else { return snapshot() }
+        else { return abandonRefresh(owner: refreshGeneration) }
 
         let successful = execution.terminalReason == .exited(code: 0)
         let settledAt = clock.now()
-        cachedValue = CachedValue(
-            value: successful ? execution.stdout : cachedValue.value,
+        lastSettled = CachedValue(
+            value: successful ? execution.stdout : lastSettled.value,
             state: successful ? .fresh : .error,
             lastAttemptedAt: settledAt,
-            lastSuccessfulAt: successful ? settledAt : cachedValue.lastSuccessfulAt,
+            lastSuccessfulAt: successful ? settledAt : lastSettled.lastSuccessfulAt,
             lastExecution: execution,
             diagnostic: successful ? nil : Self.diagnostic(for: execution)
         )
+        cachedValue = lastSettled
+        refreshingOwner = nil
         return snapshot()
+    }
+
+    /// Permit wait cancelled, generation moved, or the runner never produced a
+    /// completed execution: restore `lastSettled` only if this flight still
+    /// owns `.refreshing`. A later flight's write must not be overwritten, and
+    /// `previous` is never `.refreshing`. A started command still records its
+    /// result on the live flight (#124); this only runs when that flight is
+    /// giving up.
+    private func abandonRefresh(owner: UInt64) -> CachedValue {
+        if cachedValue.state == .refreshing, refreshingOwner == owner {
+            cachedValue = lastSettled
+            refreshingOwner = nil
+        }
+        return snapshot()
+    }
+
+    /// True while an exclusive refresh task is still attached, including the
+    /// permit wait before the runner starts.
+    public func hasInFlightRefresh() -> Bool {
+        inFlight != nil
     }
 
     private func performExclusiveRefresh(flightID: UUID) async -> CachedValue {

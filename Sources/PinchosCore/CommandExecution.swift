@@ -79,6 +79,7 @@ public struct ItemRuntimeSnapshot: Equatable, Sendable {
     public let lastExecution: CommandExecution?
     public let staleAfter: TimeInterval?
     public let skippedRefreshes: Int
+    public let freshness: ValueFreshness
     public let isStale: Bool
     public let status: ItemRuntimeStatus
 
@@ -90,7 +91,8 @@ public struct ItemRuntimeSnapshot: Equatable, Sendable {
         lastExecution: CommandExecution?,
         staleAfter: TimeInterval?,
         skippedRefreshes: Int,
-        now: Date
+        now: Date,
+        isRefreshing: Bool? = nil
     ) {
         self.isRunning = isRunning
         self.fullOutput = fullOutput
@@ -99,23 +101,19 @@ public struct ItemRuntimeSnapshot: Equatable, Sendable {
         self.lastExecution = lastExecution
         self.staleAfter = staleAfter
         self.skippedRefreshes = skippedRefreshes
-        if let staleAfter, let lastUpdatedAt {
-            self.isStale = now.timeIntervalSince(lastUpdatedAt) >= staleAfter
-        } else {
-            self.isStale = false
-        }
-
-        if isRunning {
-            status = .running
-        } else if let lastExecution, lastExecution.terminalReason != .exited(code: 0) {
-            status = .error
-        } else if fullOutput == nil {
-            status = .unavailable
-        } else if self.isStale {
-            status = .stale
-        } else {
-            status = .fresh
-        }
+        let lastExecutionFailed = lastExecution.map { $0.terminalReason != .exited(code: 0) } ?? false
+        let freshness = ValueFreshness.interpret(
+            value: fullOutput,
+            isRefreshing: isRefreshing ?? isRunning,
+            lastSuccessfulAt: lastUpdatedAt,
+            lastAttemptedAt: lastAttemptedAt,
+            lastExecutionFailed: lastExecutionFailed,
+            freshnessInterval: staleAfter,
+            now: now
+        )
+        self.freshness = freshness
+        self.isStale = freshness.isAgeExpired
+        self.status = freshness.runtimeStatus
     }
 
     public var lastRunDuration: TimeInterval? {
