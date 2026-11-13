@@ -77,6 +77,8 @@ A failed command uses the warning marker and keeps the last-good value.
 There is no separate scheduler-delay glyph.
 Diagnostics add `Delay: scheduler` when that delay is why the value aged out.
 Option-click diagnostics show last attempt, last success, queued or active refresh, and the last terminal reason for both the primary value and each dynamic menu `run` row.
+Those menus read this process's cache snapshots.
+They do not run commands merely to inspect them, and `pinchos doctor` does not invent that live cache.
 Age, failure, and scheduler delay stay distinguishable on those rows.
 Copied summaries stay the existing Copy Full Output/Error actions: previews are bounded and sanitized; copy still uses the retained text.
 Initial failure does not invent a success timestamp or value.
