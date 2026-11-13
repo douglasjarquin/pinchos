@@ -14,6 +14,10 @@ run = "swift test"
 description = "Canonical verification: debug build, tests against .build/debug/pinchos, then release build"
 run = "swift build && swift test && swift build -c release"
 
+[tasks.perf]
+description = "Measure selected release-binary profiles with local fixture commands (no network)"
+run = "scripts/perf/measure_footprint.sh --profile all"
+
 [tasks."site:install"]
 description = "Install site dependencies with Aube"
 run = "aube -C site install"

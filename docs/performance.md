@@ -70,6 +70,16 @@ Deterministic resource-invariant tests, run as part of `swift test`:
   cancels every remaining timer source. This is the architectural half of the P0/P1 "no
   runaway timer" budget — it can't measure CPU%, but it can prove the source count is
   bounded by construction.
+- **Request counts, non-blocking menus, and lifecycle bounds** (issue #129) — the same
+  `PerformanceInvariantTests` files prove exact invocation counts for source reuse,
+  the #124 30s retry gate, manual-row recovery, and fair bounded concurrency; that a
+  fresh menu open starts no refresh and menu construction does not wait on background
+  work; that repeated reload/add/remove/reorder/shutdown while commands are queued or
+  running does not accumulate timers, sources, tasks, descriptors, descendants, or
+  menu targets; and that completed-cache `String` size is bounded per source by the
+  runner byte cap, independently of the 8 MiB active `OutputMemoryBudget` and of the
+  much smaller diagnostic/menu title snapshot. Those tests do not assert wall-clock
+  or RSS numbers.
 - **Output buffer budgets** — `TailByteBuffer` (the ring buffer backing every command's
   retained stdout/stderr) and its shared, process-wide `OutputMemoryBudget` are covered at
   the unit level by [`Tests/PinchosCoreTests/TailByteBufferTests.swift`](../Tests/PinchosCoreTests/TailByteBufferTests.swift)
@@ -106,27 +116,36 @@ Existing process-lifecycle correctness tests (`Tests/PinchosCoreTests/CommandExe
 already cover related invariants — bounded process-group cleanup, single-flight shutdown,
 signal handling — that this document doesn't duplicate.
 
-## Running a local P1 measurement
+## Running the selected local profiles
 
-[`scripts/perf/measure_footprint.sh`](../scripts/perf/measure_footprint.sh) is a harness
-stub for the P1 profile: it builds the release binary, runs it against a disposable
-three-item/60s config in a scratch `XDG_CONFIG_HOME`, waits for it to settle, samples
-`footprint --json`'s `phys_footprint` a few times, and prints one JSON object identifying
-the commit SHA, working-tree dirty state, macOS version, hardware model, architecture,
-memory size, and Swift toolchain version alongside the samples:
+The documented maintainer command is:
 
 ```sh
-scripts/perf/measure_footprint.sh            # 15s settle, 3 samples (defaults)
-scripts/perf/measure_footprint.sh 20 5       # 20s settle, 5 samples
+mise run perf
 ```
 
-This requires a real, logged-in macOS session (not a CI sandbox) and the Xcode command
-line tools (`footprint`). It's network-free and touches no files outside a temporary
-directory. It is a stub, not a full harness: it only covers P1, it doesn't yet retain a
-baseline to diff against, and its rerun/threshold policy is the manual guidance in this
-document rather than automated pass/fail. Extending it to P0–P5, a baseline/threshold
-file, and a scheduled or self-hosted CI workflow that retains artifacts is tracked as
-follow-up work in the 0.1 roadmap.
+That is `scripts/perf/measure_footprint.sh --profile all`.
+It builds the release binary once and runs the two selected profiles against disposable configs in a scratch `XDG_CONFIG_HOME`:
+
+| Profile | Shape | Local fixtures |
+|---|---|---|
+| **P1** (`p1`) | 3 items, 60s intervals | `echo` / `date` only |
+| **five** (`five`) | 5 items, 60s intervals, cached and manual menu values, duplicate `echo 42` sources, `sleep 2`, `exit 1` | no network, no provider credentials |
+
+Both profiles print commit SHA, dirty state, macOS version, hardware model, architecture, memory size, Swift toolchain, `phys_footprint` samples, RSS, idle CPU, descriptor/thread/child counts, a best-effort wakeup sample, SIGTERM cleanup, and an Accessibility probe.
+Numeric first arguments still mean settle seconds and sample count for compatibility:
+
+```sh
+mise run perf                                   # both profiles, 15s settle, 3 samples
+scripts/perf/measure_footprint.sh               # P1 only (defaults)
+scripts/perf/measure_footprint.sh --profile p1 20 5
+scripts/perf/measure_footprint.sh --profile five
+```
+
+This requires a real macOS session and the Xcode command line tools (`footprint`).
+It is network-free and touches no files outside a temporary directory.
+It does not retain a baseline file to diff against, and it is not a PR gate.
+Extending it to P0/P2–P5, a baseline/threshold file, and a scheduled workflow remains follow-up rather than something this change fabricates thresholds for.
 
 The retained reference sample was captured at runtime commit `44bb2b3d3fd8bc90ae52e4d2da2dd7b4b0e7aeb6` and is recorded in [`docs/manual-qa/0.1.0-p1.json`](manual-qa/0.1.0-p1.json).
 The later evidence-only commit does not change executable code.
@@ -149,5 +168,42 @@ absolute thresholds — establishing those (and the regression-percentage policy
 them) requires the repeated-sample reference-hardware runs described above, and is
 follow-up work rather than something this change fabricates numbers for.
 
+The five-item mixed profile is a characterization workload for issue #129, not a second absolute budget.
+Completed-cache `String` size is measured in ordinary tests against the per-runner cap (default 64 KiB per stream).
+That is a separate bound from the 8 MiB active-output budget.
+This session did not find unbounded completed-cache growth, so it does not add an eviction framework.
+
 Intentional budget changes require an explicit issue/PR with before/after evidence — see
 the verification plan in issue #55.
+
+## Issue #129 Mac measurements
+
+Historical P1 samples stay historical: commit `44bb2b3d` recorded 13.78–13.81 MB on Mac15,11, and the earlier manual pass recorded 14 MB.
+This section records a new controlled-Mac run of the selected profiles after #123, #124, #125, and #126 landed on `main` (`51462ca`).
+#168 accessibility work is parked on a separate branch and is not in these binaries.
+
+`mise run verify` on this machine exited 0 in 121.35s: 208 `pinchosTests` and 215 `PinchosCoreTests`, then a release build.
+
+`mise run perf` on 2026-11-13, Mac16,7, arm64, 24 GB, macOS 27.0.1, Apple Swift 6.4 (swiftlang-6.4.0.34.1 clang-2100.3.34.1).
+Raw JSON: `/tmp/pinchos-129/measure.json`.
+The first capture was dirty against `51462ca`; the numbers below are that capture.
+A clean-tree recapture of the same profiles is in `/tmp/pinchos-129/EVIDENCE.md` when present.
+
+| Profile | `phys_footprint` samples | Idle CPU | Descriptors | Threads | Cleanup |
+|---|---|---|---|---|---|
+| P1 three-item / 60s | 13.20–13.22 MB (13845272, 13861656, 13861656) | 0.0% | 32 | 4 | SIGTERM exited; 0 leftover children |
+| five-item mixed | 14.30–14.31 MB (14992176, 15008560, 15008560) | 0.0% | 32 | 5 | SIGTERM exited; 0 leftover children |
+
+The P1 three-item reference stays under the ratified **< 15 MB** budget.
+The five-item mixed workload is characterization only; it also landed under 15 MB on this machine, but that is not a new product threshold.
+
+Idle CPU between ticks was 0.0% in `ps` samples after the 15s settle.
+`top -l 2 -pid` showed `%CPU 0.0` on the Pinchos PID.
+`pgrep -P` reported no live children at sample time (commands use 60s intervals and the slow `sleep 2` had already finished).
+
+Live GUI menu latency was not measured: `AXIsProcessTrusted()` returned untrusted/disabled, matching the earlier session that could not use Accessibility or screen capture.
+In-process tests prove menu construction does not wait on background work and that menu titles stay a small bound independent of retained output.
+
+Completed-cache measurement: ordinary tests show each settled source retains at most its per-runner byte cap (and replaces that cap on the next result).
+The 8 MiB active `OutputMemoryBudget` returns to zero after collectors deallocate.
+No extra eviction bound was added.
