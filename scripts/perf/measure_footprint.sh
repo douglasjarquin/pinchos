@@ -22,6 +22,9 @@ repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 profile="p1"
 settle_seconds="15"
 samples="3"
+# IDLEW is a per-interval rate (first -l sample is zeroed, like %CPU), not a
+# process-lifetime cumulative counter. Window matches the 60s timer cadence.
+wakeup_window_seconds="60"
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -156,20 +159,40 @@ print(int(found) if found is not None else "null")
 PY
 }
 
-parse_idlew() {
+parse_idlew_second_sample() {
     python3 - "$1" <<'PY'
 import sys
 text = open(sys.argv[1], errors="replace").read()
-idlew = None
-for line in reversed(text.splitlines()):
+blocks = []
+current = []
+for line in text.splitlines():
+    if line.startswith("Processes:") and current:
+        blocks.append(current)
+        current = [line]
+    else:
+        current.append(line)
+if current:
+    blocks.append(current)
+if len(blocks) < 2:
+    print("null")
+    raise SystemExit
+header = None
+pid_line = None
+for line in blocks[1]:
     parts = line.split()
-    if len(parts) >= 2 and parts[0].isdigit():
-        try:
-            idlew = int(parts[-1])
-            break
-        except ValueError:
-            continue
-print("null" if idlew is None else idlew)
+    if parts and parts[0] == "PID":
+        header = parts
+        continue
+    if parts and parts[0].isdigit():
+        pid_line = parts
+if header is None or pid_line is None or "IDLEW" not in header:
+    print("null")
+    raise SystemExit
+raw = pid_line[header.index("IDLEW")].rstrip("+*")
+try:
+    print(int(raw))
+except (ValueError, IndexError):
+    print("null")
 PY
 }
 
@@ -275,13 +298,31 @@ run_profile() (
         sleep 1
     done
 
-    fd_count="$(lsof -nP -a -d 0-65535 -p "$pid" 2>/dev/null | awk 'NR>1 {n++} END {print n+0}')"
+    set +e
+    lsof -nP -a -d 0-65535 -p "$pid" >"$json_dir/lsof.out" 2>"$json_dir/lsof.err"
+    lsof_status=$?
+    set -e
+    fd_count="$(awk 'NR>1 {n++} END {print n+0}' "$json_dir/lsof.out")"
+    if [[ -z "$fd_count" || "$fd_count" -eq 0 ]]; then
+        echo "error: lsof reported no numeric FDs for pid $pid (exit $lsof_status, $profile_id)" >&2
+        cat "$json_dir/lsof.err" >&2 || true
+        cat "$json_dir/lsof.out" >&2 || true
+        dump_pinchos_err
+        exit 1
+    fi
     thread_count="$(ps -M -p "$pid" 2>/dev/null | tail -n +2 | wc -l | tr -d ' ' || echo null)"
     child_count="$( { pgrep -P "$pid" 2>/dev/null || true; } | wc -l | tr -d ' ' )"
     child_count="${child_count:-0}"
 
-    mapfile -t descendants < <(collect_descendants "$pid")
-    descendant_count="${#descendants[@]}"
+    descendants=""
+    while IFS= read -r child; do
+        [ -n "$child" ] || continue
+        descendants="${descendants:+$descendants }$child"
+    done < <(collect_descendants "$pid")
+    descendant_count=0
+    for _descendant in $descendants; do
+        descendant_count=$((descendant_count + 1))
+    done
     if [[ "$expect_inflight" == "true" && "$descendant_count" -lt 1 ]]; then
         echo "error: $profile_id expected an in-flight descendant before SIGTERM, found none" >&2
         dump_pinchos_err
@@ -291,16 +332,35 @@ run_profile() (
     wakeup_file="$json_dir/top.txt"
     set +e
     set +o pipefail
-    top -l 2 -s 1 -pid "$pid" -stats pid,cpu,th,idlew </dev/null >"$wakeup_file" 2>/dev/null
+    top -l 2 -s "$wakeup_window_seconds" -pid "$pid" -stats pid,cpu,th,idlew </dev/null >"$wakeup_file" 2>/dev/null
     set -o pipefail
     set -e
-    wakeups="$(parse_idlew "$wakeup_file")"
+    wakeups="$(parse_idlew_second_sample "$wakeup_file")"
     if [[ "$wakeups" == "null" ]]; then
-        echo "error: could not parse idlew from top -stats pid,cpu,th,idlew" >&2
+        echo "error: could not parse IDLEW from the second top sample (${wakeup_window_seconds}s window)" >&2
         cat "$wakeup_file" >&2 || true
         exit 1
     fi
-    wakeup_line="$(awk '/^[0-9]+[[:space:]]/ { line=$0 } END { print line }' "$wakeup_file")"
+    wakeup_line="$(python3 - "$wakeup_file" <<'PY'
+import sys
+text = open(sys.argv[1], errors="replace").read()
+blocks, current = [], []
+for line in text.splitlines():
+    if line.startswith("Processes:") and current:
+        blocks.append(current)
+        current = [line]
+    else:
+        current.append(line)
+if current:
+    blocks.append(current)
+if len(blocks) < 2:
+    raise SystemExit
+for line in blocks[1]:
+    parts = line.split()
+    if parts and parts[0].isdigit():
+        print(line.strip())
+PY
+)"
     ax_detail="$(ax_probe)" || ax_detail="ax_probe_failed"
 
     kill -TERM "$pid" 2>/dev/null || true
@@ -318,8 +378,8 @@ run_profile() (
     pid=""
 
     leftover=0
-    for descendant in "${descendants[@]+"${descendants[@]}"}"; do
-        if [[ -n "$descendant" ]] && kill -0 "$descendant" 2>/dev/null; then
+    for descendant in $descendants; do
+        if [ -n "$descendant" ] && kill -0 "$descendant" 2>/dev/null; then
             leftover=$((leftover + 1))
         fi
     done
@@ -366,7 +426,9 @@ print(json.dumps({
     "child_processes_at_sample": maybe_int(sys.argv[10]),
     "descendants_at_sigterm": maybe_int(sys.argv[11]),
     "wakeups": maybe_int(sys.argv[12]),
-    "wakeup_source": "top-idlew",
+    "wakeup_window_seconds": maybe_int(sys.argv[22]),
+    "wakeup_source": "top-idlew-interval",
+    "wakeup_note": "macOS top IDLEW is a per-interval idle-wakeup count (first -l sample is zeroed, like %CPU), not a process-lifetime cumulative counter and not all wakeups",
     "wakeup_sample": os.environ.get("PINCHOS_WAKEUP_LINE", "").strip() or None,
     "menu_latency_ms": None,
     "menu_latency_note": "live GUI menu latency unmeasured: AXIsProcessTrusted() is untrusted/disabled on this Mac",
@@ -388,7 +450,8 @@ print(json.dumps({
       "${sample_values[*]}" "${rss_samples[*]}" "${cpu_samples[*]}" \
       "$fd_count" "$thread_count" "$child_count" "$descendant_count" \
       "$wakeups" "$ax_detail" "$exited_cleanly" "$leftover" "$commit_sha" "$dirty" \
-      "$macos_version" "$hardware_model" "$architecture" "$memory_bytes"
+      "$macos_version" "$hardware_model" "$architecture" "$memory_bytes" \
+      "$wakeup_window_seconds"
 )
 
 result_dir="$(mktemp -d)"

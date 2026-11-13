@@ -49,6 +49,10 @@ extension HeadlessManagedItemFactory: StatusItemMenuDelegate {
     func showLifecycleMenu(for statusItem: NSStatusItem) {}
 }
 
+private final class FIFOWatchdog: @unchecked Sendable {
+    var fired = false
+}
+
 private final class TestPerfClock: @unchecked Sendable {
     var date: Date
 
@@ -286,9 +290,22 @@ final class PerformanceInvariantTests: XCTestCase {
         let slow = try XCTUnwrap(self.item(named: "slow", in: factory))
         let startedPrimary = await waitUntil { FileManager.default.fileExists(atPath: primaryStarted.path) }
         XCTAssertTrue(startedPrimary, "primary command never blocked on the fifo")
+        let watchdog = FIFOWatchdog()
+        let watchdogTask = Task { @MainActor in
+            try await Task.sleep(for: .seconds(5))
+            watchdog.fired = true
+            self.releaseFIFO(primaryFifo)
+            self.releaseFIFO(rowFifo)
+        }
+        addTeardownBlock { watchdogTask.cancel() }
         let compact = await controller.makeLifecycleMenu(forManagedItem: slow, revealsDiagnostics: false)
         let collapsed = await controller.makeCollapsedMenu(revealsDiagnostics: false)
         let diagnostics = await controller.makeLifecycleMenu(forManagedItem: slow, revealsDiagnostics: true)
+        watchdogTask.cancel()
+        XCTAssertFalse(
+            watchdog.fired,
+            "menu construction did not return within 5s; the watchdog released the fifos"
+        )
         XCTAssertFalse(compact.items.isEmpty)
         XCTAssertFalse(collapsed.items.isEmpty)
         XCTAssertFalse(diagnostics.items.isEmpty)
@@ -387,11 +404,12 @@ final class PerformanceInvariantTests: XCTestCase {
         )
         addTeardownBlock { @MainActor in await controller.shutdown() }
 
-        let release = root.appendingPathComponent("release")
+        let releaseDir = root.appendingPathComponent("release", isDirectory: true)
+        try FileManager.default.createDirectory(at: releaseDir, withIntermediateDirectories: true)
         let items = (0..<5).map { index in
             ItemConfig(
                 name: "item-\(index)",
-                run: fairCommand(activeDir: activeDir, log: log, index: index, release: release),
+                run: fairCommand(activeDir: activeDir, log: log, index: index, releaseDir: releaseDir),
                 interval: .manual
             )
         }
@@ -418,7 +436,25 @@ final class PerformanceInvariantTests: XCTestCase {
         XCTAssertEqual(records.map(\.index), [0, 1], "only the first two enqueued items should be running")
         XCTAssertLessThanOrEqual(records.map(\.live).max() ?? 0, 2)
         XCTAssertTrue(records.map(\.live).contains(2), "cap of 2 never overlapped; fairness is unproven")
-        try "go".write(to: release, atomically: true, encoding: .utf8)
+
+        func releaseIndex(_ index: Int) throws {
+            try "go".write(
+                to: releaseDir.appendingPathComponent("\(index)"),
+                atomically: true,
+                encoding: .utf8
+            )
+        }
+        try releaseIndex(0)
+        var nextStarted = await waitUntil { self.fairnessRecords(log).map(\.index) == [0, 1, 2] }
+        XCTAssertTrue(nextStarted, "releasing item 0 did not start queued item 2")
+        try releaseIndex(1)
+        nextStarted = await waitUntil { self.fairnessRecords(log).map(\.index) == [0, 1, 2, 3] }
+        XCTAssertTrue(nextStarted, "releasing item 1 did not start queued item 3")
+        try releaseIndex(2)
+        nextStarted = await waitUntil { self.fairnessRecords(log).map(\.index) == [0, 1, 2, 3, 4] }
+        XCTAssertTrue(nextStarted, "releasing item 2 did not start queued item 4")
+        try releaseIndex(3)
+        try releaseIndex(4)
 
         let allRan = await waitUntil(timeout: 8) {
             let diagnostics = await scheduler.diagnostics()
@@ -437,13 +473,14 @@ final class PerformanceInvariantTests: XCTestCase {
 
     func testRepeatedLifecycleWhileCommandsRunDoesNotAccumulateResources() async throws {
         let root = try scratchRoot()
-        let scheduler = CommandScheduler(maxActiveSessions: 2)
+        let scheduler = CommandScheduler(maxActiveSessions: 8)
         let factory = HeadlessManagedItemFactory(scheduler: scheduler)
         let controller = makeController(
             "/tmp/pinchos-129-lifecycle.toml",
             scheduler: scheduler,
             factory: factory
         )
+        addTeardownBlock { @MainActor in await controller.shutdown() }
 
         var shutdownFDAnchor: Int?
         var liveTimerAnchor: Int?
@@ -458,8 +495,10 @@ final class PerformanceInvariantTests: XCTestCase {
                 let pidFile = pidDir.appendingPathComponent("\(name).pid")
                 return ItemConfig(
                     name: name,
-                    run: "sleep 30 & echo $! > '\(pidFile.path)'; wait $!",
-                    interval: .scheduled(60)
+                    run: "sleep 30 & echo $! >> '\(pidFile.path)'; wait $!",
+                    interval: .scheduled(60),
+                    timeout: 60,
+                    menu: [MenuRowConfig(label: "Hold", run: "sleep 30; printf \(name)-row")]
                 )
             }
 
@@ -476,7 +515,7 @@ final class PerformanceInvariantTests: XCTestCase {
 
             var diagnostics = await scheduler.diagnostics()
             XCTAssertEqual(diagnostics.registeredTimers, 3)
-            XCTAssertEqual(factory.sourceRegistry.sourceCount, 3)
+            XCTAssertEqual(factory.sourceRegistry.sourceCount, 6, "each item holds a primary source and a blocking menu-row source")
             if let liveTimerAnchor {
                 XCTAssertEqual(diagnostics.registeredTimers, liveTimerAnchor)
             } else {
@@ -495,14 +534,11 @@ final class PerformanceInvariantTests: XCTestCase {
             diagnostics = await scheduler.diagnostics()
             XCTAssertEqual(diagnostics.registeredTimers, 3)
 
-            await controller.apply(config: PinchosConfig(items: [
-                slowItem("alpha"), slowItem("gamma"), slowItem("delta")
-            ]))
-            try await settle()
-            diagnostics = await scheduler.diagnostics()
-            XCTAssertEqual(diagnostics.registeredTimers, 3)
-
             var removed: ManagedItem? = try XCTUnwrap(self.item(named: "beta", in: factory))
+            _ = removed?.menuRowValue(at: 0)
+            let rowStarted = await waitUntil { (removed?.menuRowRefreshTaskCountForTesting ?? 0) == 1 }
+            XCTAssertTrue(rowStarted, "beta menu row never started a refresh task")
+            XCTAssertEqual(removed?.menuRowRefreshTaskCountForTesting, 1)
             weak let weakRemoved = removed
             factory.forget(removed)
             var menu: NSMenu? = await controller.makeLifecycleMenu(
@@ -517,12 +553,32 @@ final class PerformanceInvariantTests: XCTestCase {
             targeted = nil
 
             await controller.apply(config: PinchosConfig(items: [
+                slowItem("alpha"), slowItem("gamma"), slowItem("delta")
+            ]))
+            try await settle()
+            diagnostics = await scheduler.diagnostics()
+            XCTAssertEqual(diagnostics.registeredTimers, 3)
+            let rowDrained = await waitUntil { (removed?.menuRowRefreshTaskCountForTesting ?? 0) == 0 }
+            XCTAssertTrue(rowDrained, "removing beta did not cancel its in-flight menu row task")
+            XCTAssertEqual(removed?.menuRowRefreshTaskCountForTesting, 0)
+            let betaPidsGone = await waitUntil {
+                self.livePids(inFile: pidDir.appendingPathComponent("beta.pid")).isEmpty
+            }
+            XCTAssertTrue(
+                betaPidsGone,
+                "removing beta left grandchild pids \(self.livePids(inFile: pidDir.appendingPathComponent("beta.pid")))"
+            )
+            XCTAssertFalse(
+                self.recordedPids(inFile: pidDir.appendingPathComponent("beta.pid")).isEmpty,
+                "beta never recorded a grandchild pid"
+            )
+
+            await controller.apply(config: PinchosConfig(items: [
                 slowItem("alpha"), slowItem("gamma")
             ]))
             try await settle()
             diagnostics = await scheduler.diagnostics()
             XCTAssertEqual(diagnostics.registeredTimers, 2)
-            XCTAssertEqual(removed?.menuRowRefreshTaskCountForTesting, 0)
             removed = nil
             let released = await waitUntil(timeout: 4) {
                 self.pumpMain()
@@ -540,8 +596,12 @@ final class PerformanceInvariantTests: XCTestCase {
             for leftover in factory.created {
                 XCTAssertEqual(leftover.menuRowRefreshTaskCountForTesting, 0)
             }
-            let gone = await waitUntil(timeout: 4) { self.livePids(in: pidDir).isEmpty }
-            XCTAssertTrue(gone, "shutdown left descendants \(livePids(in: pidDir))")
+            let recorded = self.recordedPids(in: pidDir)
+            XCTAssertFalse(recorded.isEmpty, "iteration \(iteration) recorded no grandchild pids")
+            let gone = await waitUntil(timeout: 4) {
+                self.livePids(in: pidDir).isEmpty && recorded.allSatisfy { kill($0, 0) != 0 }
+            }
+            XCTAssertTrue(gone, "shutdown left descendants \(livePids(in: pidDir)) recorded=\(recorded)")
 
             let shutdownFDs = openDescriptorCount()
             if let shutdownFDAnchor {
@@ -559,6 +619,8 @@ final class PerformanceInvariantTests: XCTestCase {
     func testRetainedCacheAndMenuSnapshotSizesAreMeasuredSeparatelyFromActiveBudget() async throws {
         let produced = 96 * 1024
         let cap = 64 * 1024
+        let root = try scratchRoot()
+        let blob0Log = root.appendingPathComponent("blob0.log")
         let scheduler = CommandScheduler()
         let factory = HeadlessManagedItemFactory(scheduler: scheduler)
         let controller = makeController(
@@ -568,18 +630,22 @@ final class PerformanceInvariantTests: XCTestCase {
         )
         addTeardownBlock { @MainActor in await controller.shutdown() }
 
-        let items = (0..<5).map { index in
-            ItemConfig(
+        let items = (0..<5).map { index -> ItemConfig in
+            let command: String
+            if index == 0 {
+                command = """
+                printf 'x\\n' >> '\(blob0Log.path)'; \
+                count=$(wc -l < '\(blob0Log.path)' | tr -d ' '); \
+                if [ "$count" -eq 1 ]; then head -c \(produced) /dev/zero | tr '\\0' '0'; else printf tiny; fi
+                """
+            } else {
+                command = "head -c \(produced) /dev/zero | tr '\\0' '\(index)'"
+            }
+            return ItemConfig(
                 name: "blob-\(index)",
-                run: "head -c \(produced) /dev/zero | tr '\\0' '\(index)'",
+                run: command,
                 interval: .manual,
-                menu: [
-                    MenuRowConfig(
-                        label: "Copy",
-                        run: "head -c \(produced) /dev/zero | tr '\\0' '\(index)'",
-                        cache: 60
-                    )
-                ]
+                menu: [MenuRowConfig(label: "Copy", run: command, cache: 60)]
             )
         }
         await controller.apply(config: PinchosConfig(items: items))
@@ -626,6 +692,19 @@ final class PerformanceInvariantTests: XCTestCase {
             "UI snapshot/menu titles must stay a small bound independent of completed-cache Strings"
         )
         XCTAssertEqual(factory.sourceRegistry.sourceCount, 5, "duplicate primary/menu commands must share one source per item")
+
+        let blob0 = try XCTUnwrap(self.item(named: "blob-0", in: factory))
+        blob0.refreshNow()
+        let replaced = await waitUntil(timeout: 8) {
+            let snapshot = await blob0.runtimeSnapshot()
+            return snapshot.fullOutput == "tiny"
+        }
+        XCTAssertTrue(replaced, "refresh did not replace the large completed cache")
+        let tiny = await blob0.runtimeSnapshot()
+        XCTAssertLessThan(tiny.fullOutput?.utf8.count ?? 32, 8)
+        if let cached = blob0.menuRowCachedValueForTesting(at: 0) {
+            XCTAssertLessThan(retainedCachedValueUTF8Bytes(cached), 32)
+        }
     }
 
     private func item(named name: String, in factory: HeadlessManagedItemFactory) -> ManagedItem? {
@@ -654,8 +733,9 @@ final class PerformanceInvariantTests: XCTestCase {
         """
     }
 
-    private func fairCommand(activeDir: URL, log: URL, index: Int, release: URL) -> String {
+    private func fairCommand(activeDir: URL, log: URL, index: Int, releaseDir: URL) -> String {
         let slot = activeDir.appendingPathComponent("\(index).slot")
+        let release = releaseDir.appendingPathComponent("\(index)")
         return """
         printf x > '\(slot.path)'; \
         live=$(ls '\(activeDir.path)'/*.slot 2>/dev/null | wc -l | tr -d ' '); \
@@ -716,20 +796,24 @@ final class PerformanceInvariantTests: XCTestCase {
             .count
     }
 
-    private func livePids(in pidDir: URL) -> [Int32] {
+    private func recordedPids(in pidDir: URL) -> [Int32] {
         let names = (try? FileManager.default.contentsOfDirectory(atPath: pidDir.path)) ?? []
-        var live: [Int32] = []
-        for name in names {
-            guard let text = try? String(
-                contentsOf: pidDir.appendingPathComponent(name),
-                encoding: .utf8
-            ) else { continue }
-            guard let pid = Int32(text.trimmingCharacters(in: .whitespacesAndNewlines)) else { continue }
-            if kill(pid, 0) == 0 {
-                live.append(pid)
-            }
+        return names.flatMap { recordedPids(inFile: pidDir.appendingPathComponent($0)) }
+    }
+
+    private func recordedPids(inFile url: URL) -> [Int32] {
+        guard let text = try? String(contentsOf: url, encoding: .utf8), !text.isEmpty else { return [] }
+        return text.split(whereSeparator: \.isNewline).compactMap { line in
+            Int32(line.trimmingCharacters(in: .whitespacesAndNewlines))
         }
-        return live
+    }
+
+    private func livePids(in pidDir: URL) -> [Int32] {
+        recordedPids(in: pidDir).filter { kill($0, 0) == 0 }
+    }
+
+    private func livePids(inFile url: URL) -> [Int32] {
+        recordedPids(inFile: url).filter { kill($0, 0) == 0 }
     }
 
     private func retainedSnapshotUTF8Bytes(_ snapshot: ItemRuntimeSnapshot) -> Int {
