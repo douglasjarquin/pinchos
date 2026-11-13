@@ -65,7 +65,8 @@ The running app keeps last known-good items until the file parses.
 The other commands are in [docs/pinchos/cli.md](docs/pinchos/cli.md).
 
 Run `.build/release/pinchos` with no arguments to launch the menu-bar app; any argument goes to the CLI.
-Stop it with Quit Pinchos from its menu.
+That no-argument launch runs in the foreground and keeps the terminal busy until the app quits, so it has not hung.
+Stop it with Quit Pinchos from its menu (Quit in the recovery menu), or Ctrl-C in the launching terminal.
 
 ```sh
 .build/release/pinchos

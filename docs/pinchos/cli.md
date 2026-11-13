@@ -46,7 +46,8 @@ Doctor does not dump the inherited environment, credential metadata, or login-it
 The checked-in example item is `codex` and needs Remainder on the fixed PATH or an absolute path; see [example-setup.md](example-setup.md).
 
 Run `.build/release/pinchos` with no arguments to launch the menu-bar app; any argument goes to the CLI.
-Stop it with Quit Pinchos from its menu.
+That no-argument launch runs in the foreground and keeps the terminal busy until the app quits, so it has not hung.
+Stop it with Quit Pinchos from its menu (Quit in the recovery menu), or Ctrl-C in the launching terminal.
 
 ```sh
 .build/release/pinchos
