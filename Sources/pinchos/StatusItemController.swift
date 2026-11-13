@@ -731,22 +731,12 @@ final class StatusItemController: StatusItemMenuDelegate {
         return item
     }
 
-    /// The shared bottom group of every item menu: the Collapse/Expand Pinchos
-    /// presentation toggle, then Open Config, Reload Config, and Quit Pinchos.
+    /// Optional scheduler diagnostics, then the shared footer.
     private func addGlobalMenuContent(to menu: NSMenu, includesSchedulerDiagnostics: Bool = true) async {
         if includesSchedulerDiagnostics {
             await addSchedulerDiagnostics(to: menu)
         }
-        menu.addItem(makePresentationMenuItem())
-        let openConfig = NSMenuItem(title: "Open Config", action: #selector(openConfigAction), keyEquivalent: "")
-        openConfig.target = self
-        menu.addItem(openConfig)
-        let reload = NSMenuItem(title: "Reload Config", action: #selector(reloadConfigAction), keyEquivalent: "r")
-        reload.target = self
-        menu.addItem(reload)
-        let quit = NSMenuItem(title: "Quit Pinchos", action: #selector(quitAction), keyEquivalent: "q")
-        quit.target = self
-        menu.addItem(quit)
+        addGlobalMenuContentImmediately(to: menu)
     }
 
     /// Builds the command item's content before the shared global footer.
@@ -779,7 +769,7 @@ final class StatusItemController: StatusItemMenuDelegate {
         let runtime = await item.runtimeSnapshot()
         addRuntimeState(from: runtime, to: menu)
         if let note = item.iconDiagnosticNote {
-            menu.addItem(disabledItem(title: "Icon: \(note)"))
+            menu.addItem(disabledItem(title: "Icon: \(DiagnosticPreviewFormatter.sanitizeVisibleText(note))"))
         }
         menu.addItem(NSMenuItem.separator())
         addDiagnostics(from: runtime.runnerSnapshot, to: menu)

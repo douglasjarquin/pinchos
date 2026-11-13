@@ -39,7 +39,7 @@ Value text in titles and spoken labels runs through `boundedVisibleText` (saniti
 `mise run verify` on `e14050a` exited 0: 212 `pinchosTests` and 213 `PinchosCoreTests`, then a release build.
 The CRLF / sanitize-then-truncate / spoken-cap follow-up (`508b39b`) exited 0: 216 `pinchosTests`, 220 `PinchosCoreTests`.
 The ellipsis-after-cheap-clip follow-up (`e0ed634`) exited 0: 217 `pinchosTests`, 220 `PinchosCoreTests`.
-This head re-ran `mise run verify` and exited 0: 217 `pinchosTests`, 220 `PinchosCoreTests`, then a release build.
+`289c68e` re-ran `mise run verify` and exited 0: 217 `pinchosTests`, 220 `PinchosCoreTests`, then a release build.
 Targeted AppKit property tests live in `Tests/pinchosTests/MenuAccessibilityTests.swift`.
 The durable spoken-glyph check is `testFailedWithoutValueThenRefreshingSpeaksWithoutGlyphs` (landed in `039b2b3` on this branch).
 

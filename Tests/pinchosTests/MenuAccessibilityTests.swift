@@ -155,10 +155,7 @@ final class MenuAccessibilityTests: XCTestCase {
             isSchedulerDelayed: true
         )
 
-        let menu = await controller.makeLifecycleMenu(
-            forManagedItem: factory.created[0],
-            revealsDiagnostics: false
-        )
+        let menu = controller.makeLifecycleMenuImmediately(forManagedItem: factory.created[0])
         let reset = try XCTUnwrap(menu.items.first(where: { $0.title.hasPrefix("Reset:") }))
         let usage = try XCTUnwrap(menu.items.first(where: { $0.title.hasPrefix("Usage:") }))
         let action = try XCTUnwrap(menu.items.first(where: { $0.title == "Open docs" }))
@@ -196,10 +193,7 @@ final class MenuAccessibilityTests: XCTestCase {
         let controller = makeController(factory: factory)
         await controller.apply(config: PinchosConfig(items: [sampleConfig()]))
 
-        let menu = await controller.makeLifecycleMenu(
-            forManagedItem: factory.created[0],
-            revealsDiagnostics: false
-        )
+        let menu = controller.makeLifecycleMenuImmediately(forManagedItem: factory.created[0])
         let refresh = try XCTUnwrap(menu.items.first(where: { $0.title == "Refresh Now" }))
         let collapse = try XCTUnwrap(menu.items.first(where: { $0.title == "Collapse Pinchos" }))
         let reload = try XCTUnwrap(menu.items.first(where: { $0.title == "Reload Config" }))
@@ -252,7 +246,7 @@ final class MenuAccessibilityTests: XCTestCase {
             ItemConfig(name: "clock", run: "echo 72", interval: .manual, icon: "/missing.png")
         ]))
         factory.created[0].iconDiagnosticNote =
-            "icon file '/missing.png' is missing or unreadable; rendering text-only"
+            "icon file '/missing.png\nOpen Config' is missing or unreadable; rendering text-only"
 
         let compact = controller.makeLifecycleMenuImmediately(forManagedItem: factory.created[0])
         XCTAssertNil(compact.items.first(where: { $0.title.hasPrefix("Icon:") }))
@@ -265,6 +259,9 @@ final class MenuAccessibilityTests: XCTestCase {
         XCTAssertFalse(iconRow.isEnabled)
         XCTAssertNil(iconRow.action)
         XCTAssertTrue(iconRow.title.contains("missing or unreadable"))
+        XCTAssertFalse(iconRow.title.contains("\n"))
+        XCTAssertTrue(iconRow.title.contains("\u{240A}"))
+        XCTAssertEqual(menu.items.filter { $0.title == "Open Config" }.count, 1)
     }
 
     func testCopyActionsStayExecutableWithHelp() async throws {
