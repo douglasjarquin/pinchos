@@ -10,7 +10,7 @@ System Events still timed out.
 2. Recovery extras speak exactly these three strings: `pinchos, no items configured`, `pinchos, no configuration found`, `pinchos, configuration error`.
 3. Diagnostics (Copy Full Output/Error, runtime state, icon notes) are Option-click only. A plain click is the compact menu.
 4. Informational rows are native disabled/dimmed `NSMenuItem`s (`action == nil`, `isEnabled == false`).
-5. Spoken text and titles are bounded at 60 graphemes via `DiagnosticPreviewFormatter.boundedVisibleText`.
+5. The value text in titles and spoken labels is capped at 60 graphemes before the freshness marker. The name prefix, state suffix, row labels, and recovery parse-error row are not capped.
 
 ## Probe (2026-11-13 11:49)
 
@@ -32,13 +32,14 @@ The visible `⌛︎`/`⚠︎` markers stay in `AXTitle` only.
 Informational rows are `enabled=false`.
 Unreadable icon files get the same text-only diagnostic note as unavailable symbols.
 `lastTrimmedLine` splits on CR, LF, and CRLF the same way `DiagnosticPreviewFormatter` does, so `printf '42\r\n'` renders as `42`.
-Titles and spoken values run through `boundedVisibleText` (sanitize, then cap at 60 graphemes).
+Value text in titles and spoken labels runs through `boundedVisibleText` (sanitize, then cap at 60 graphemes) before the freshness marker.
 
 ## Automated evidence
 
 `mise run verify` on `e14050a` exited 0: 212 `pinchosTests` and 213 `PinchosCoreTests`, then a release build.
 The CRLF / sanitize-then-truncate / spoken-cap follow-up (`508b39b`) exited 0: 216 `pinchosTests`, 220 `PinchosCoreTests`.
 The ellipsis-after-cheap-clip follow-up (`e0ed634`) exited 0: 217 `pinchosTests`, 220 `PinchosCoreTests`.
+This head re-ran `mise run verify` and exited 0: 217 `pinchosTests`, 220 `PinchosCoreTests`, then a release build.
 Targeted AppKit property tests live in `Tests/pinchosTests/MenuAccessibilityTests.swift`.
 The durable spoken-glyph check is `testFailedWithoutValueThenRefreshingSpeaksWithoutGlyphs` (landed in `039b2b3` on this branch).
 
@@ -155,7 +156,7 @@ Effective appearance then: `NSAppearanceNameDarkAqua`.
 - CGEvent Control-F8 moved focus into 1Password's Help menu, not the status extras.
 - Escape dismissed that Help menu.
 - Arrow/Return/Escape were not proven on Pinchos extras via the keyboard.
-- Option-click diagnostics were not invoked from a real menu-bar click (in-process `revealsDiagnostics: true` and the compact `false` path are covered by tests).
+- Option-click diagnostics were not invoked from a real menu-bar click. Tests cover Option-click via `makeLifecycleMenu(revealsDiagnostics: true)` and the shipped plain-click path via `makeLifecycleMenuImmediately`.
 - Increase Contrast was not switched.
 - Dark appearance was not re-checked in this live session (only Light).
 - Collapsed submenu AX rows were not captured after the extra count dropped to one.
@@ -191,7 +192,8 @@ Launch `.build/release/pinchos` with the sample config above.
 ### VoiceOver
 
 Speech not captured (optional, not a blocker).
-Live AX `AXDescription` values above are what VoiceOver would read from the extras.
+The AXDescription values above are the labels VoiceOver is expected to read.
+Speech was not confirmed.
 
 ### Appearance
 

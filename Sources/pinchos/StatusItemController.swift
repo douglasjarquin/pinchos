@@ -581,14 +581,20 @@ final class StatusItemController: StatusItemMenuDelegate {
         return menu
     }
 
-    private func makeLifecycleMenuImmediately(for statusItem: NSStatusItem) -> NSMenu {
-        let item = items.values.first(where: { $0.owns(statusItem: statusItem) })
+    /// The shipped plain-click menu: cached rows, Refresh Now, and the global
+    /// footer, with no runtime diagnostics. Option-click uses `makeLifecycleMenu`.
+    func makeLifecycleMenuImmediately(forManagedItem item: (any ManagedItemLifecycle)?) -> NSMenu {
         let menu = NSMenu()
         if let item {
-            addCommandContentImmediately(item: item, commandConfig: item.config, to: menu)
+            addCompactCommandContent(item: item, to: menu)
         }
         addGlobalMenuContentImmediately(to: menu)
         return menu
+    }
+
+    private func makeLifecycleMenuImmediately(for statusItem: NSStatusItem) -> NSMenu {
+        let item = items.values.first(where: { $0.owns(statusItem: statusItem) })
+        return makeLifecycleMenuImmediately(forManagedItem: item)
     }
 
     private func addGlobalMenuContentImmediately(to menu: NSMenu) {
@@ -600,7 +606,9 @@ final class StatusItemController: StatusItemMenuDelegate {
         }
     }
 
-    private func addCommandContentImmediately(item: any ManagedItemLifecycle, commandConfig: CommandItemConfig, to menu: NSMenu) {
+    /// Rows, separator, and Refresh Now. Shared by the synchronous plain-click
+    /// path and the Option-click builder, which then appends diagnostics.
+    private func addCompactCommandContent(item: any ManagedItemLifecycle, to menu: NSMenu) {
         addMenuRows(for: item, to: menu)
         addSeparatorIfNeeded(to: menu)
         let refresh = NSMenuItem(title: "Refresh Now", action: #selector(refreshAction(_:)), keyEquivalent: "")
@@ -765,12 +773,7 @@ final class StatusItemController: StatusItemMenuDelegate {
         to menu: NSMenu,
         revealsDiagnostics: Bool
     ) async {
-        addMenuRows(for: item, to: menu)
-        addSeparatorIfNeeded(to: menu)
-        let refresh = NSMenuItem(title: "Refresh Now", action: #selector(refreshAction(_:)), keyEquivalent: "")
-        refresh.target = self
-        refresh.representedObject = RefreshActionTarget(item: item)
-        menu.addItem(refresh)
+        addCompactCommandContent(item: item, to: menu)
         guard revealsDiagnostics else { return }
         menu.addItem(NSMenuItem.separator())
         let runtime = await item.runtimeSnapshot()
