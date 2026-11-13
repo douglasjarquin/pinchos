@@ -2,11 +2,11 @@
 #
 # Local/manual release-binary performance profiles (see docs/performance.md).
 #
-# Builds the release binary once, runs selected profiles against disposable
-# local-fixture configs in a scratch XDG_CONFIG_HOME, lets the process settle,
-# samples footprint / CPU / descriptors, SIGTERM-cleans up, and prints JSON
-# identifying the commit SHA, dirty state, macOS version, hardware, and Swift
-# toolchain.
+# Builds the release binary once (into .build/release), runs selected profiles
+# against disposable local-fixture configs in a scratch XDG_CONFIG_HOME, lets
+# the process settle, samples footprint / CPU / descriptors / idle wakeups,
+# SIGTERM-cleans up, and prints JSON identifying the commit SHA, dirty state,
+# macOS version, hardware, and Swift toolchain.
 #
 # Network-free. No provider credentials. Not part of `mise run verify`.
 #
@@ -53,6 +53,15 @@ case "$profile" in
         exit 1
         ;;
 esac
+
+if ! [[ "$settle_seconds" =~ ^[0-9]+$ ]] || [[ "$settle_seconds" -lt 1 ]]; then
+    echo "error: settle_seconds must be a positive integer (got '$settle_seconds')" >&2
+    exit 1
+fi
+if ! [[ "$samples" =~ ^[0-9]+$ ]] || [[ "$samples" -lt 1 ]]; then
+    echo "error: samples must be a positive integer (got '$samples')" >&2
+    exit 1
+fi
 
 if ! command -v footprint >/dev/null 2>&1; then
     echo "error: 'footprint' is not on PATH (install the Xcode command line tools)" >&2
@@ -106,8 +115,9 @@ run = "echo 42"
 interval = "60s"
 
 [item.delta]
-run = "sleep 2; echo late"
+run = "sleep 120; echo late"
 interval = "60s"
+timeout = "180s"
 
 [item.epsilon]
 run = "printf fail; exit 1"
@@ -146,6 +156,23 @@ print(int(found) if found is not None else "null")
 PY
 }
 
+parse_idlew() {
+    python3 - "$1" <<'PY'
+import sys
+text = open(sys.argv[1], errors="replace").read()
+idlew = None
+for line in reversed(text.splitlines()):
+    parts = line.split()
+    if len(parts) >= 2 and parts[0].isdigit():
+        try:
+            idlew = int(parts[-1])
+            break
+        except ValueError:
+            continue
+print("null" if idlew is None else idlew)
+PY
+}
+
 ax_probe() {
     python3 - <<'PY' 2>/dev/null || echo "ax_probe_failed"
 import ctypes
@@ -160,16 +187,34 @@ print("ax_trusted" if lib.AXIsProcessTrusted() else "ax_untrusted_or_disabled")
 PY
 }
 
+collect_descendants() {
+    local parent="$1"
+    local child
+    while IFS= read -r child; do
+        [[ -z "$child" ]] && continue
+        printf '%s\n' "$child"
+        collect_descendants "$child"
+    done < <(pgrep -P "$parent" 2>/dev/null || true)
+}
+
 run_profile() (
     profile_id="$1"
     label="$2"
     writer="$3"
     item_count="$4"
+    expect_inflight="$5"
 
     scratch_dir="$(mktemp -d)"
     json_dir="$(mktemp -d)"
     pid=""
     trap '' TTOU TTIN TSTP
+
+    dump_pinchos_err() {
+        if [[ -f "$json_dir/pinchos.err" ]]; then
+            echo "--- pinchos.err ---" >&2
+            cat "$json_dir/pinchos.err" >&2 || true
+        fi
+    }
 
     cleanup() {
         if [[ -n "${pid:-}" ]] && kill -0 "$pid" 2>/dev/null; then
@@ -198,6 +243,7 @@ run_profile() (
 
     if ! kill -0 "$pid" 2>/dev/null; then
         echo "error: pinchos (pid $pid) exited before settling ($profile_id)" >&2
+        dump_pinchos_err
         exit 1
     fi
 
@@ -206,24 +252,55 @@ run_profile() (
     cpu_samples=()
     for i in $(seq 1 "$samples"); do
         sample_file="$json_dir/sample-$i.json"
-        footprint --json "$sample_file" "$pid" >/dev/null 2>&1 || true
-        sample_values+=("$(phys_footprint_from_json "$sample_file")")
+        footprint_err="$json_dir/footprint-$i.err"
+        if ! footprint --json "$sample_file" "$pid" >/dev/null 2>"$footprint_err"; then
+            echo "error: footprint failed for sample $i (pid $pid, $profile_id)" >&2
+            cat "$footprint_err" >&2 || true
+            dump_pinchos_err
+            exit 1
+        fi
+        value="$(phys_footprint_from_json "$sample_file")"
+        if [[ "$value" == "null" ]]; then
+            echo "error: phys_footprint sample $i is null (pid $pid, $profile_id)" >&2
+            echo "--- footprint stderr ---" >&2
+            cat "$footprint_err" >&2 || true
+            echo "--- footprint json ---" >&2
+            cat "$sample_file" >&2 || true
+            dump_pinchos_err
+            exit 1
+        fi
+        sample_values+=("$value")
         rss_samples+=("$(ps -o rss= -p "$pid" 2>/dev/null | tr -d ' ' || echo null)")
         cpu_samples+=("$(ps -o %cpu= -p "$pid" 2>/dev/null | tr -d ' ' || echo null)")
         sleep 1
     done
 
-    fd_count="$(lsof -nP -p "$pid" 2>/dev/null | wc -l | tr -d ' ' || echo null)"
+    fd_count="$(lsof -nP -a -d 0-65535 -p "$pid" 2>/dev/null | awk 'NR>1 {n++} END {print n+0}')"
     thread_count="$(ps -M -p "$pid" 2>/dev/null | tail -n +2 | wc -l | tr -d ' ' || echo null)"
     child_count="$( { pgrep -P "$pid" 2>/dev/null || true; } | wc -l | tr -d ' ' )"
     child_count="${child_count:-0}"
-    # top can SIGPIPE/SIGTTOU the measuring process group; keep it best-effort.
-    wakeup_text=""
+
+    mapfile -t descendants < <(collect_descendants "$pid")
+    descendant_count="${#descendants[@]}"
+    if [[ "$expect_inflight" == "true" && "$descendant_count" -lt 1 ]]; then
+        echo "error: $profile_id expected an in-flight descendant before SIGTERM, found none" >&2
+        dump_pinchos_err
+        exit 1
+    fi
+
+    wakeup_file="$json_dir/top.txt"
     set +e
     set +o pipefail
-    wakeup_text="$(top -l 2 -s 1 -pid "$pid" -stats pid,cpu,th </dev/null 2>/dev/null | tail -n 8)"
+    top -l 2 -s 1 -pid "$pid" -stats pid,cpu,th,idlew </dev/null >"$wakeup_file" 2>/dev/null
     set -o pipefail
     set -e
+    wakeups="$(parse_idlew "$wakeup_file")"
+    if [[ "$wakeups" == "null" ]]; then
+        echo "error: could not parse idlew from top -stats pid,cpu,th,idlew" >&2
+        cat "$wakeup_file" >&2 || true
+        exit 1
+    fi
+    wakeup_line="$(awk '/^[0-9]+[[:space:]]/ { line=$0 } END { print line }' "$wakeup_file")"
     ax_detail="$(ax_probe)" || ax_detail="ax_probe_failed"
 
     kill -TERM "$pid" 2>/dev/null || true
@@ -239,8 +316,13 @@ run_profile() (
     fi
     wait "$pid" 2>/dev/null || true
     pid=""
-    leftover_children="$( { pgrep -f "$scratch_dir" 2>/dev/null || true; } | wc -l | tr -d ' ' )"
-    leftover_children="${leftover_children:-0}"
+
+    leftover=0
+    for descendant in "${descendants[@]+"${descendants[@]}"}"; do
+        if [[ -n "$descendant" ]] && kill -0 "$descendant" 2>/dev/null; then
+            leftover=$((leftover + 1))
+        fi
+    done
 
     commit_sha="$(git -C "$repo_root" rev-parse HEAD 2>/dev/null || echo unknown)"
     dirty=false
@@ -251,7 +333,7 @@ run_profile() (
     memory_bytes="$(sysctl -n hw.memsize 2>/dev/null || echo 0)"
     swift_version="$(swift --version 2>/dev/null | head -1)"
 
-    PINCHOS_WAKEUP_SAMPLE="$wakeup_text" \
+    PINCHOS_WAKEUP_LINE="$wakeup_line" \
     PINCHOS_SWIFT_VERSION="$swift_version" \
     python3 -c '
 import json, os, sys
@@ -282,27 +364,30 @@ print(json.dumps({
     "open_descriptors": maybe_int(sys.argv[8]),
     "threads": maybe_int(sys.argv[9]),
     "child_processes_at_sample": maybe_int(sys.argv[10]),
-    "wakeup_source": "top-pid-sample" if os.environ.get("PINCHOS_WAKEUP_SAMPLE", "").strip() else "unavailable",
-    "wakeup_sample": os.environ.get("PINCHOS_WAKEUP_SAMPLE", "").strip() or None,
+    "descendants_at_sigterm": maybe_int(sys.argv[11]),
+    "wakeups": maybe_int(sys.argv[12]),
+    "wakeup_source": "top-idlew",
+    "wakeup_sample": os.environ.get("PINCHOS_WAKEUP_LINE", "").strip() or None,
     "menu_latency_ms": None,
-    "menu_latency_note": "live GUI menu latency not measured: Accessibility/screen capture is not granted in this session",
-    "accessibility_probe": sys.argv[11],
+    "menu_latency_note": "live GUI menu latency unmeasured: AXIsProcessTrusted() is untrusted/disabled on this Mac",
+    "accessibility_probe": sys.argv[13],
     "cleanup": {
-        "exited_after_sigterm": sys.argv[12] == "true",
-        "leftover_scratch_children": maybe_int(sys.argv[13]) or 0,
+        "exited_after_sigterm": sys.argv[14] == "true",
+        "descendants_at_sigterm": maybe_int(sys.argv[11]),
+        "leftover_descendants": maybe_int(sys.argv[15]) or 0,
     },
-    "commit_sha": sys.argv[14],
-    "dirty": sys.argv[15] == "true",
-    "macos_version": sys.argv[16],
-    "hardware_model": sys.argv[17],
-    "architecture": sys.argv[18],
-    "memory_bytes": maybe_int(sys.argv[19]) or 0,
+    "commit_sha": sys.argv[16],
+    "dirty": sys.argv[17] == "true",
+    "macos_version": sys.argv[18],
+    "hardware_model": sys.argv[19],
+    "architecture": sys.argv[20],
+    "memory_bytes": maybe_int(sys.argv[21]) or 0,
     "swift_version": os.environ.get("PINCHOS_SWIFT_VERSION", ""),
 }, indent=2))
 ' "$profile_id" "$label" "$item_count" "$settle_seconds" \
       "${sample_values[*]}" "${rss_samples[*]}" "${cpu_samples[*]}" \
-      "$fd_count" "$thread_count" "$child_count" "$ax_detail" \
-      "$exited_cleanly" "$leftover_children" "$commit_sha" "$dirty" \
+      "$fd_count" "$thread_count" "$child_count" "$descendant_count" \
+      "$wakeups" "$ax_detail" "$exited_cleanly" "$leftover" "$commit_sha" "$dirty" \
       "$macos_version" "$hardware_model" "$architecture" "$memory_bytes"
 )
 
@@ -311,19 +396,19 @@ trap 'rm -rf "$result_dir"' EXIT
 index=0
 run_one() {
     index=$((index + 1))
-    run_profile "$1" "$2" "$3" "$4" > "$result_dir/$index.json"
+    run_profile "$1" "$2" "$3" "$4" "$5" > "$result_dir/$index.json"
 }
 
 case "$profile" in
     p1)
-        run_one "P1-flagship-steady-state" "three-item idle reference" write_p1_config 3
+        run_one "P1-flagship-steady-state" "three-item idle reference" write_p1_config 3 false
         ;;
     five)
-        run_one "P1-five-item-mixed" "five-item cached/manual/duplicate/slow/failure" write_five_config 5
+        run_one "P1-five-item-mixed" "five-item cached/manual/duplicate/slow/failure" write_five_config 5 true
         ;;
     all)
-        run_one "P1-flagship-steady-state" "three-item idle reference" write_p1_config 3
-        run_one "P1-five-item-mixed" "five-item cached/manual/duplicate/slow/failure" write_five_config 5
+        run_one "P1-flagship-steady-state" "three-item idle reference" write_p1_config 3 false
+        run_one "P1-five-item-mixed" "five-item cached/manual/duplicate/slow/failure" write_five_config 5 true
         ;;
 esac
 

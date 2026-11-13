@@ -70,16 +70,20 @@ Deterministic resource-invariant tests, run as part of `swift test`:
   cancels every remaining timer source. This is the architectural half of the P0/P1 "no
   runaway timer" budget — it can't measure CPU%, but it can prove the source count is
   bounded by construction.
-- **Request counts, non-blocking menus, and lifecycle bounds** (issue #129) — the same
+- **Request counts, non-blocking menus, and lifecycle bounds** (issue #129) - the same
   `PerformanceInvariantTests` files prove exact invocation counts for source reuse,
-  the #124 30s retry gate, manual-row recovery, and fair bounded concurrency; that a
-  fresh menu open starts no refresh and menu construction does not wait on background
-  work; that repeated reload/add/remove/reorder/shutdown while commands are queued or
-  running does not accumulate timers, sources, tasks, descriptors, descendants, or
-  menu targets; and that completed-cache `String` size is bounded per source by the
-  runner byte cap, independently of the 8 MiB active `OutputMemoryBudget` and of the
-  much smaller diagnostic/menu title snapshot. Those tests do not assert wall-clock
-  or RSS numbers.
+  the #124 30s retry gate, and that a successful manual row is not refreshed by opening
+  the menu; that a cap of 2 is visible in-process (some overlapping slot count equals 2,
+  none exceed 2) and queued waiters start in FIFO enqueue order; that a fresh menu open
+  starts no refresh and that menu construction returns while a command is blocked on a
+  fifo (row value still nil, one refresh task); that three apply/reorder/remove/shutdown
+  iterations while grandchild `sleep` processes are running do not grow timer, source,
+  or post-shutdown descriptor counts, that removed `ManagedItem`s and menu
+  `representedObject` targets become nil, and that recorded grandchild pids are gone
+  after shutdown; and that producing 96 KiB per item retains at most the 64 KiB
+  per-runner cap with truncation reported, independently of the 8 MiB active
+  `OutputMemoryBudget` and of the diagnostic/menu title snapshot. Those tests do not
+  assert wall-clock durations or RSS.
 - **Output buffer budgets** — `TailByteBuffer` (the ring buffer backing every command's
   retained stdout/stderr) and its shared, process-wide `OutputMemoryBudget` are covered at
   the unit level by [`Tests/PinchosCoreTests/TailByteBufferTests.swift`](../Tests/PinchosCoreTests/TailByteBufferTests.swift)
@@ -130,9 +134,9 @@ It builds the release binary once and runs the two selected profiles against dis
 | Profile | Shape | Local fixtures |
 |---|---|---|
 | **P1** (`p1`) | 3 items, 60s intervals | `echo` / `date` only |
-| **five** (`five`) | 5 items, 60s intervals, cached and manual menu values, duplicate `echo 42` sources, `sleep 2`, `exit 1` | no network, no provider credentials |
+| **five** (`five`) | 5 items, 60s intervals, cached and manual menu values, duplicate `echo 42` sources, in-flight `sleep 120`, `exit 1` | no network, no provider credentials |
 
-Both profiles print commit SHA, dirty state, macOS version, hardware model, architecture, memory size, Swift toolchain, `phys_footprint` samples, RSS, idle CPU, descriptor/thread/child counts, a best-effort wakeup sample, SIGTERM cleanup, and an Accessibility probe.
+Both profiles print commit SHA, dirty state, macOS version, hardware model, architecture, memory size, Swift toolchain, `phys_footprint` samples, RSS, idle CPU, numeric FD counts (`lsof -a -d 0-65535`), thread/child counts, `top` `idlew` wakeups, SIGTERM cleanup of recorded descendants, and an Accessibility probe.
 Numeric first arguments still mean settle seconds and sample count for compatibility:
 
 ```sh
@@ -143,7 +147,8 @@ scripts/perf/measure_footprint.sh --profile five
 ```
 
 This requires a real macOS session and the Xcode command line tools (`footprint`).
-It is network-free and touches no files outside a temporary directory.
+It is network-free.
+It writes scratch configs under a temporary `XDG_CONFIG_HOME` and builds the release binary into `.build/release`.
 It does not retain a baseline file to diff against, and it is not a PR gate.
 Extending it to P0/P2–P5, a baseline/threshold file, and a scheduled workflow remains follow-up rather than something this change fabricates thresholds for.
 
@@ -169,9 +174,10 @@ them) requires the repeated-sample reference-hardware runs described above, and 
 follow-up work rather than something this change fabricates numbers for.
 
 The five-item mixed profile is a characterization workload for issue #129, not a second absolute budget.
+Its `sleep 120` item uses `timeout = "180s"` so it is still running at SIGTERM and descendant cleanup is checked with a command in flight.
 Completed-cache `String` size is measured in ordinary tests against the per-runner cap (default 64 KiB per stream).
 That is a separate bound from the 8 MiB active-output budget.
-This session did not find unbounded completed-cache growth, so it does not add an eviction framework.
+Ordinary tests show completed cache replaces on refresh and stays at the per-runner cap, so this tree does not add an eviction framework.
 
 Intentional budget changes require an explicit issue/PR with before/after evidence — see
 the verification plan in issue #55.
@@ -182,28 +188,30 @@ Historical P1 samples stay historical: commit `44bb2b3d` recorded 13.78–13.81 
 This section records a new controlled-Mac run of the selected profiles after #123, #124, #125, and #126 landed on `main` (`51462ca`).
 #168 accessibility work is parked on a separate branch and is not in these binaries.
 
-`mise run verify` on this machine exited 0 in 121.35s: 208 `pinchosTests` and 215 `PinchosCoreTests`, then a release build.
+`mise run verify` on this machine exited 0 in 125.95s: 208 `pinchosTests` and 215 `PinchosCoreTests`, then a release build.
 
 `mise run perf` on 2026-11-13, Mac16,7, arm64, 24 GB, macOS 27.0.1, Apple Swift 6.4 (swiftlang-6.4.0.34.1 clang-2100.3.34.1).
-Measured commit: `1b85252854e03dc4bd102829bf710e5f203db2ed`, dirty=false.
 Raw JSON: `/tmp/pinchos-129/measure-clean.json`.
-An earlier dirty capture against `51462ca` is kept as `/tmp/pinchos-129/measure.json` and agrees to ~0.1 MB.
+The SHA and dirty flag in that file are the tree that produced the samples.
 
-| Profile | `phys_footprint` samples | Idle CPU | Descriptors | Threads | Children | Cleanup |
-|---|---|---|---|---|---|---|
-| P1 three-item / 60s | 13.22–13.24 MB (13861656, 13878040, 13878040) | 0.0% | 32 | 5 | 0 | SIGTERM exited; 0 leftover children |
-| five-item mixed | 14.47–14.49 MB (15172376, 15188760, 15188760) | 0.0% | 32 | 4 | 0 | SIGTERM exited; 0 leftover children |
+| Profile | `phys_footprint` | CPU | `idlew` | Numeric FDs | Threads | Children at sample | Descendants at SIGTERM | Leftover after SIGTERM |
+|---|---|---|---|---|---|---|---|---|
+| P1 three-item / 60s | 13.41-13.42 MB (14058264, 14074648, 14074648) | 0.0% | 0 | 7 | 4 | 0 | 0 | 0 |
+| five-item mixed (in-flight `sleep 120`) | 14.45 MB (15155992, 15155992, 15155992) | 0.8-1.0% | 0 | 11 | 10 | 2 | 3 | 0 |
 
 The P1 three-item reference stays under the ratified **< 15 MB** budget.
 The five-item mixed workload is characterization only; it also landed under 15 MB on this machine, but that is not a new product threshold.
+Five-item CPU is not an idle sample: `sleep 120` is still running, which is required for the descendant cleanup check.
 
-Idle CPU between ticks was 0.0% in `ps` samples after the 15s settle.
-`top -l 2 -pid` showed `%CPU 0.0` on the Pinchos PID (not a clean wakeup counter; the sample is system header plus that PID line).
-`pgrep -P` reported 0 live children at sample time (commands use 60s intervals and the slow `sleep 2` had already finished).
+P1 idle CPU between ticks was 0.0% in `ps` samples after the 15s settle.
+Wakeups are the `IDLEW` field from `top -l 2 -stats pid,cpu,th,idlew` on the Pinchos PID (second sample).
+Numeric FDs are `lsof -nP -a -d 0-65535 -p` (not `lsof | wc -l`).
+P1 idle has no in-flight child at SIGTERM.
+The five-item profile records descendants with recursive `pgrep -P` before SIGTERM (3 pids: session supervisor, shell, `sleep`) and re-checks those pids with `kill -0` afterwards (0 leftover).
 
-Live GUI menu latency was not measured: `AXIsProcessTrusted()` returned untrusted/disabled, matching the earlier session that could not use Accessibility or screen capture.
-In-process tests prove menu construction does not wait on background work and that menu titles stay a small bound independent of retained output.
+Live GUI menu latency is unmeasured: `AXIsProcessTrusted()` is untrusted/disabled on this agent Mac, so Accessibility and screen capture cannot drive the menu.
+In-process tests prove menu construction returns while a command is blocked on a fifo, and that menu titles stay a small bound independent of retained output.
 
-Completed-cache measurement: ordinary tests show each settled source retains at most its per-runner byte cap (and replaces that cap on the next result).
+Completed-cache measurement: ordinary tests show each settled source retains at most its per-runner byte cap, reports truncation above that cap, and replaces that cap on the next result.
 The 8 MiB active `OutputMemoryBudget` returns to zero after collectors deallocate.
-No extra eviction bound was added.
+No extra eviction bound is present.
