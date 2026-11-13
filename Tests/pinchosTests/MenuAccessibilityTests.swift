@@ -254,7 +254,16 @@ final class MenuAccessibilityTests: XCTestCase {
         factory.created[0].iconDiagnosticNote =
             "icon file '/missing.png' is missing or unreadable; rendering text-only"
 
-        let menu = await controller.makeLifecycleMenu(forManagedItem: factory.created[0])
+        let compact = await controller.makeLifecycleMenu(
+            forManagedItem: factory.created[0],
+            revealsDiagnostics: false
+        )
+        XCTAssertNil(compact.items.first(where: { $0.title.hasPrefix("Icon:") }))
+
+        let menu = await controller.makeLifecycleMenu(
+            forManagedItem: factory.created[0],
+            revealsDiagnostics: true
+        )
         let iconRow = try XCTUnwrap(menu.items.first(where: { $0.title.hasPrefix("Icon:") }))
         XCTAssertFalse(iconRow.isEnabled)
         XCTAssertNil(iconRow.action)
@@ -285,7 +294,18 @@ final class MenuAccessibilityTests: XCTestCase {
             now: Date()
         )
 
-        let menu = await controller.makeLifecycleMenu(forManagedItem: factory.created[0])
+        let compact = await controller.makeLifecycleMenu(
+            forManagedItem: factory.created[0],
+            revealsDiagnostics: false
+        )
+        XCTAssertNil(compact.items.first(where: { $0.title == "Copy Full Output" }))
+        XCTAssertNil(compact.items.first(where: { $0.title == "Copy Full Error" }))
+        XCTAssertNil(compact.items.first(where: { $0.title.hasPrefix("Status:") }))
+
+        let menu = await controller.makeLifecycleMenu(
+            forManagedItem: factory.created[0],
+            revealsDiagnostics: true
+        )
         let copyOutput = try XCTUnwrap(menu.items.first(where: { $0.title == "Copy Full Output" }))
         let copyError = try XCTUnwrap(menu.items.first(where: { $0.title == "Copy Full Error" }))
         for item in [copyOutput, copyError] {

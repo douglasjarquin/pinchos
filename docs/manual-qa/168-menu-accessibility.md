@@ -1,9 +1,16 @@
 # #168 menu accessibility evidence
 
 Live AX and screenshots on this Mac: 2026-11-13, binary `.build/release/pinchos` at `e0ed634fdbb681a6f46d636ba333f51d6f7c8e98`, Light appearance.
-VoiceOver was not enabled.
+VoiceOver speech was not captured (optional; not a blocker).
 System Events still timed out.
-Q2 product calls stay pending with Douglas.
+
+## Q2 decisions (accepted)
+
+1. Name and spoken state are combined in a single `accessibilityLabel` (`name, ` plus `ValueFreshness.spokenDescription`). Glyphs stay in the visible title only.
+2. Recovery extras speak exactly these three strings: `pinchos, no items configured`, `pinchos, no configuration found`, `pinchos, configuration error`.
+3. Diagnostics (Copy Full Output/Error, runtime state, icon notes) are Option-click only. A plain click is the compact menu.
+4. Informational rows are native disabled/dimmed `NSMenuItem`s (`action == nil`, `isEnabled == false`).
+5. Spoken text and titles are bounded at 60 graphemes via `DiagnosticPreviewFormatter.boundedVisibleText`.
 
 ## Probe (2026-11-13 11:49)
 
@@ -143,23 +150,15 @@ Effective appearance then: `NSAppearanceNameDarkAqua`.
 
 ## What was not verified in this session
 
-- VoiceOver was not enabled and nothing was spoken by VO.
+- VoiceOver speech was not captured. That is optional and does not block #168.
 - `osascript` System Events timed out (`-1712`) listing pinchos extras.
 - CGEvent Control-F8 moved focus into 1Password's Help menu, not the status extras.
 - Escape dismissed that Help menu.
 - Arrow/Return/Escape were not proven on Pinchos extras via the keyboard.
-- Option-click diagnostics were not invoked from a real menu-bar click.
+- Option-click diagnostics were not invoked from a real menu-bar click (in-process `revealsDiagnostics: true` and the compact `false` path are covered by tests).
 - Increase Contrast was not switched.
 - Dark appearance was not re-checked in this live session (only Light).
 - Collapsed submenu AX rows were not captured after the extra count dropped to one.
-
-## Q2 product calls (pending, not decided)
-
-1. Combined name + spoken state on `accessibilityLabel` / `AXDescription` vs splitting value onto another AX attribute.
-2. The three recovery spoken strings.
-3. Option-click diagnostics vs always-visible diagnostics.
-4. Informational rows as native disabled/dimmed `NSMenuItem`s.
-5. Spoken/title bound of 60 graphemes vs a different cap.
 
 ## Manual checklist
 
@@ -191,7 +190,8 @@ Launch `.build/release/pinchos` with the sample config above.
 
 ### VoiceOver
 
-Not run.
+Speech not captured (optional, not a blocker).
+Live AX `AXDescription` values above are what VoiceOver would read from the extras.
 
 ### Appearance
 
