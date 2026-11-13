@@ -218,8 +218,15 @@ private func commandName(from run: String) -> CommandNameResult {
                     token.append(character)
                 }
             } else if escaped {
-                token.append(character)
                 escaped = false
+                if character != "\n" {
+                    if "$`\"\\".contains(character) {
+                        token.append(character)
+                    } else {
+                        token.append("\\")
+                        token.append(character)
+                    }
+                }
             } else if character == "\\" {
                 escaped = true
             } else if character == activeQuote {
@@ -233,11 +240,14 @@ private func commandName(from run: String) -> CommandNameResult {
         }
 
         if escaped {
+            escaped = false
+            if character == "\n" {
+                continue
+            }
             if token.isEmpty {
                 tokenQuoted = true
             }
             token.append(character)
-            escaped = false
             continue
         }
 
