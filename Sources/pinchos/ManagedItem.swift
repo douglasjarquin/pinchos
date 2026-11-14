@@ -410,7 +410,7 @@ final class ManagedItem: ManagedItemLifecycle {
             lastSuccessfulTitle = lastSuccessfulOutput.map { applyFormat(commandConfig.format, output: lastTrimmedLine(of: $0)) }
         }
         // A mid-flight source replacement returns from refresh() without the
-        // closing paint, and the timer restarts without an initial tick.
+        // closing paint. The timer restart fires on the next driver pass.
         if pendingUpdate.presentationNeedsUpdate || pendingUpdate.primarySource != nil {
             requestPresentationUpdate()
         }
@@ -691,18 +691,9 @@ final class ManagedItem: ManagedItemLifecycle {
         let token = CommandScheduler.ItemToken()
         refreshTimerToken = token
         let scheduler = self.scheduler
-        // `registerRecurring` defaults to `initialDelay: 0`, which fires on
-        // the next driver pass. A restart after prepareUpdate must wait a
-        // full interval; otherwise a cancelled queued flight is immediately
-        // replaced by a new `.refreshing` tick.
-        let initialDelay = runInitialRefresh ? 0 : interval
         Task { [weak self] in
             guard let self else { return }
-            await scheduler.registerRecurring(
-                token: token,
-                interval: interval,
-                initialDelay: initialDelay
-            ) { [weak self] in
+            await scheduler.registerRecurring(token: token, interval: interval) { [weak self] in
                 let item = self
                 Task { @MainActor in
                     item?.tick()

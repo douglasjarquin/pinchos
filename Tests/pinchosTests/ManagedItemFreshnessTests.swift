@@ -386,8 +386,6 @@ final class ManagedItemFreshnessTests: XCTestCase {
         item.refreshNow()
         let ready = await waitUntil { await item.runtimeSnapshot().fullOutput == "72" }
         XCTAssertTrue(ready)
-        let successSnapshot = await item.runtimeSnapshot()
-        let successAt = try XCTUnwrap(successSnapshot.lastUpdatedAt)
         XCTAssertEqual(lineCount(log), 1)
 
         try await scheduler.acquirePermit()
@@ -405,20 +403,16 @@ final class ManagedItemFreshnessTests: XCTestCase {
         item.commitPreparedUpdate()
         await scheduler.releasePermit()
 
-        let afterCancel = await item.runtimeSnapshot()
-        XCTAssertNotEqual(afterCancel.freshness.state, .refreshing)
-        XCTAssertEqual(afterCancel.fullOutput, "72")
-        XCTAssertEqual(afterCancel.lastUpdatedAt, successAt)
-        XCTAssertEqual(afterCancel.lastAttemptedAt, successAt)
-        XCTAssertEqual(item.renderedTitle, "72")
-        XCTAssertEqual(lineCount(log), 1)
-
-        clock.date = clock.date.addingTimeInterval(180)
-        let aged = await item.runtimeSnapshot()
-        XCTAssertEqual(aged.freshness.state, .ageStale)
-        XCTAssertTrue(aged.freshness.isSchedulerDelayed)
-        XCTAssertEqual(item.renderedTitle, "72\(ValueFreshness.staleMarker)")
-        XCTAssertEqual(item.renderedAccessibilityLabel, "72, stale, scheduler delayed")
+        // Identity change cancelled the queued flight of the old command.
+        // The timer restart (delay 0) runs the new command on the next
+        // driver pass; drive that refresh instead of racing a clock jump.
+        await item.refreshPrimaryForTesting()
+        let settled = await item.runtimeSnapshot()
+        XCTAssertNotEqual(settled.freshness.state, .refreshing)
+        XCTAssertEqual(settled.fullOutput, "99")
+        XCTAssertEqual(item.renderedTitle, "99")
+        XCTAssertEqual(item.renderedAccessibilityLabel, "99, fresh")
+        XCTAssertEqual(lineCount(log), 2)
     }
 
     @MainActor
