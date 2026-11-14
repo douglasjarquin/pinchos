@@ -374,8 +374,9 @@ final class ManagedItemFreshnessTests: XCTestCase {
     @MainActor
     func testAbandonedQueuedRefreshDoesNotStayRefreshing() async throws {
         let clock = TestItemClock()
+        let schedulerClock = ManualSchedulerClock(parksElapsedDeadlines: true)
         let log = path("abandon.log")
-        let scheduler = CommandScheduler(maxActiveSessions: 1)
+        let scheduler = CommandScheduler(maxActiveSessions: 1, clock: schedulerClock)
         let command = counting(log, output: "72")
         let item = makeItem(
             config: ItemConfig(name: "item", run: command, interval: .scheduled(60)),
@@ -384,8 +385,9 @@ final class ManagedItemFreshnessTests: XCTestCase {
         )
 
         await item.refreshPrimaryForTesting()
-        let ready = await item.runtimeSnapshot()
-        XCTAssertEqual(ready.fullOutput, "72")
+        let successSnapshot = await item.runtimeSnapshot()
+        XCTAssertEqual(successSnapshot.fullOutput, "72")
+        let successAt = try XCTUnwrap(successSnapshot.lastUpdatedAt)
         XCTAssertEqual(lineCount(log), 1)
 
         try await scheduler.acquirePermit()
@@ -402,11 +404,33 @@ final class ManagedItemFreshnessTests: XCTestCase {
         )
         item.commitPreparedUpdate()
         await scheduler.releasePermit()
+        await item.awaitPrimaryRefreshForTesting()
+        await item.awaitPresentationUpdateForTesting()
 
-        // Identity change cancelled the queued flight of the old command.
-        // The timer restart (delay 0) runs the new command on the next
-        // driver pass; join that refresh instead of racing a clock jump.
-        await item.refreshPrimaryForTesting()
+        let afterCancel = await item.runtimeSnapshot()
+        XCTAssertNotEqual(afterCancel.freshness.state, .refreshing)
+        XCTAssertEqual(afterCancel.fullOutput, "72")
+        XCTAssertEqual(afterCancel.lastUpdatedAt, successAt)
+        XCTAssertEqual(afterCancel.lastAttemptedAt, successAt)
+        XCTAssertEqual(item.renderedTitle, "72")
+        XCTAssertEqual(lineCount(log), 1)
+
+        clock.date = clock.date.addingTimeInterval(180)
+        let aged = await item.runtimeSnapshot()
+        XCTAssertEqual(aged.freshness.state, .ageStale)
+        XCTAssertTrue(aged.freshness.isSchedulerDelayed)
+        XCTAssertEqual(item.renderedTitle, "72\(ValueFreshness.staleMarker)")
+        XCTAssertEqual(item.renderedAccessibilityLabel, "72, stale, scheduler delayed")
+        XCTAssertEqual(lineCount(log), 1)
+
+        let ran = await waitUntil {
+            if schedulerClock.parkedWaiterCount > 0 {
+                schedulerClock.advance(by: .zero)
+            }
+            return self.lineCount(log) == 2
+        }
+        XCTAssertTrue(ran)
+        await item.awaitPrimaryRefreshForTesting()
         let settled = await item.runtimeSnapshot()
         XCTAssertNotEqual(settled.freshness.state, .refreshing)
         XCTAssertEqual(settled.fullOutput, "99")
@@ -533,7 +557,8 @@ final class ManagedItemFreshnessTests: XCTestCase {
     @MainActor
     func testSourceReplacementClearsForcedRefreshingWithoutWaitingForATick() async throws {
         let clock = TestItemClock()
-        let scheduler = CommandScheduler(maxActiveSessions: 1)
+        let schedulerClock = ManualSchedulerClock(parksElapsedDeadlines: true)
+        let scheduler = CommandScheduler(maxActiveSessions: 1, clock: schedulerClock)
         let log = path("replace-source.log")
         let command = counting(log, output: "72")
         let item = makeItem(
@@ -544,6 +569,7 @@ final class ManagedItemFreshnessTests: XCTestCase {
 
         await item.refreshPrimaryForTesting()
         XCTAssertEqual(item.renderedTitle, "72")
+        XCTAssertEqual(lineCount(log), 1)
 
         try await scheduler.acquirePermit()
         item.refreshNow()
@@ -559,10 +585,12 @@ final class ManagedItemFreshnessTests: XCTestCase {
         )
         item.commitPreparedUpdate()
         await scheduler.releasePermit()
+        await item.awaitPrimaryRefreshForTesting()
+        await item.awaitPresentationUpdateForTesting()
 
-        await item.refreshPrimaryForTesting()
         XCTAssertEqual(item.renderedTitle, "72")
         XCTAssertEqual(item.renderedAccessibilityLabel, "72, fresh")
+        XCTAssertEqual(lineCount(log), 1)
     }
 
     @MainActor

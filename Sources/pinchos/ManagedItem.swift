@@ -50,6 +50,7 @@ final class ManagedItem: ManagedItemLifecycle {
     /// command itself is running still reaches the runner's own no-overlap
     /// check and increments `skippedRefreshes` exactly as before.
     private var pendingRefreshPermitTask: Task<Void, Never>?
+    private var presentationUpdateTask: Task<Void, Never>?
     private var pendingActionPermitTasks: [Int: Task<Void, Never>] = [:]
     private weak var menuDelegate: StatusItemMenuDelegate?
     private let now: () -> Date
@@ -769,7 +770,7 @@ final class ManagedItem: ManagedItemLifecycle {
     }
 
     private func requestPresentationUpdate() {
-        Task { @MainActor [weak self] in
+        presentationUpdateTask = Task { @MainActor [weak self] in
             await self?.updatePresentation()
         }
     }
@@ -946,6 +947,10 @@ final class ManagedItem: ManagedItemLifecycle {
 
     func awaitPrimaryRefreshForTesting() async {
         await pendingRefreshPermitTask?.value
+    }
+
+    func awaitPresentationUpdateForTesting() async {
+        await presentationUpdateTask?.value
     }
 
     private func requestMenuRowRefreshIfNeeded(at index: Int) {
