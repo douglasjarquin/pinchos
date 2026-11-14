@@ -81,18 +81,27 @@ private final class SettleSlot: @unchecked Sendable {
 /// Deterministic, manually-advanced clock for scheduler tests. Time never
 /// moves except when a test calls `advance(by:)`, which resolves every sleep
 /// whose deadline has been reached, in deadline order.
+///
+/// By default, `sleep(until:)` returns immediately when the deadline is
+/// already elapsed, matching a delay-0 `registerRecurring` fire. Pass
+/// `parksElapsedDeadlines: true` so even `sleep(until: now)` waits for
+/// `advance(by:)`.
 public final class ManualSchedulerClock: SchedulerClock, @unchecked Sendable {
     private let origin = ContinuousClock.now
     private let lock = NSLock()
     private var elapsed: Duration = .zero
+    private let parksElapsedDeadlines: Bool
     private struct Waiter {
         let id: UUID
         let deadline: Duration
         let slot: SettleSlot
     }
     private var waiters: [Waiter] = []
+    private var waiterArrived: [CheckedContinuation<Void, Never>] = []
 
-    public init() {}
+    public init(parksElapsedDeadlines: Bool = false) {
+        self.parksElapsedDeadlines = parksElapsedDeadlines
+    }
 
     public func now() -> ContinuousClock.Instant {
         lock.lock()
@@ -100,10 +109,24 @@ public final class ManualSchedulerClock: SchedulerClock, @unchecked Sendable {
         return origin.advanced(by: elapsed)
     }
 
+    /// Suspends until `sleep(until:)` has parked at least one waiter.
+    public func waitForWaiter() async {
+        await withCheckedContinuation { continuation in
+            lock.lock()
+            if !waiters.isEmpty {
+                lock.unlock()
+                continuation.resume()
+                return
+            }
+            waiterArrived.append(continuation)
+            lock.unlock()
+        }
+    }
+
     public func sleep(until instant: ContinuousClock.Instant) async throws {
         try Task.checkCancellation()
         let targetElapsed = origin.duration(to: instant)
-        guard !isAlreadyElapsed(targetElapsed) else { return }
+        guard parksElapsedDeadlines || !isAlreadyElapsed(targetElapsed) else { return }
 
         let id = UUID()
         let slot = SettleSlot()
@@ -152,7 +175,12 @@ public final class ManualSchedulerClock: SchedulerClock, @unchecked Sendable {
     private func addWaiter(id: UUID, deadline: Duration, slot: SettleSlot) {
         lock.lock()
         waiters.append(Waiter(id: id, deadline: deadline, slot: slot))
+        let observers = waiterArrived
+        waiterArrived = []
         lock.unlock()
+        for observer in observers {
+            observer.resume()
+        }
     }
 }
 

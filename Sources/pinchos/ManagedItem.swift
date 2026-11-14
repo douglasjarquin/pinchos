@@ -949,8 +949,6 @@ final class ManagedItem: ManagedItemLifecycle {
         await pendingRefreshPermitTask?.value
     }
 
-    var hasPrimaryRefreshForTesting: Bool { pendingRefreshPermitTask != nil }
-
     func awaitPresentationUpdateForTesting() async {
         await presentationUpdateTask?.value
     }

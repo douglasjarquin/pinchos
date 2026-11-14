@@ -18,121 +18,6 @@ private final class TestItemClock: @unchecked Sendable {
     func now() -> Date { date }
 }
 
-/// Copy of `PinchosCore.ManualSchedulerClock` that parks even `sleep(until: now)`.
-/// The production double returns immediately when the deadline is already
-/// elapsed, so a delay-0 restart tick would fire without `advance(by:)`.
-private final class ManualSchedulerClock: SchedulerClock, @unchecked Sendable {
-    private let origin = ContinuousClock.now
-    private let lock = NSLock()
-    private var elapsed: Duration = .zero
-    private struct Waiter {
-        let id: UUID
-        let deadline: Duration
-        let slot: ManualClockSlot
-    }
-    private var waiters: [Waiter] = []
-
-    func now() -> ContinuousClock.Instant {
-        lock.lock()
-        defer { lock.unlock() }
-        return origin.advanced(by: elapsed)
-    }
-
-    func sleep(until instant: ContinuousClock.Instant) async throws {
-        try Task.checkCancellation()
-        let targetElapsed = origin.duration(to: instant)
-        let id = UUID()
-        let slot = ManualClockSlot()
-        addWaiter(id: id, deadline: targetElapsed, slot: slot)
-
-        try await withTaskCancellationHandler(
-            operation: {
-                try await withCheckedThrowingContinuation { continuation in
-                    slot.install(continuation)
-                }
-            },
-            onCancel: { [weak self] in
-                slot.fail(CancellationError())
-                self?.removeWaiter(id)
-            }
-        )
-    }
-
-    func advance(by duration: Duration) {
-        precondition(duration >= .zero, "ManualSchedulerClock only advances forward")
-        lock.lock()
-        elapsed += duration
-        let due = waiters.filter { $0.deadline <= elapsed }.sorted { $0.deadline < $1.deadline }
-        waiters.removeAll { $0.deadline <= elapsed }
-        lock.unlock()
-        for waiter in due {
-            waiter.slot.succeed()
-        }
-    }
-
-    private func removeWaiter(_ id: UUID) {
-        lock.lock()
-        waiters.removeAll { $0.id == id }
-        lock.unlock()
-    }
-
-    private func addWaiter(id: UUID, deadline: Duration, slot: ManualClockSlot) {
-        lock.lock()
-        waiters.append(Waiter(id: id, deadline: deadline, slot: slot))
-        lock.unlock()
-    }
-}
-
-private final class ManualClockSlot: @unchecked Sendable {
-    private let lock = NSLock()
-    private var continuation: CheckedContinuation<Void, Error>?
-    private var settled = false
-    private var pendingError: Error?
-
-    func install(_ continuation: CheckedContinuation<Void, Error>) {
-        lock.lock()
-        if settled {
-            let error = pendingError
-            lock.unlock()
-            if let error {
-                continuation.resume(throwing: error)
-            } else {
-                continuation.resume()
-            }
-            return
-        }
-        self.continuation = continuation
-        lock.unlock()
-    }
-
-    @discardableResult
-    func succeed() -> Bool { settle(error: nil) }
-
-    @discardableResult
-    func fail(_ error: Error) -> Bool { settle(error: error) }
-
-    @discardableResult
-    private func settle(error: Error?) -> Bool {
-        lock.lock()
-        guard !settled else {
-            lock.unlock()
-            return false
-        }
-        settled = true
-        pendingError = error
-        let continuation = self.continuation
-        self.continuation = nil
-        lock.unlock()
-        guard let continuation else { return true }
-        if let error {
-            continuation.resume(throwing: error)
-        } else {
-            continuation.resume()
-        }
-        return true
-    }
-}
-
 /// Presentation-time freshness for issue #123. Retry admission and Refresh Now
 /// stay on the #124 paths; these tests only advance the item clock and read
 /// the next snapshot/render.
@@ -489,7 +374,7 @@ final class ManagedItemFreshnessTests: XCTestCase {
     @MainActor
     func testAbandonedQueuedRefreshDoesNotStayRefreshing() async throws {
         let clock = TestItemClock()
-        let schedulerClock = ManualSchedulerClock()
+        let schedulerClock = ManualSchedulerClock(parksElapsedDeadlines: true)
         let log = path("abandon.log")
         let scheduler = CommandScheduler(maxActiveSessions: 1, clock: schedulerClock)
         let command = counting(log, output: "72")
@@ -540,9 +425,10 @@ final class ManagedItemFreshnessTests: XCTestCase {
 
         let registered = await waitUntil { await scheduler.diagnostics().registeredTimers == 1 }
         XCTAssertTrue(registered)
+        await schedulerClock.waitForWaiter()
         schedulerClock.advance(by: .zero)
-        let started = await waitUntil { item.hasPrimaryRefreshForTesting }
-        XCTAssertTrue(started)
+        let ran = await waitUntil { self.lineCount(log) == 2 }
+        XCTAssertTrue(ran)
         await item.awaitPrimaryRefreshForTesting()
         let settled = await item.runtimeSnapshot()
         XCTAssertNotEqual(settled.freshness.state, .refreshing)
@@ -670,7 +556,7 @@ final class ManagedItemFreshnessTests: XCTestCase {
     @MainActor
     func testSourceReplacementClearsForcedRefreshingWithoutWaitingForATick() async throws {
         let clock = TestItemClock()
-        let schedulerClock = ManualSchedulerClock()
+        let schedulerClock = ManualSchedulerClock(parksElapsedDeadlines: true)
         let scheduler = CommandScheduler(maxActiveSessions: 1, clock: schedulerClock)
         let log = path("replace-source.log")
         let command = counting(log, output: "72")
