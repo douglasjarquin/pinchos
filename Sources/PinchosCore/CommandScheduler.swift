@@ -97,7 +97,6 @@ public final class ManualSchedulerClock: SchedulerClock, @unchecked Sendable {
         let slot: SettleSlot
     }
     private var waiters: [Waiter] = []
-    private var waiterArrived: [CheckedContinuation<Void, Never>] = []
 
     public init(parksElapsedDeadlines: Bool = false) {
         self.parksElapsedDeadlines = parksElapsedDeadlines
@@ -109,18 +108,10 @@ public final class ManualSchedulerClock: SchedulerClock, @unchecked Sendable {
         return origin.advanced(by: elapsed)
     }
 
-    /// Suspends until `sleep(until:)` has parked at least one waiter.
-    public func waitForWaiter() async {
-        await withCheckedContinuation { continuation in
-            lock.lock()
-            if !waiters.isEmpty {
-                lock.unlock()
-                continuation.resume()
-                return
-            }
-            waiterArrived.append(continuation)
-            lock.unlock()
-        }
+    public var parkedWaiterCount: Int {
+        lock.lock()
+        defer { lock.unlock() }
+        return waiters.count
     }
 
     public func sleep(until instant: ContinuousClock.Instant) async throws {
@@ -175,12 +166,7 @@ public final class ManualSchedulerClock: SchedulerClock, @unchecked Sendable {
     private func addWaiter(id: UUID, deadline: Duration, slot: SettleSlot) {
         lock.lock()
         waiters.append(Waiter(id: id, deadline: deadline, slot: slot))
-        let observers = waiterArrived
-        waiterArrived = []
         lock.unlock()
-        for observer in observers {
-            observer.resume()
-        }
     }
 }
 

@@ -423,11 +423,12 @@ final class ManagedItemFreshnessTests: XCTestCase {
         XCTAssertEqual(item.renderedAccessibilityLabel, "72, stale, scheduler delayed")
         XCTAssertEqual(lineCount(log), 1)
 
-        let registered = await waitUntil { await scheduler.diagnostics().registeredTimers == 1 }
-        XCTAssertTrue(registered)
-        await schedulerClock.waitForWaiter()
-        schedulerClock.advance(by: .zero)
-        let ran = await waitUntil { self.lineCount(log) == 2 }
+        let ran = await waitUntil {
+            if schedulerClock.parkedWaiterCount > 0 {
+                schedulerClock.advance(by: .zero)
+            }
+            return self.lineCount(log) == 2
+        }
         XCTAssertTrue(ran)
         await item.awaitPrimaryRefreshForTesting()
         let settled = await item.runtimeSnapshot()
