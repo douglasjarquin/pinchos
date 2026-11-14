@@ -941,6 +941,10 @@ final class ManagedItem: ManagedItemLifecycle {
     /// the MainActor hop `requestRefresh` uses for UI clicks.
     func refreshPrimaryForTesting() async {
         requestRefresh()
+        await awaitPrimaryRefreshForTesting()
+    }
+
+    func awaitPrimaryRefreshForTesting() async {
         await pendingRefreshPermitTask?.value
     }
 

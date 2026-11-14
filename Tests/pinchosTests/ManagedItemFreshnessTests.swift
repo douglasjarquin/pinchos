@@ -207,6 +207,7 @@ final class ManagedItemFreshnessTests: XCTestCase {
                 && item.renderedTitle == "–\(ValueFreshness.warningMarker)"
         }
         XCTAssertTrue(failed)
+        await item.awaitPrimaryRefreshForTesting()
         XCTAssertEqual(item.renderedAccessibilityLabel, "failed")
 
         item.refreshNow()
