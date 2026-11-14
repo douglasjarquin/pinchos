@@ -1,0 +1,38 @@
+Live AX dump on 2026-11-13 against .build/release/pinchos at e0ed634.
+Probe process: /Users/douglasjarquin/.local/share/mise/installs/python/3.14.7/bin/python3.14
+AXIsProcessTrusted=true. Appearance: Light (AppleInterfaceStyle unset).
+
+Expanded extras (pid 49124, XDG_CONFIG_HOME=/tmp/pinchos-168):
+  AXMenuBarItem subrole=AXMenuExtra roleDesc="status menu" enabled=true
+    title="ok"  desc="badsymbol, ok, fresh"
+    title="ok"  desc="badicon, ok, fresh"
+    title="xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx…"
+      desc="long, xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx…, fresh"
+    title="– ⚠︎"  desc="fail, failed"
+    title="72%"  desc="clock, 72%, fresh"
+
+Clock menu (AX children of the 72% extra; screenshot clock-menu-light.png):
+  Reset: 2026-09-07          desc="Reset, 2026-09-07"           enabled=false
+  Usage: 81                  desc="Usage, 81, fresh"            enabled=false
+  Open docs                  desc="Open docs"                   enabled=true
+  Usage and open: 81         desc="Usage and open, 81, fresh"   enabled=true
+  (separator)                title=""                           enabled=false
+  Refresh Now                                                   enabled=true
+  Collapse Pinchos                                              enabled=true
+  Open Config                                                   enabled=true
+  Reload Config                                                 enabled=true
+  Quit Pinchos                                                  enabled=true
+
+Fail extra menu:
+  Retry                      desc="Retry"                       enabled=true
+  (separator)                                                   enabled=false
+  Refresh Now / Collapse Pinchos / Open Config / Reload Config / Quit Pinchos  enabled=true
+
+Missing config (pid 53313, XDG_CONFIG_HOME=/tmp/pinchos-168-missing):
+  EXTRA title="pinchos" desc="pinchos, no configuration found" enabled=true
+  Create Example Config / Open Config / Open Config Directory / Reload / Quit  all enabled=true
+
+Malformed config (pid 54121, XDG_CONFIG_HOME=/tmp/pinchos-168-bad):
+  EXTRA title="pinchos ⚠︎" desc="pinchos, configuration error" enabled=true
+  line 1: Error while parsing key-value pair: expected '=', saw 'i'  enabled=false
+  Open Config / Open Config Directory / Reload / Quit  enabled=true

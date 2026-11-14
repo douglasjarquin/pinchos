@@ -1412,7 +1412,12 @@ public actor CommandRunner {
 }
 
 public func lastTrimmedLine(of output: String) -> String {
-    let lines = output.split(separator: "\n", omittingEmptySubsequences: true)
-    guard let last = lines.last else { return "" }
-    return last.trimmingCharacters(in: .whitespaces)
+    let lines = DiagnosticPreviewFormatter.normalizedLines(of: output)
+    for line in lines.reversed() {
+        let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !trimmed.isEmpty {
+            return trimmed
+        }
+    }
+    return ""
 }

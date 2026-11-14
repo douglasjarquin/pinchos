@@ -54,6 +54,65 @@ final class DiagnosticPreviewFormatterTests: XCTestCase {
 
     // MARK: - Control-character sanitization fixtures
 
+    func testSanitizeVisibleTextReplacesControlsWithoutTruncating() {
+        let text = "ok\u{0000}go\nOpen Config"
+        XCTAssertEqual(
+            DiagnosticPreviewFormatter.sanitizeVisibleText(text),
+            "ok\u{2400}go\u{240A}Open Config"
+        )
+        XCTAssertEqual(DiagnosticPreviewFormatter.sanitizeVisibleText(""), "")
+        XCTAssertEqual(DiagnosticPreviewFormatter.sanitizeVisibleText("72%"), "72%")
+    }
+
+    func testLastTrimmedLineStripsACRLFTerminator() {
+        XCTAssertEqual(lastTrimmedLine(of: "42\r\n"), "42")
+        XCTAssertEqual(lastTrimmedLine(of: "42\r"), "42")
+        XCTAssertEqual(lastTrimmedLine(of: "42\n"), "42")
+    }
+
+    func testLastTrimmedLineTakesTheLastCRLFLine() {
+        XCTAssertEqual(lastTrimmedLine(of: "one\r\ntwo\r\nthree\r\n"), "three")
+        XCTAssertEqual(lastTrimmedLine(of: "one\rtwo\nthree"), "three")
+    }
+
+    func testBoundedVisibleTextSanitizesThenCapsToSixty() {
+        let text = String(repeating: "x", count: 59) + "\r\n"
+        let visible = DiagnosticPreviewFormatter.boundedVisibleText(text)
+        XCTAssertLessThanOrEqual(visible.count, 60)
+        XCTAssertFalse(visible.contains("\r"))
+        XCTAssertFalse(visible.contains("\n"))
+    }
+
+    func testBoundedVisibleTextCapsAHugeLine() {
+        let huge = String(repeating: "x", count: 64 * 1024)
+        let visible = DiagnosticPreviewFormatter.boundedVisibleText(huge)
+        XCTAssertEqual(visible.count, 60)
+        XCTAssertTrue(visible.hasSuffix("\u{2026}"))
+    }
+
+    func testBoundedVisibleTextLeavesSixtyGraphemesUnchanged() {
+        let sixty = String(repeating: "x", count: 60)
+        let visible = DiagnosticPreviewFormatter.boundedVisibleText(sixty)
+        XCTAssertEqual(visible, sixty)
+        XCTAssertFalse(visible.hasSuffix("\u{2026}"))
+    }
+
+    func testBoundedVisibleTextTruncatesSixtyOneGraphemesWithEllipsis() {
+        let sixtyOne = String(repeating: "x", count: 61)
+        let visible = DiagnosticPreviewFormatter.boundedVisibleText(sixtyOne)
+        XCTAssertEqual(visible, String(repeating: "x", count: 59) + "\u{2026}")
+        XCTAssertEqual(visible.count, 60)
+        XCTAssertTrue(visible.hasSuffix("\u{2026}"))
+    }
+
+    func testBoundedVisibleTextKeepsEllipsisWhenSanitizeCollapsesAControlAndMark() {
+        let text = String(repeating: "a", count: 58) + "\n\u{301}" + "bbbb"
+        XCTAssertEqual(text.count, 64)
+        let visible = DiagnosticPreviewFormatter.boundedVisibleText(text)
+        XCTAssertTrue(visible.hasSuffix("\u{2026}"))
+        XCTAssertLessThanOrEqual(visible.count, 60)
+    }
+
     func testNulAndOtherC0ControlsBecomeVisiblePlaceholders() {
         let preview = DiagnosticPreviewFormatter.preview("a\u{0000}b", limits: .menuValue)
         XCTAssertEqual(preview.text, "a\u{2400}b")

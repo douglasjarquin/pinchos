@@ -410,7 +410,7 @@ final class ManagedItem: ManagedItemLifecycle {
             lastSuccessfulTitle = lastSuccessfulOutput.map { applyFormat(commandConfig.format, output: lastTrimmedLine(of: $0)) }
         }
         // A mid-flight source replacement returns from refresh() without the
-        // closing paint, and the timer restarts without an initial tick.
+        // closing paint. The timer restart fires on the next driver pass.
         if pendingUpdate.presentationNeedsUpdate || pendingUpdate.primarySource != nil {
             requestPresentationUpdate()
         }
@@ -817,8 +817,14 @@ final class ManagedItem: ManagedItemLifecycle {
             baseTitle = "–"
         }
 
-        renderedAccessibilityLabel = snapshot.freshness.spokenDescription(valueText: lastSuccessfulTitle)
-        setTitle(truncateTitle(baseTitle, maxLength: 60) + snapshot.freshness.marker)
+        let visibleBase = baseTitle == "–"
+            ? baseTitle
+            : DiagnosticPreviewFormatter.boundedVisibleText(baseTitle)
+        let spokenValue = lastSuccessfulTitle.map {
+            DiagnosticPreviewFormatter.boundedVisibleText($0)
+        }
+        renderedAccessibilityLabel = snapshot.freshness.spokenDescription(valueText: spokenValue)
+        setTitle(visibleBase + snapshot.freshness.marker)
         applyIcon(source: commandConfig.iconSource)
         setVisibility(true)
     }
@@ -931,8 +937,15 @@ final class ManagedItem: ManagedItemLifecycle {
 
     /// Starts a primary-only refresh, the same path as a scheduled tick.
     /// Refresh Now still joins in-flight row work separately.
-    func refreshPrimaryForTesting() {
+    /// Awaits the in-process task so tests do not race a 2s poll against
+    /// the MainActor hop `requestRefresh` uses for UI clicks.
+    func refreshPrimaryForTesting() async {
         requestRefresh()
+        await awaitPrimaryRefreshForTesting()
+    }
+
+    func awaitPrimaryRefreshForTesting() async {
+        await pendingRefreshPermitTask?.value
     }
 
     private func requestMenuRowRefreshIfNeeded(at index: Int) {
@@ -1087,7 +1100,10 @@ final class ManagedItem: ManagedItemLifecycle {
     private func applyDisplayedTitle() {
         renderedButtonTitle = renderedTitle
         statusItem?.button?.title = renderedTitle
-        statusItem?.button?.setAccessibilityLabel(renderedAccessibilityLabel)
+        // Status bar buttons treat accessibilityValue as button state, so the
+        // spoken name+value+state has to live on the label. Glyphs stay in
+        // the visible title only.
+        statusItem?.button?.setAccessibilityLabel("\(commandConfig.name), \(renderedAccessibilityLabel)")
     }
 
     private func setVisibility(_ visible: Bool) {

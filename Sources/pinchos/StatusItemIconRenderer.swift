@@ -35,7 +35,11 @@ struct StatusItemIconRenderer {
             return RenderedIcon(image: nil, isLoaded: false, diagnosticNote: nil)
         case .file(let path):
             guard let image = loadFileImage(path) else {
-                return RenderedIcon(image: nil, isLoaded: false, diagnosticNote: nil)
+                return RenderedIcon(
+                    image: nil,
+                    isLoaded: false,
+                    diagnosticNote: "icon file '\(path)' is missing or unreadable; rendering text-only"
+                )
             }
             prepareFileImage(image)
             return RenderedIcon(image: image, isLoaded: true, diagnosticNote: nil)

@@ -89,7 +89,7 @@ final class StatusItemIconRendererTests: XCTestCase {
         XCTAssertNil(rendered.diagnosticNote)
     }
 
-    func testMissingFileFallsBackWithoutDiagnosticNote() {
+    func testMissingFileFallsBackWithDiagnosticNote() {
         let renderer = StatusItemIconRenderer(
             loadFileImage: { _ in nil },
             loadSymbolImage: { _ in
@@ -100,6 +100,9 @@ final class StatusItemIconRendererTests: XCTestCase {
         let rendered = renderer.render(.file("/nonexistent/pinchos-icon.png"))
         XCTAssertNil(rendered.image)
         XCTAssertFalse(rendered.isLoaded)
-        XCTAssertNil(rendered.diagnosticNote)
+        XCTAssertEqual(
+            rendered.diagnosticNote,
+            "icon file '/nonexistent/pinchos-icon.png' is missing or unreadable; rendering text-only"
+        )
     }
 }

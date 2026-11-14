@@ -271,6 +271,20 @@ final class StatusItemController: StatusItemMenuDelegate {
         return "pinchos"
     }
 
+    /// Spoken recovery label. The ⚠︎ glyph is visual only.
+    private var recoveryAccessibilityLabel: String {
+        switch recoveryState {
+        case .hidden:
+            return "pinchos"
+        case .emptyConfig:
+            return "pinchos, no items configured"
+        case .missingConfig:
+            return "pinchos, no configuration found"
+        case .error:
+            return "pinchos, configuration error"
+        }
+    }
+
     private func updateRecoveryItem() {
         guard recoveryState.isVisible else { return }
         if barPresentation == .collapsed {
@@ -285,6 +299,8 @@ final class StatusItemController: StatusItemMenuDelegate {
             warningItem = statusItem
         }
         warningItem?.button?.title = recoveryTitle
+        warningItem?.button?.setAccessibilityLabel(recoveryAccessibilityLabel)
+        warningItem?.button?.setAccessibilityHelp("Open recovery actions for the Pinchos configuration.")
     }
 
     /// A plain left/right click shows the compact menu (cached rows, actions,
@@ -541,9 +557,7 @@ final class StatusItemController: StatusItemMenuDelegate {
     private func buildRecoveryMenu() -> NSMenu {
         let menu = NSMenu()
         if case .error(let message, _) = recoveryState {
-            let errorItem = NSMenuItem(title: message, action: nil, keyEquivalent: "")
-            errorItem.isEnabled = false
-            menu.addItem(errorItem)
+            menu.addItem(disabledItem(title: DiagnosticPreviewFormatter.sanitizeVisibleText(message)))
             menu.addItem(NSMenuItem.separator())
         }
         for action in recoveryState.menu.actions {
@@ -567,14 +581,20 @@ final class StatusItemController: StatusItemMenuDelegate {
         return menu
     }
 
-    private func makeLifecycleMenuImmediately(for statusItem: NSStatusItem) -> NSMenu {
-        let item = items.values.first(where: { $0.owns(statusItem: statusItem) })
+    /// The shipped plain-click menu: cached rows, Refresh Now, and the global
+    /// footer, with no runtime diagnostics. Option-click uses `makeLifecycleMenu`.
+    func makeLifecycleMenuImmediately(forManagedItem item: (any ManagedItemLifecycle)?) -> NSMenu {
         let menu = NSMenu()
         if let item {
-            addCommandContentImmediately(item: item, commandConfig: item.config, to: menu)
+            addCompactCommandContent(item: item, to: menu)
         }
         addGlobalMenuContentImmediately(to: menu)
         return menu
+    }
+
+    private func makeLifecycleMenuImmediately(for statusItem: NSStatusItem) -> NSMenu {
+        let item = items.values.first(where: { $0.owns(statusItem: statusItem) })
+        return makeLifecycleMenuImmediately(forManagedItem: item)
     }
 
     private func addGlobalMenuContentImmediately(to menu: NSMenu) {
@@ -586,7 +606,9 @@ final class StatusItemController: StatusItemMenuDelegate {
         }
     }
 
-    private func addCommandContentImmediately(item: any ManagedItemLifecycle, commandConfig: CommandItemConfig, to menu: NSMenu) {
+    /// Rows, separator, and Refresh Now. Shared by the synchronous plain-click
+    /// path and the Option-click builder, which then appends diagnostics.
+    private func addCompactCommandContent(item: any ManagedItemLifecycle, to menu: NSMenu) {
         addMenuRows(for: item, to: menu)
         addSeparatorIfNeeded(to: menu)
         let refresh = NSMenuItem(title: "Refresh Now", action: #selector(refreshAction(_:)), keyEquivalent: "")
@@ -659,7 +681,7 @@ final class StatusItemController: StatusItemMenuDelegate {
     private func makeCollapsedRecoveryItem() -> NSMenuItem {
         let item = NSMenuItem(title: recoveryTitle, action: nil, keyEquivalent: "")
         item.submenu = buildRecoveryMenu()
-        item.setAccessibilityLabel("Pinchos recovery")
+        item.setAccessibilityLabel(recoveryAccessibilityLabel)
         item.setAccessibilityHelp("Open recovery actions for the Pinchos configuration.")
         return item
     }
@@ -685,9 +707,12 @@ final class StatusItemController: StatusItemMenuDelegate {
         let value = snapshot.fullOutput.map { lastTrimmedLine(of: $0) }
         let formatted = value.flatMap { $0.isEmpty ? nil : applyFormat(commandConfig.format, output: $0) }
             ?? "–"
-        let title = truncateTitle(formatted, maxLength: 60) + snapshot.freshness.marker
-        let spoken = snapshot.freshness.spokenDescription(valueText: formatted == "–" ? nil : formatted)
-        return (title, spoken, commandConfig.iconSource)
+        let visible = formatted == "–"
+            ? formatted
+            : DiagnosticPreviewFormatter.boundedVisibleText(formatted)
+        let title = visible + snapshot.freshness.marker
+        let spoken = snapshot.freshness.spokenDescription(valueText: formatted == "–" ? nil : visible)
+        return (title, "\(commandConfig.name), \(spoken)", commandConfig.iconSource)
     }
 
     private func makePresentationMenuItem() -> NSMenuItem {
@@ -706,22 +731,12 @@ final class StatusItemController: StatusItemMenuDelegate {
         return item
     }
 
-    /// The shared bottom group of every item menu: the Collapse/Expand Pinchos
-    /// presentation toggle, then Open Config, Reload Config, and Quit Pinchos.
+    /// Optional scheduler diagnostics, then the shared footer.
     private func addGlobalMenuContent(to menu: NSMenu, includesSchedulerDiagnostics: Bool = true) async {
         if includesSchedulerDiagnostics {
             await addSchedulerDiagnostics(to: menu)
         }
-        menu.addItem(makePresentationMenuItem())
-        let openConfig = NSMenuItem(title: "Open Config", action: #selector(openConfigAction), keyEquivalent: "")
-        openConfig.target = self
-        menu.addItem(openConfig)
-        let reload = NSMenuItem(title: "Reload Config", action: #selector(reloadConfigAction), keyEquivalent: "r")
-        reload.target = self
-        menu.addItem(reload)
-        let quit = NSMenuItem(title: "Quit Pinchos", action: #selector(quitAction), keyEquivalent: "q")
-        quit.target = self
-        menu.addItem(quit)
+        addGlobalMenuContentImmediately(to: menu)
     }
 
     /// Builds the command item's content before the shared global footer.
@@ -748,18 +763,13 @@ final class StatusItemController: StatusItemMenuDelegate {
         to menu: NSMenu,
         revealsDiagnostics: Bool
     ) async {
-        addMenuRows(for: item, to: menu)
-        addSeparatorIfNeeded(to: menu)
-        let refresh = NSMenuItem(title: "Refresh Now", action: #selector(refreshAction(_:)), keyEquivalent: "")
-        refresh.target = self
-        refresh.representedObject = RefreshActionTarget(item: item)
-        menu.addItem(refresh)
+        addCompactCommandContent(item: item, to: menu)
         guard revealsDiagnostics else { return }
         menu.addItem(NSMenuItem.separator())
         let runtime = await item.runtimeSnapshot()
         addRuntimeState(from: runtime, to: menu)
         if let note = item.iconDiagnosticNote {
-            menu.addItem(disabledItem(title: "Icon: \(note)"))
+            menu.addItem(disabledItem(title: "Icon: \(DiagnosticPreviewFormatter.sanitizeVisibleText(note))"))
         }
         menu.addItem(NSMenuItem.separator())
         addDiagnostics(from: runtime.runnerSnapshot, to: menu)
@@ -829,7 +839,9 @@ final class StatusItemController: StatusItemMenuDelegate {
             resolvedValue = nil
         }
         guard let resolvedValue else { return label }
-        let visible = resolvedValue.isEmpty ? "–" : truncateTitle(resolvedValue, maxLength: 60)
+        let visible = resolvedValue.isEmpty
+            ? "–"
+            : DiagnosticPreviewFormatter.boundedVisibleText(resolvedValue)
         let marker = row.run == nil ? "" : freshness.marker
         return "\(label): \(visible)\(marker)"
     }
@@ -842,14 +854,19 @@ final class StatusItemController: StatusItemMenuDelegate {
         let label = row.label ?? ""
         guard row.run != nil else {
             if let value, !value.isEmpty {
-                return label.isEmpty ? value : "\(label), \(value)"
+                let spokenValue = DiagnosticPreviewFormatter.boundedVisibleText(value)
+                return label.isEmpty ? spokenValue : "\(label), \(spokenValue)"
             }
             return label
         }
         let spokenValue = freshness.rowValueText(current: value)
-        let description = freshness.spokenDescription(
-            valueText: spokenValue == "Loading…" || spokenValue == "–" ? nil : spokenValue
-        )
+        let valueText: String?
+        if spokenValue == "Loading…" || spokenValue == "–" {
+            valueText = nil
+        } else {
+            valueText = DiagnosticPreviewFormatter.boundedVisibleText(spokenValue)
+        }
+        let description = freshness.spokenDescription(valueText: valueText)
         if label.isEmpty {
             return description
         }
@@ -1016,6 +1033,8 @@ final class StatusItemController: StatusItemMenuDelegate {
         menu.addItem(disabledItem(title: "Skipped ticks: \(snapshot.skippedRefreshes)"))
     }
 
+    /// An informational row: keyboard can reach it, Return does nothing.
+    /// `action` stays nil so AppKit will not treat it as an executable item.
     private func disabledItem(title: String) -> NSMenuItem {
         let item = NSMenuItem(title: title, action: nil, keyEquivalent: "")
         item.isEnabled = false

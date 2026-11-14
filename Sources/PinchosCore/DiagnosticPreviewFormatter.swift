@@ -83,6 +83,33 @@ public enum DiagnosticPreviewFormatter {
     public static let menuStderr = Limits.menuStderr
     public static let actionDiagnostics = Limits.actionDiagnostics
 
+    /// Makes untrusted text safe for a single-line status-item or submenu
+    /// title. C0/C1/bidi controls become Control Pictures, including
+    /// newlines so they cannot split a native menu. Does not truncate;
+    /// callers that need a length cap use `boundedVisibleText`.
+    public static func sanitizeVisibleText(_ text: String) -> String {
+        guard !text.isEmpty else { return text }
+        return sanitizeLine(text[text.startIndex...])
+    }
+
+    /// Sanitizes then caps to `maxLength` graphemes. A cheap `prefix`
+    /// clip happens first so a 64 KiB retained line is not fully sanitized.
+    /// If that clip dropped tail text, the result always ends in `…` even
+    /// when sanitize later collapses graphemes (a Control scalar plus a
+    /// combining mark becomes one cluster after the control becomes a
+    /// Control Picture). If sanitize expands instead (CRLF becoming two
+    /// pictures), `truncateTitle` restores the bound.
+    public static func boundedVisibleText(_ text: String, maxLength: Int = 60) -> String {
+        let clipped = String(text.prefix(maxLength + 1))
+        let wasClipped = clipped.count > maxLength
+        let sanitized = sanitizeVisibleText(clipped)
+        if wasClipped {
+            guard maxLength > 1 else { return "\u{2026}" }
+            return String(sanitized.prefix(maxLength - 1)) + "\u{2026}"
+        }
+        return truncateTitle(sanitized, maxLength: maxLength)
+    }
+
     /// Produces a bounded, sanitized preview of `text` under `limits`.
     ///
     /// Pipeline: normalize line endings, cap line count, sanitize each
@@ -133,8 +160,8 @@ public enum DiagnosticPreviewFormatter {
     /// clustering treats `\r\n` as a single `Character`, which would make a
     /// plain `Character`-level comparison against `"\r"`/`"\n"` miss it
     /// entirely (`String.Index` is shared across both views, so slicing
-    /// `text` with scalar-view indices is safe).
-    private static func normalizedLines(of text: String) -> [Substring] {
+    /// `text` with scalar-view indices is safe). Shared with `lastTrimmedLine`.
+    static func normalizedLines(of text: String) -> [Substring] {
         var lines: [Substring] = []
         var lineStart = text.startIndex
         let scalars = text.unicodeScalars
