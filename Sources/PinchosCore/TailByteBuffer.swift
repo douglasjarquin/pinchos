@@ -18,7 +18,7 @@ public final class OutputMemoryBudget: @unchecked Sendable {
     /// streams x 64KiB = 128KiB per item, or
     /// ~384KiB total) while still bounding a pathological many-item or
     /// many-action configuration below the memory that retaining every runner
-    /// at its fixed limit would otherwise use. See README "Output memory budget".
+    /// at its fixed limit would otherwise use. See docs/pinchos/runtime.md.
     public static let shared = OutputMemoryBudget(totalBytes: 8 * 1024 * 1024)
 
     public let totalBytes: Int

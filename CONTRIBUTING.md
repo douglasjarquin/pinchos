@@ -28,7 +28,7 @@ Pinchos is a Swift Package Manager macOS menu-bar app. There is no Xcode project
 - `swift test` covers `Tests/PinchosCoreTests` and `Tests/pinchosTests`.
 - `swift build` and `swift build -c release` are the debug and release builds. The release executable is `.build/release/pinchos`. Executable-level tests launch `.build/debug/pinchos`; see [VERIFY.md](VERIFY.md) for that contract.
 - `mise.toml` wraps the same Swift commands (`mise run verify`, `mise run test`, `mise run build`) and the site tasks (`site:install`, `site:dev`, `site:build`, `site:preview`).
-- Item TOML keys, CLI subcommands, and architecture notes live in [README.md](README.md). Keep public `ItemConfig` fields aligned with that list.
+- Item TOML keys, CLI subcommands, and architecture notes live in [docs/pinchos/](docs/pinchos/). Keep public `ItemConfig` fields aligned with [docs/pinchos/configuration.md](docs/pinchos/configuration.md).
 - Manual QA writeups belong under `docs/manual-qa/`.
 
 ## Questions

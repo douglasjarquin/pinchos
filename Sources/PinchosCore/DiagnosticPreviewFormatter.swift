@@ -25,7 +25,7 @@ public struct DiagnosticPreview: Equatable, Sendable {
 /// command's retained output is. The complete retained text is always still
 /// reachable through a **Copy Full Output**/**Copy Full Error** action that
 /// reads the exact retained string, never this preview. See issue #53 and
-/// README.md's "Diagnostics menu" section for the preview-vs-retained-output
+/// docs/pinchos/runtime.md for the preview-vs-retained-output
 /// contract this formatter implements.
 public enum DiagnosticPreviewFormatter {
     /// The pixel-free layout budget for one preview: caps are expressed in

@@ -33,7 +33,7 @@ import '../../styles/docs.css';
           <div class="overline">manual install</div>
           <p>From a checked-out Pinchos repository, copy the complete directory into the standard user skill path.</p>
           <CodeBlock lines={['(if [ -e "$HOME/.agents/skills/customize-pinchos" ]; then printf \'Refusing to overwrite %s\\n\' "$HOME/.agents/skills/customize-pinchos" >&2; exit 1; fi; mkdir -p "$HOME/.agents/skills"; cp -R skills/customize-pinchos "$HOME/.agents/skills/customize-pinchos")']} />
-          <p>The full README block checks the destination first and refuses to overwrite an existing skill.</p>
+          <p>The command above refuses to overwrite <code>$HOME/.agents/skills/customize-pinchos</code> if that path already exists, then copies the skill directory into place.</p>
         </article>
       </div>
       <p class="docs-note">The managed installer may use a configured Codex skills root. The manual path is <code>$HOME/.agents/skills</code>. These paths are separate.</p>
@@ -54,6 +54,7 @@ import '../../styles/docs.css';
 
     <section class="docs-section" aria-labelledby="workflow-heading">
       <h2 id="workflow-heading" class="serif-heading">3 · Follow the customization loop</h2>
+      <p class="docs-note">From a source checkout use <code>.build/release/pinchos</code>; after a release, <code>pinchos</code> on PATH.</p>
       <ol class="olive-list">
         <li>Find the real file with <code>pinchos config-path</code>.</li>
         <li>Copy the current TOML into a temporary <code>XDG_CONFIG_HOME</code> root before editing it.</li>
