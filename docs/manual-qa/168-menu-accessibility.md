@@ -1,8 +1,8 @@
 # #168 menu accessibility evidence
 
 Live AX and screenshots on this Mac: 2026-11-13, binary `.build/release/pinchos` at `e0ed634fdbb681a6f46d636ba333f51d6f7c8e98`, Light appearance.
-VoiceOver speech was not captured (optional; not a blocker).
-System Events still timed out.
+Runtime VoiceOver evidence was skipped at Douglas's request (2026-11-13) because macOS Automation blocked it on the agent Mac (Apple Events to System Events and VoiceOver from osascript under cursor-agent timed out with `-1712`, even after the grants and `tccutil reset AppleEvents`).
+Not captured: VoiceOver speech, Control-F8 via System Events, Dark/Increase Contrast screenshots, collapsed-submenu AX, and Option-click from a real menu-bar click.
 
 ## Q2 decisions (accepted)
 
@@ -151,15 +151,18 @@ Effective appearance then: `NSAppearanceNameDarkAqua`.
 
 ## What was not verified in this session
 
-- VoiceOver speech was not captured. That is optional and does not block #168.
-- `osascript` System Events timed out (`-1712`) listing pinchos extras.
-- CGEvent Control-F8 moved focus into 1Password's Help menu, not the status extras.
-- Escape dismissed that Help menu.
-- Arrow/Return/Escape were not proven on Pinchos extras via the keyboard.
-- Option-click diagnostics were not invoked from a real menu-bar click. Tests cover Option-click via `makeLifecycleMenu(revealsDiagnostics: true)` and the shipped plain-click path via `makeLifecycleMenuImmediately`.
-- Increase Contrast was not switched.
-- Dark appearance was not re-checked in this live session (only Light).
-- Collapsed submenu AX rows were not captured after the extra count dropped to one.
+Runtime VoiceOver evidence was skipped at Douglas's request (2026-11-13) because macOS Automation blocked it on the agent Mac (Apple Events to System Events and VoiceOver from osascript under cursor-agent timed out with `-1712`, even after the grants and `tccutil reset AppleEvents`).
+Not captured:
+
+- VoiceOver speech
+- Control-F8 via System Events
+- Dark/Increase Contrast screenshots
+- Collapsed-submenu AX
+- Option-click from a real menu-bar click
+
+Earlier live AX (Light only) also did not prove Arrow/Return/Escape on Pinchos extras via the keyboard.
+CGEvent Control-F8 moved focus into 1Password's Help menu, not the status extras.
+Tests cover Option-click via `makeLifecycleMenu(revealsDiagnostics: true)` and the shipped plain-click path via `makeLifecycleMenuImmediately`.
 
 ## Manual checklist
 
@@ -191,9 +194,9 @@ Launch `.build/release/pinchos` with the sample config above.
 
 ### VoiceOver
 
-Speech not captured (optional, not a blocker).
+Runtime VoiceOver evidence was skipped at Douglas's request (2026-11-13) because macOS Automation blocked it on the agent Mac (Apple Events to System Events and VoiceOver from osascript under cursor-agent timed out with `-1712`, even after the grants and `tccutil reset AppleEvents`).
 The AXDescription values above are the labels VoiceOver is expected to read.
-Speech was not confirmed.
+Speech was not captured.
 
 ### Appearance
 
