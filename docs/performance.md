@@ -70,6 +70,23 @@ Deterministic resource-invariant tests, run as part of `swift test`:
   cancels every remaining timer source. This is the architectural half of the P0/P1 "no
   runaway timer" budget — it can't measure CPU%, but it can prove the source count is
   bounded by construction.
+- **Request counts, non-blocking menus, and lifecycle bounds** (issue #129) - the same
+  `PerformanceInvariantTests` files prove exact invocation counts for source reuse,
+  the #124 30s retry gate, and that a successful manual row is not refreshed by opening
+  the menu; that a cap of 2 is visible in-process (some overlapping slot count equals 2,
+  none exceed 2) and queued waiters start in FIFO enqueue order; that a fresh menu open
+  starts no refresh and that menu construction returns while a command is blocked on a
+  fifo (row value still nil, one refresh task); that three apply/reorder/remove/shutdown
+  iterations while grandchild `sleep` processes are running do not grow timer, source,
+  or post-shutdown descriptor counts, that removed `ManagedItem`s and menu
+  `representedObject` targets become nil, that every appended grandchild pid is dead
+  after removal and after shutdown, and that an in-flight menu-row refresh task goes
+  from 1 to 0 on removal; and that producing 96 KiB per item retains each string at
+  most the 64 KiB per-runner cap (a source may hold two copies: `value` plus
+  `lastExecution.stdout`, about 2x cap) with truncation reported, independently of
+  the 8 MiB active `OutputMemoryBudget` and of the diagnostic/menu title snapshot.
+  A later refresh of the same source replaces those strings with the new result.
+  Those tests do not assert wall-clock durations or RSS.
 - **Output buffer budgets** — `TailByteBuffer` (the ring buffer backing every command's
   retained stdout/stderr) and its shared, process-wide `OutputMemoryBudget` are covered at
   the unit level by [`Tests/PinchosCoreTests/TailByteBufferTests.swift`](../Tests/PinchosCoreTests/TailByteBufferTests.swift)
@@ -106,27 +123,39 @@ Existing process-lifecycle correctness tests (`Tests/PinchosCoreTests/CommandExe
 already cover related invariants — bounded process-group cleanup, single-flight shutdown,
 signal handling — that this document doesn't duplicate.
 
-## Running a local P1 measurement
+## Running the selected local profiles
 
-[`scripts/perf/measure_footprint.sh`](../scripts/perf/measure_footprint.sh) is a harness
-stub for the P1 profile: it builds the release binary, runs it against a disposable
-three-item/60s config in a scratch `XDG_CONFIG_HOME`, waits for it to settle, samples
-`footprint --json`'s `phys_footprint` a few times, and prints one JSON object identifying
-the commit SHA, working-tree dirty state, macOS version, hardware model, architecture,
-memory size, and Swift toolchain version alongside the samples:
+The documented maintainer command is:
 
 ```sh
-scripts/perf/measure_footprint.sh            # 15s settle, 3 samples (defaults)
-scripts/perf/measure_footprint.sh 20 5       # 20s settle, 5 samples
+mise run perf
 ```
 
-This requires a real, logged-in macOS session (not a CI sandbox) and the Xcode command
-line tools (`footprint`). It's network-free and touches no files outside a temporary
-directory. It is a stub, not a full harness: it only covers P1, it doesn't yet retain a
-baseline to diff against, and its rerun/threshold policy is the manual guidance in this
-document rather than automated pass/fail. Extending it to P0–P5, a baseline/threshold
-file, and a scheduled or self-hosted CI workflow that retains artifacts is tracked as
-follow-up work in the 0.1 roadmap.
+That is `scripts/perf/measure_footprint.sh --profile all`.
+Runtime is about 1.5 minutes per profile (15s settle + samples + 60s IDLEW window) and about 3 minutes for `mise run perf` plus the release build.
+It builds the release binary once and runs the two selected profiles against disposable configs in a scratch `XDG_CONFIG_HOME`:
+
+| Profile | Shape | Local fixtures |
+|---|---|---|
+| **P1** (`p1`) | 3 items, 60s intervals | `echo` / `date` only |
+| **five** (`five`) | 5 items, 60s intervals, cached and manual menu values, duplicate `echo 42` sources, in-flight `sleep 120`, `exit 1` | no network, no provider credentials |
+
+Both profiles print commit SHA, dirty state, macOS version, hardware model, architecture, memory size, Swift toolchain, `phys_footprint` samples, RSS, idle CPU, numeric FD counts (`lsof -a -d 0-65535`), thread/child counts, `top` IDLEW over a 60s interval (the timer cadence), SIGTERM cleanup of recorded descendants, an Accessibility probe, and live compact-menu open latency when `AXIsProcessTrusted()` is true.
+When Accessibility is trusted but the extras item cannot be reached (menu-bar overflow or notch), the Python probe prints JSON with a null latency and `SystemExit` 0; the shell then exits 1 from its null-latency check.
+Numeric first arguments still mean settle seconds and sample count for compatibility:
+
+```sh
+mise run perf                                   # both profiles, 15s settle, 3 samples
+scripts/perf/measure_footprint.sh               # P1 only (defaults)
+scripts/perf/measure_footprint.sh --profile p1 20 5
+scripts/perf/measure_footprint.sh --profile five
+```
+
+This requires a real macOS session and the Xcode command line tools (`footprint`).
+It is network-free.
+It writes scratch configs under a temporary `XDG_CONFIG_HOME` and builds the release binary into `.build/release`.
+It does not retain a baseline file to diff against, and it is not a PR gate.
+Extending it to P0/P2–P5, a baseline/threshold file, and a scheduled workflow remains follow-up rather than something this change fabricates thresholds for.
 
 The retained reference sample was captured at runtime commit `44bb2b3d3fd8bc90ae52e4d2da2dd7b4b0e7aeb6` and is recorded in [`docs/manual-qa/0.1.0-p1.json`](manual-qa/0.1.0-p1.json).
 The later evidence-only commit does not change executable code.
@@ -149,5 +178,70 @@ absolute thresholds — establishing those (and the regression-percentage policy
 them) requires the repeated-sample reference-hardware runs described above, and is
 follow-up work rather than something this change fabricates numbers for.
 
+The five-item mixed profile is a characterization workload for issue #129, not a second absolute budget.
+Its `sleep 120` item uses `timeout = "180s"` so it is still running at SIGTERM and descendant cleanup is checked with a command in flight.
+Completed-cache `String` size is measured in ordinary tests: each retained string is capped at 64 KiB per stream, and one source can hold two such strings (`value` and `lastExecution.stdout`, about 2x cap).
+That is a separate bound from the 8 MiB active-output budget.
+A refresh of the same source replaces those strings with the new result (`testCompletedCacheReplacesOnRefreshAndDropsWhenTheLastConsumerReleases` and the blob-0 step in the UI-size test), so this tree does not add an eviction framework.
+
+Appending an item (a non-left-edge config change) does a full native rebuild that cancels in-flight commands.
+That is known `ConfigDiff` / `StatusItemController` behavior and matters for reload-while-running; it is not changed here.
+
 Intentional budget changes require an explicit issue/PR with before/after evidence — see
 the verification plan in issue #55.
+
+## Issue #129 Mac measurements
+
+Historical P1 samples stay historical: commit `44bb2b3d` recorded 13.78–13.81 MB on Mac15,11, and the earlier manual pass recorded 14 MB.
+This section records a new controlled-Mac run of the selected profiles after #123, #124, #125, and #126 landed on `main` (`51462ca`).
+#168 accessibility work is parked on a separate branch and is not in these binaries.
+
+`mise run verify` on this machine exited 0 in 127.25s: 208 `pinchosTests` and 215 `PinchosCoreTests`, then a release build.
+
+`mise run perf` on 2026-11-13, Mac16,7, arm64, 24 GB, macOS 27.0.1, Apple Swift 6.4 (swiftlang-6.4.0.34.1 clang-2100.3.34.1).
+Measured commit: `467a19f26ec735d949373fda87948987f1a3c7d6`, dirty=false.
+Accessibility and Screen Recording were granted to the Cursor worker (`node`) and `python3.14` before this run.
+Raw JSON: `/tmp/pinchos-129/measure-clean.json`.
+
+| Profile | `phys_footprint` | CPU (`ps`) | `idlew` (60s window) | Numeric FDs | Threads | Children at sample | Descendants at SIGTERM | Leftover after SIGTERM | Compact menu open (median of 3) |
+|---|---|---|---|---|---|---|---|---|---|
+| P1 three-item / 60s | 11.30-11.31 MB (11846400, 11862784, 11862784) | 0.0% | 0 | 7 | 4 | 0 | 0 | 0 | 32.2 ms (29.9, 32.2, 35.1) |
+| five-item mixed (in-flight `sleep 120`) | 12.14 MB (12731160, 12731160, 12731160) | 1.4-1.8% | 0 | 11 | 10 | 2 | 3 | 0 | 39.7 ms (30.2, 39.7, 48.7) |
+
+The P1 three-item reference stays under the ratified **< 15 MB** budget.
+The five-item mixed workload is characterization only; it also landed under 15 MB on this machine, but that is not a new product threshold.
+Five-item CPU is not an idle sample: `sleep 120` is still running, which is required for the descendant cleanup check.
+Issue #129 has no ratified millisecond menu-open budget; these compact-menu samples are recorded evidence, not a new threshold.
+P1 opened the `42` extra in 32.2 ms median and two Down-arrow events selected `Collapse Pinchos`.
+P1's probe path is unchanged from `46610dd`; the 18.7 ms to 32.2 ms shift is run-to-run variance within that earlier spread (11.0, 18.7, 33.2).
+The five-item `42` extra with a `Cached:` row opened in 39.7 ms median.
+`menu_titles` is the last of the three opens: that last open listed `Cached: 42` and `Manual: manual-row`.
+Direct children at the pre-probe sample were 2.
+Recursive descendants were counted once, immediately before SIGTERM, after the menu probe, and were 3.
+
+P1 idle CPU between ticks was 0.0% in `ps` samples after the 15s settle.
+The 60s `top` window's second sample also showed 0.0% CPU on P1 and 2.0% on the in-flight five-item profile.
+Wakeups are macOS `top` `IDLEW` over a 60s window (`top -l 2 -s 60`): a per-interval idle-wakeup count.
+Only the second sample is parsed.
+macOS `top` suffixes IDLEW with `+` or `-` to mark a change since the previous sample, not a clipped column.
+The probe strips those suffixes and stores the integer.
+`IDLEW` is not a process-lifetime cumulative counter and is not a count of all wakeups.
+Numeric FDs are `lsof -nP -a -d 0-65535 -p` (not `lsof | wc -l`).
+P1 idle has no in-flight child at SIGTERM.
+The five-item profile records descendants with recursive `pgrep -P` immediately before SIGTERM (3 pids: session supervisor, shell, `sleep`) and re-checks those pids with `kill -0` afterwards (0 leftover).
+
+Live compact-menu open latency is measured when `AXIsProcessTrusted()` is true.
+P1 times the first extras item titled `42`.
+The five profile scouts extras titled `42` and times the one whose opened menu contains a `Cached:` row.
+Those timed samples follow one untimed scout open of the same item, so the old 32.3 ms and the new 39.7 ms are not strictly comparable with each other or with P1.
+If no `Cached:` extra is found, the Python probe prints JSON with a null latency and `SystemExit` 0; the shell then exits 1 from its null-latency check.
+Each sample is the wall time from starting the `AXPress` helper thread until `AXChildren` polling (0.5 ms sleep) sees an `AXMenu` with `AXMenuItem` rows.
+That interval includes Accessibility round-trip and polling overhead.
+It is not render time and not main-thread construction time.
+After the menu appears, the probe posts two Down-arrow events with `CGEventPostToPid`, reads `AXSelectedChildren`, and dismisses with `AXCancel`.
+`#129` has no ratified millisecond budget for that path; the recorded number is evidence, not a new product threshold.
+In-process tests still prove menu construction returns while a command is blocked on a fifo, and that menu titles stay a small bound independent of retained output.
+
+Completed-cache measurement: ordinary tests show each retained string is capped at 64 KiB, a source can hold two copies (about 2x cap), truncation is reported above the cap, and a later refresh of the same source replaces those strings.
+The 8 MiB active `OutputMemoryBudget` returns to zero after collectors deallocate.
+No extra eviction bound is present.

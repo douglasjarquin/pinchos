@@ -63,7 +63,11 @@ After a release build, these CLI commands are useful local probes and are not pa
 ```sh
 .build/release/pinchos validate
 .build/release/pinchos doctor
+mise run perf
 ```
+
+`mise run perf` runs the selected release-binary performance profiles with local fixture commands only (`scripts/perf/measure_footprint.sh --profile all`).
+It is a maintainer measurement, not a PR gate. See [`docs/performance.md`](docs/performance.md).
 
 GUI and screenshot evidence is not required for ordinary PRs. Notes for manual runs live in [`docs/manual-qa`](docs/manual-qa).
 
