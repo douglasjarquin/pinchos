@@ -449,11 +449,17 @@ final class ManagedItemRefreshTests: XCTestCase {
         XCTAssertEqual(lineCount(log), 1)
 
         clock.date = clock.date.addingTimeInterval(61)
-        item.refreshPrimaryForTesting()
-        let failed = await waitUntil {
-            self.lineCount(log) == 2 && item.menuRowCachedValueForTesting(at: 0)?.state == .error
-        }
-        XCTAssertTrue(failed, "primary-only refresh did not mirror into the shared menu row")
+        await item.refreshPrimaryForTesting()
+        XCTAssertEqual(
+            lineCount(log),
+            2,
+            "primary-only refresh did not mirror into the shared menu row"
+        )
+        XCTAssertEqual(
+            item.menuRowCachedValueForTesting(at: 0)?.state,
+            .error,
+            "primary-only refresh did not mirror into the shared menu row"
+        )
         let idleAfterPrimary = await waitForMenuRowIdle(item)
         XCTAssertTrue(idleAfterPrimary)
         XCTAssertEqual(item.menuRowValue(at: 0), "good")

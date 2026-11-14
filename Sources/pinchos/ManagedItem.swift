@@ -691,9 +691,18 @@ final class ManagedItem: ManagedItemLifecycle {
         let token = CommandScheduler.ItemToken()
         refreshTimerToken = token
         let scheduler = self.scheduler
+        // `registerRecurring` defaults to `initialDelay: 0`, which fires on
+        // the next driver pass. A restart after prepareUpdate must wait a
+        // full interval; otherwise a cancelled queued flight is immediately
+        // replaced by a new `.refreshing` tick.
+        let initialDelay = runInitialRefresh ? 0 : interval
         Task { [weak self] in
             guard let self else { return }
-            await scheduler.registerRecurring(token: token, interval: interval) { [weak self] in
+            await scheduler.registerRecurring(
+                token: token,
+                interval: interval,
+                initialDelay: initialDelay
+            ) { [weak self] in
                 let item = self
                 Task { @MainActor in
                     item?.tick()
@@ -937,8 +946,11 @@ final class ManagedItem: ManagedItemLifecycle {
 
     /// Starts a primary-only refresh, the same path as a scheduled tick.
     /// Refresh Now still joins in-flight row work separately.
-    func refreshPrimaryForTesting() {
+    /// Awaits the in-process task so tests do not race a 2s poll against
+    /// the MainActor hop `requestRefresh` uses for UI clicks.
+    func refreshPrimaryForTesting() async {
         requestRefresh()
+        await pendingRefreshPermitTask?.value
     }
 
     private func requestMenuRowRefreshIfNeeded(at index: Int) {
