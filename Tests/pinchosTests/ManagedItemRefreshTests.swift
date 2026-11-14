@@ -444,6 +444,7 @@ final class ManagedItemRefreshTests: XCTestCase {
             await item.runtimeSnapshot().fullOutput == "good" && item.menuRowValue(at: 0) == "good"
         }
         XCTAssertTrue(first)
+        await item.awaitPrimaryRefreshForTesting()
         let idleAfterSuccess = await waitForMenuRowIdle(item)
         XCTAssertTrue(idleAfterSuccess)
         XCTAssertEqual(lineCount(log), 1)

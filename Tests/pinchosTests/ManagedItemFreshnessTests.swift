@@ -146,18 +146,16 @@ final class ManagedItemFreshnessTests: XCTestCase {
             return snapshot.fullOutput == "72" && snapshot.freshness.state == .fresh
         }
         XCTAssertTrue(ready)
+        await item.awaitPrimaryRefreshForTesting()
         let successSnapshot = await item.runtimeSnapshot()
         let lastSuccess = try XCTUnwrap(successSnapshot.lastUpdatedAt)
-        try await Task.sleep(for: .milliseconds(50))
 
         clock.date = clock.date.addingTimeInterval(90)
         item.refreshNow()
-        let failed = await waitUntil {
-            await item.runtimeSnapshot().status == .error
-                && item.renderedTitle == "72\(ValueFreshness.warningMarker)"
-        }
-        XCTAssertTrue(failed)
+        await item.awaitPrimaryRefreshForTesting()
+        XCTAssertEqual(item.renderedTitle, "72\(ValueFreshness.warningMarker)")
         let snapshot = await item.runtimeSnapshot()
+        XCTAssertEqual(snapshot.status, .error)
         XCTAssertEqual(snapshot.fullOutput, "72")
         XCTAssertEqual(snapshot.lastUpdatedAt, lastSuccess)
         XCTAssertEqual(snapshot.freshness.state, .failedWithValue)
@@ -222,8 +220,8 @@ final class ManagedItemFreshnessTests: XCTestCase {
         XCTAssertFalse(item.renderedAccessibilityLabel.contains("⚠"))
         XCTAssertFalse(item.renderedAccessibilityLabel.contains("⌛"))
 
-        let settled = await waitUntil { item.renderedTitle == "99" }
-        XCTAssertTrue(settled)
+        await item.awaitPrimaryRefreshForTesting()
+        XCTAssertEqual(item.renderedTitle, "99")
         XCTAssertEqual(item.renderedAccessibilityLabel, "99, fresh")
     }
 
@@ -297,6 +295,7 @@ final class ManagedItemFreshnessTests: XCTestCase {
         item.refreshNow()
         let ready = await waitUntil { item.renderedTitle == "72" }
         XCTAssertTrue(ready)
+        await item.awaitPrimaryRefreshForTesting()
 
         item.refreshNow()
         let refreshing = await waitUntil {
@@ -304,8 +303,7 @@ final class ManagedItemFreshnessTests: XCTestCase {
                 && item.renderedAccessibilityLabel == "72, refreshing"
         }
         XCTAssertTrue(refreshing)
-        let settled = await waitUntil { await item.runtimeSnapshot().fullOutput == "99" }
-        XCTAssertTrue(settled)
+        await item.awaitPrimaryRefreshForTesting()
         XCTAssertEqual(item.renderedTitle, "99")
     }
 
@@ -338,6 +336,7 @@ final class ManagedItemFreshnessTests: XCTestCase {
             item.renderedTitle == "72" && item.menuRowValue(at: 0) == "72"
         }
         XCTAssertTrue(ready)
+        await item.awaitPrimaryRefreshForTesting()
 
         // Wake, then a tick starts a slow refresh. The bar must pick up
         // stale-while-refreshing without runtimeSnapshot() painting it.
@@ -367,8 +366,8 @@ final class ManagedItemFreshnessTests: XCTestCase {
         XCTAssertEqual(collapsedRow.title, "72\(ValueFreshness.staleMarker)")
         XCTAssertEqual(collapsedRow.accessibilityLabel(), "item, 72, stale, refreshing")
 
-        let settled = await waitUntil { item.renderedTitle == "99" }
-        XCTAssertTrue(settled)
+        await item.awaitPrimaryRefreshForTesting()
+        XCTAssertEqual(item.renderedTitle, "99")
         XCTAssertEqual(item.renderedAccessibilityLabel, "99, fresh")
     }
 
@@ -384,9 +383,9 @@ final class ManagedItemFreshnessTests: XCTestCase {
             scheduler: scheduler
         )
 
-        item.refreshNow()
-        let ready = await waitUntil { await item.runtimeSnapshot().fullOutput == "72" }
-        XCTAssertTrue(ready)
+        await item.refreshPrimaryForTesting()
+        let ready = await item.runtimeSnapshot()
+        XCTAssertEqual(ready.fullOutput, "72")
         XCTAssertEqual(lineCount(log), 1)
 
         try await scheduler.acquirePermit()
@@ -406,7 +405,7 @@ final class ManagedItemFreshnessTests: XCTestCase {
 
         // Identity change cancelled the queued flight of the old command.
         // The timer restart (delay 0) runs the new command on the next
-        // driver pass; drive that refresh instead of racing a clock jump.
+        // driver pass; join that refresh instead of racing a clock jump.
         await item.refreshPrimaryForTesting()
         let settled = await item.runtimeSnapshot()
         XCTAssertNotEqual(settled.freshness.state, .refreshing)
@@ -437,11 +436,13 @@ final class ManagedItemFreshnessTests: XCTestCase {
         long.refreshNow()
         let ready = await waitUntil { short.renderedTitle == "72" && long.renderedTitle == "72" }
         XCTAssertTrue(ready)
+        await short.awaitPrimaryRefreshForTesting()
+        await long.awaitPrimaryRefreshForTesting()
         XCTAssertEqual(registry.sourceCount, 1)
 
         short.refreshNow()
-        let updated = await waitUntil { short.renderedTitle == "99" }
-        XCTAssertTrue(updated)
+        await short.awaitPrimaryRefreshForTesting()
+        XCTAssertEqual(short.renderedTitle, "99")
 
         let longSnapshot = await long.runtimeSnapshot()
         let shortSnapshot = await short.runtimeSnapshot()
@@ -478,18 +479,16 @@ final class ManagedItemFreshnessTests: XCTestCase {
         item.refreshNow()
         let first = await waitUntil { peer.renderedTitle == "72%" && item.renderedTitle == "72%" }
         XCTAssertTrue(first)
-        try await Task.sleep(for: .milliseconds(50))
+        await peer.awaitPrimaryRefreshForTesting()
+        await item.awaitPrimaryRefreshForTesting()
 
         peer.refreshNow()
-        let second = await waitUntil { peer.renderedTitle == "99%" }
-        XCTAssertTrue(second)
-        try await Task.sleep(for: .milliseconds(50))
+        await peer.awaitPrimaryRefreshForTesting()
+        XCTAssertEqual(peer.renderedTitle, "99%")
 
         peer.refreshNow()
-        let failed = await waitUntil {
-            peer.renderedTitle == "99%\(ValueFreshness.warningMarker)"
-        }
-        XCTAssertTrue(failed)
+        await peer.awaitPrimaryRefreshForTesting()
+        XCTAssertEqual(peer.renderedTitle, "99%\(ValueFreshness.warningMarker)")
 
         let snapshot = await item.runtimeSnapshot()
         XCTAssertEqual(snapshot.freshness.state, .failedWithValue)
@@ -513,13 +512,11 @@ final class ManagedItemFreshnessTests: XCTestCase {
         peer.refreshNow()
         let first = await waitUntil { peer.renderedTitle == "72" }
         XCTAssertTrue(first)
-        try await Task.sleep(for: .milliseconds(50))
+        await peer.awaitPrimaryRefreshForTesting()
 
         peer.refreshNow()
-        let failed = await waitUntil {
-            peer.renderedTitle == "72\(ValueFreshness.warningMarker)"
-        }
-        XCTAssertTrue(failed)
+        await peer.awaitPrimaryRefreshForTesting()
+        XCTAssertEqual(peer.renderedTitle, "72\(ValueFreshness.warningMarker)")
 
         let added = makeItem(
             config: ItemConfig(name: "added", run: command, interval: .scheduled(60)),
@@ -545,10 +542,8 @@ final class ManagedItemFreshnessTests: XCTestCase {
             scheduler: scheduler
         )
 
-        item.refreshNow()
-        let ready = await waitUntil { item.renderedTitle == "72" }
-        XCTAssertTrue(ready)
-        try await Task.sleep(for: .milliseconds(50))
+        await item.refreshPrimaryForTesting()
+        XCTAssertEqual(item.renderedTitle, "72")
 
         try await scheduler.acquirePermit()
         item.refreshNow()
@@ -565,11 +560,9 @@ final class ManagedItemFreshnessTests: XCTestCase {
         item.commitPreparedUpdate()
         await scheduler.releasePermit()
 
-        let settled = await waitUntil {
-            item.renderedTitle == "72"
-                && item.renderedAccessibilityLabel == "72, fresh"
-        }
-        XCTAssertTrue(settled)
+        await item.refreshPrimaryForTesting()
+        XCTAssertEqual(item.renderedTitle, "72")
+        XCTAssertEqual(item.renderedAccessibilityLabel, "72, fresh")
     }
 
     @MainActor
@@ -599,6 +592,8 @@ final class ManagedItemFreshnessTests: XCTestCase {
             return firstReady && secondReady
         }
         XCTAssertTrue(ready)
+        await first.awaitPrimaryRefreshForTesting()
+        await second.awaitPrimaryRefreshForTesting()
         XCTAssertEqual(registry.sourceCount, 1)
 
         clock.date = clock.date.addingTimeInterval(90)
