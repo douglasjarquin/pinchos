@@ -76,8 +76,8 @@ final class ConfigParserTests: XCTestCase {
 
     func testCanonicalExampleParses() throws {
         let config = try ConfigParser.parse(ExampleConfig.text)
-        XCTAssertEqual(config.items.map(\.name), ["codex"])
-        XCTAssertEqual(config.items[0].menu.count, 5)
+        XCTAssertEqual(config.items.map(\.name), ["clock"])
+        XCTAssertEqual(config.items[0].menu.count, 0)
     }
 
     func testEmptyAndCommentOnlyConfigsProduceNoItems() throws {

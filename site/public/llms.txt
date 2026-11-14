@@ -8,17 +8,23 @@ The 0.1 product is deliberately small: one command-backed item and an ordered na
 
 It is free, open source, and native AppKit. There is no Electron and no settings window.
 
+Pinchos targets Apple Silicon (arm64) Macs on macOS 14+.
+
 ## Install
 
-Clone and build with the Swift toolchain:
+Until v0.1.0 is published, the curl installer and Homebrew cask fail closed on a missing artifact or checksum. Clone and build with the Swift toolchain:
 
 ```
 git clone https://github.com/douglasjarquin/pinchos.git
 cd pinchos
 swift build -c release
+.build/release/pinchos config-path
+.build/release/pinchos init
+.build/release/pinchos validate
+.build/release/pinchos
 ```
 
-The release executable is `.build/release/pinchos`. The README covers install, the canonical config format, and the menu-row contract:
+The release executable is `.build/release/pinchos`. With no arguments it launches the menu-bar app in the foreground and keeps the terminal busy until the app quits, so it has not hung; any argument goes to the CLI. Stop it with Quit Pinchos from its menu (Quit in the recovery menu), or Ctrl-C in the launching terminal. The README covers first run, the canonical config format, and the menu-row contract:
 
 https://github.com/douglasjarquin/pinchos
 

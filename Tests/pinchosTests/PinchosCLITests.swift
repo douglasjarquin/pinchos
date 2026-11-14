@@ -56,7 +56,8 @@ final class PinchosCLITests: XCTestCase {
         XCTAssertEqual(firstInitCode, 0)
         let initialContents = try Data(contentsOf: configURL)
         XCTAssertTrue(capture.stdout.contains("Created example config"))
-        XCTAssertTrue(String(decoding: initialContents, as: UTF8.self).contains("[item.codex]"))
+        XCTAssertTrue(String(decoding: initialContents, as: UTF8.self).contains("[item.clock]"))
+        XCTAssertTrue(String(decoding: initialContents, as: UTF8.self).contains("date '+%H:%M'"))
 
         capture.stdout = ""
         let secondInitCode = await cli.run(arguments: ["init"])
@@ -120,6 +121,92 @@ final class PinchosCLITests: XCTestCase {
         XCTAssertTrue(capture.stderr.contains("item.bad"))
         XCTAssertTrue(capture.stderr.contains("interval"))
         XCTAssertTrue(capture.stderr.contains("line 3"))
+        let malformedContents = try Data(contentsOf: configURL)
+
+        capture.stderr = ""
+        capture.stdout = ""
+        let initCode = await cli.run(arguments: ["init"])
+        XCTAssertEqual(initCode, 0)
+        XCTAssertEqual(try Data(contentsOf: configURL), malformedContents)
+        XCTAssertTrue(capture.stdout.contains("Config already exists"))
+    }
+
+    func testNamedTempRecipePathValidatesWithTheProductionCLI() async throws {
+        let root = try makeRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let recipesDirectory = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .appendingPathComponent("recipes")
+        let recipes = try FileManager.default.contentsOfDirectory(
+            at: recipesDirectory,
+            includingPropertiesForKeys: nil
+        ).filter { $0.pathExtension == "toml" }.sorted { $0.path < $1.path }
+        XCTAssertEqual(recipes.count, 9)
+
+        for recipeURL in recipes {
+            let configURL = root.appendingPathComponent("pinchos/pinchos.toml")
+            try FileManager.default.createDirectory(
+                at: configURL.deletingLastPathComponent(),
+                withIntermediateDirectories: true
+            )
+            try FileManager.default.copyItem(at: recipeURL, to: configURL)
+            let capture = CLIOutputCapture()
+            let cli = PinchosCLI(configPath: configURL.path, output: capture.output)
+            let code = await cli.run(arguments: ["validate"])
+            XCTAssertEqual(code, 0, "\(recipeURL.lastPathComponent) failed validate: \(capture.stderr)")
+            XCTAssertTrue(capture.stdout.contains("Valid config"))
+            try FileManager.default.removeItem(at: configURL)
+        }
+
+        let exampleURL = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .appendingPathComponent("example/pinchos.toml")
+        let configURL = root.appendingPathComponent("pinchos/pinchos.toml")
+        try FileManager.default.copyItem(at: exampleURL, to: configURL)
+        let capture = CLIOutputCapture()
+        let cli = PinchosCLI(configPath: configURL.path, output: capture.output)
+        let exampleCode = await cli.run(arguments: ["validate"])
+        XCTAssertEqual(exampleCode, 0, capture.stderr)
+        XCTAssertTrue(capture.stdout.contains("Valid config"), capture.stdout)
+    }
+
+    func testExecutableValidateUsesXDGConfigHomeForACopiedRecipe() throws {
+        let root = try makeRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let recipeURL = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .appendingPathComponent("recipes/clock.toml")
+        let configDirectory = root.appendingPathComponent("pinchos", isDirectory: true)
+        try FileManager.default.createDirectory(at: configDirectory, withIntermediateDirectories: true)
+        try FileManager.default.copyItem(
+            at: recipeURL,
+            to: configDirectory.appendingPathComponent("pinchos.toml")
+        )
+
+        let process = Process()
+        process.executableURL = try PinchosTestExecutable.resolve()
+        process.arguments = ["validate"]
+        var environment = ProcessInfo.processInfo.environment
+        environment["XDG_CONFIG_HOME"] = root.path
+        process.environment = environment
+        let stdout = Pipe()
+        let stderr = Pipe()
+        process.standardOutput = stdout
+        process.standardError = stderr
+        try process.run()
+        process.waitUntilExit()
+
+        let output = String(data: stdout.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
+        let errors = String(data: stderr.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
+        XCTAssertEqual(process.terminationStatus, 0, errors)
+        XCTAssertTrue(output.contains("Valid config"), output)
+        XCTAssertTrue(output.contains(root.path), output)
     }
 
     func testIssue45SchemaErrorIsSharedAcrossValidateDoctorAndRun() async throws {

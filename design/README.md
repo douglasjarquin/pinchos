@@ -3,7 +3,7 @@
 Design artifacts and engineering handoff for **pinchos** — a native macOS menu-bar utility (github.com/douglasjarquin/pinchos). Produced August 2026 against commit-current `main` and open issues #14, #15, #19, #20, #21. No production code was changed.
 
 This package is historical design and future-state roadmap material, not the canonical 0.1 product contract.
-The current 0.1 contract is defined by `README.md`, `example/pinchos.toml`, and the parser/model.
+The current 0.1 contract is defined by `docs/pinchos/`, `example/pinchos.toml`, and the parser/model.
 
 ## Design direction
 

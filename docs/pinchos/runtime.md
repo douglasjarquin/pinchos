@@ -1,6 +1,6 @@
 # Runtime
 
-Output bounds, reload, recovery, and removed syntax. Moved out of the README.
+Output bounds, reload, recovery, and removed syntax.
 
 ## Runtime safety
 
@@ -99,6 +99,8 @@ A retained cached row with no carried value is requested the same way, so a firs
 A row whose source the registry kept and that already has a settled value does not refresh on commit; it keeps that value and the 30-second retry gate.
 A new or changed manual row does not run on commit; it first runs on the next menu open, Refresh Now, or equivalent explicit request.
 Malformed configuration leaves the last known-good items running and exposes recovery actions for creating, opening, reloading, or quitting.
+Create Example Config is offered only when the file is missing.
+CLI `init`, `validate`, `doctor`, and `run` never delete or overwrite an existing file; repair it in place as documented in [cli.md](cli.md).
 
 ## Removed development syntax
 
