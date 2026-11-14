@@ -186,8 +186,8 @@ final class StatusItemController: StatusItemMenuDelegate {
     private let itemFactory: any ManagedItemFactory
     private let statusItemHost: any StatusItemHost
     /// The one application-scoped `CommandScheduler` shared by every
-    /// `ManagedItem` this controller owns (see `README.md`'s "Scheduler"
-    /// section for the bounded-concurrency/fairness/diagnostics policy).
+    /// `ManagedItem` this controller owns (see `docs/pinchos/runtime.md`
+    /// for the bounded-concurrency/fairness/diagnostics policy).
     /// Exposed at `internal` access for scheduler-integration tests in this
     /// module; a custom `itemFactory` injected for testing (e.g. a fake)
     /// may simply not route work through it, in which case it sits idle.

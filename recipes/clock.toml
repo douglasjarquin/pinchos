@@ -10,6 +10,9 @@
 #   string (see `man strftime`) to show seconds, a date, or a timezone
 #   abbreviation, e.g. "+%H:%M:%S %Z".
 #
+# This [item.clock] table is already the `init` default. Rename it (and use
+# the new id with `pinchos run`) before copying it into a config made by init.
+#
 # Copy this file's [item.*] table(s) into your pinchos.toml, then:
 #   .build/release/pinchos validate
 #   .build/release/pinchos doctor

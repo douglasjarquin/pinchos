@@ -15,14 +15,23 @@ Each file contains one or more `[item.<id>]` tables and documents its command de
 | [`aws-profile.toml`](aws-profile.toml) | AWS account identity | AWS CLI and an existing profile |
 | [`load-average.toml`](load-average.toml) | One-minute load | macOS `sysctl` and `awk` |
 
-The Codex quota example in [`example/pinchos.toml`](../example/pinchos.toml) demonstrates several cached menu rows, one action, and a separator.
-Its menu opens from cache without running commands during construction.
+`init` writes the clock item from [`example/pinchos.toml`](../example/pinchos.toml).
+The clock recipe is already that `init` default (`[item.clock]`).
+Copying [`clock.toml`](clock.toml) into a config made by `init` would duplicate `[item.clock]` and fail to parse, so rename the table first.
+The previous Codex Remainder default is the opt-in snippet in [`docs/pinchos/example-setup.md`](../docs/pinchos/example-setup.md#opt-in-codex-example).
+It demonstrates several cached menu rows, one action, and a separator, and its menu opens from cache without running commands during construction.
+It needs Remainder on the fixed PATH and a Codex CLI login, and fails on a fresh Mac without those.
+Item and menu keys are in [`docs/pinchos/configuration.md`](../docs/pinchos/configuration.md).
 
-Validate a recipe before copying it into the live configuration:
+Validate a recipe before copying it into the live configuration.
+Create one named temporary config path, place the recipe there, then validate with the same path:
 
 ```sh
-XDG_CONFIG_HOME="$(mktemp -d)" .build/release/pinchos validate
+config_root="$(mktemp -d)"
+mkdir -p "$config_root/pinchos"
+cp recipes/clock.toml "$config_root/pinchos/pinchos.toml"
+XDG_CONFIG_HOME="$config_root" .build/release/pinchos validate
 ```
 
-The command must be run after placing the selected recipe at `pinchos/pinchos.toml` in the temporary root.
+Swap `clock.toml` for any other file in this directory.
 Never place credentials or tokens in a recipe.

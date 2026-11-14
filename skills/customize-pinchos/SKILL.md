@@ -23,7 +23,7 @@ The old type/action/info, group, trigger, notification, structured-output, visib
 2. Read the current configuration before editing it.
 3. Preserve unrelated tables and the user's declaration order.
 4. Read [references/configuration.md](references/configuration.md) before changing schema fields or commands.
-5. Copy the current file into an isolated temporary `XDG_CONFIG_HOME` root before editing it.
+5. Copy the current file into one named temporary `XDG_CONFIG_HOME` root before editing it, then validate with that same path.
 6. Start with the smallest read-only command that proves the requested signal.
 7. Show the exact command, executable, arguments, paths, environment names, network destinations, and write targets before adding a risky command.
 8. Ask for explicit authorization before adding or running a command that changes state, uses credentials, sends data, contacts a private service, or invokes a privileged tool.
