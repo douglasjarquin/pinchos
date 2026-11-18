@@ -23,6 +23,25 @@ The policy is not a public config surface: there are no per-item `shell`, `env`,
 - **Working directory.** The resolved `HOME` directory, not the process's launch cwd (`/` under Finder/`open`, the current shell directory under Terminal).
 - **HOME and inherited environment.** `HOME` comes from the host when set, otherwise `NSHomeDirectory()`. `USER`, `LOGNAME`, `TMPDIR`, locale/`TZ`, and `__CF_USER_TEXT_ENCODING` are copied when present and non-empty. Missing `HOME`/`USER`/`TMPDIR` fall back to the process owner and the system temp directory. `SHELL` is `/bin/sh`.
 - **Not inherited.** Arbitrary host variables, including secrets and custom PATH entries. `SSH_AUTH_SOCK` is not inherited; launchd's ssh-agent can set it for GUI apps as well as Terminal, and Pinchos does not pass it through. Commands that need credentials should read them from files the command already knows about.
+- **Descriptors.** stdin is `/dev/null`, including under `pinchos run` in a terminal; stdout and stderr are Pinchos-owned pipes. No other descriptor from the app or from another running command is inherited.
+
+## Secrets and command output
+
+Keep credentials out of `run` and `action` strings.
+The TOML file stores them in plain text, and while a command runs its full text is the `/bin/sh -c` argument, which other local users can read with `ps`.
+Have the command read the secret at run time instead, for example `security find-generic-password -w -s <service>` (macOS Keychain) or a file only you can read (`chmod 600`).
+
+Retained stdout and stderr are kept in memory only; Pinchos does not log or write them to disk.
+Previews in menus and diagnostics are bounded and sanitized, but they are the command's own output: a command that prints a secret shows it there.
+**Copy Full Output** and **Copy Full Error** put the retained text on the general pasteboard, where other apps and clipboard managers can read it; they only run when you choose them.
+`pinchos run` prints the command's stdout and stderr to the terminal.
+`pinchos doctor` does not print command text, the inherited environment, or command output.
+
+## Process ownership
+
+Each execution runs in its own process group led by a Pinchos supervisor.
+Timeout, cancellation, reload, removal, and quit signal only that group, and only while its supervisor has not been reaped, so a recycled process-group ID is never signalled.
+A descendant that leaves the group on purpose (for example with `setsid` or a `launchctl` job) is outside Pinchos ownership and is not stopped.
 
 This makes supported system and Homebrew tools resolve consistently.
 It does not make Finder and Terminal identical arbitrary user environments.
@@ -61,6 +80,7 @@ That window closes as soon as the command settles, before the item repaints, so 
 Paints follow the flight lifecycle: while a flight is queued or running the item shows its refreshing state, and an older flight's paint is dropped once a newer flight is admitted.
 Shared submenu rows apply a source's values in settle order (`CachedValue.settledRevision`), so a delayed copy of an older result never replaces a newer one.
 Reload, removal, and shutdown cancel obsolete work and cannot execute stale actions.
+A menu left open across a reload that changes an item's rows ignores clicks on the outdated action rows instead of running whatever command now occupies that position; reopen the menu to act.
 Last-good values, FIFO scheduler admission, process limits, and cancellation stay as they are.
 
 ## Freshness and failure presentation

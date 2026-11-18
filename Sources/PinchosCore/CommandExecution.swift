@@ -588,9 +588,7 @@ private enum CommandExecutionEngine {
         let processID: pid_t
         do {
             let session = try SupervisorProcessSession.launch(
-                stdoutRead: stdoutFileDescriptors[0],
                 stdoutWrite: stdoutFileDescriptors[1],
-                stderrRead: stderrFileDescriptors[0],
                 stderrWrite: stderrFileDescriptors[1],
                 environment: resolvedEnvironment
             )
@@ -602,9 +600,7 @@ private enum CommandExecutionEngine {
                 overlayEnvironment: environment,
                 spawnEnvironment: resolvedEnvironment,
                 processGroupID: session.processGroupID,
-                stdoutRead: stdoutFileDescriptors[0],
                 stdoutWrite: stdoutFileDescriptors[1],
-                stderrRead: stderrFileDescriptors[0],
                 stderrWrite: stderrFileDescriptors[1]
             )
             try session.start()
@@ -746,15 +742,17 @@ private enum CommandExecutionEngine {
         overlayEnvironment: [String: String],
         spawnEnvironment: [String: String],
         processGroupID: pid_t,
-        stdoutRead: Int32,
         stdoutWrite: Int32,
-        stderrRead: Int32,
         stderrWrite: Int32
     ) throws -> pid_t {
         var attributes: posix_spawnattr_t?
         try check(posix_spawnattr_init(&attributes))
         defer { posix_spawnattr_destroy(&attributes) }
-        try check(posix_spawnattr_setflags(&attributes, Int16(POSIX_SPAWN_SETPGROUP)))
+        // CLOEXEC_DEFAULT: the command inherits only the stdin/stdout/stderr
+        // set up below - never the host's stdin, another concurrent command's
+        // pipe that has not been marked close-on-exec yet, or app-owned
+        // descriptors such as the config watcher's.
+        try check(posix_spawnattr_setflags(&attributes, Int16(POSIX_SPAWN_SETPGROUP | POSIX_SPAWN_CLOEXEC_DEFAULT)))
         try check(posix_spawnattr_setpgroup(&attributes, processGroupID))
 
         var fileActions: posix_spawn_file_actions_t?
@@ -764,12 +762,9 @@ private enum CommandExecutionEngine {
             posix_spawn_file_actions_addchdir_np(&fileActions, $0)
         }
         try check(chdirStatus, context: "unable to set working directory '\(workingDirectory)'")
+        try check(posix_spawn_file_actions_addopen(&fileActions, STDIN_FILENO, "/dev/null", O_RDONLY, 0))
         try check(posix_spawn_file_actions_adddup2(&fileActions, stdoutWrite, STDOUT_FILENO))
         try check(posix_spawn_file_actions_adddup2(&fileActions, stderrWrite, STDERR_FILENO))
-        try check(posix_spawn_file_actions_addclose(&fileActions, stdoutRead))
-        try check(posix_spawn_file_actions_addclose(&fileActions, stdoutWrite))
-        try check(posix_spawn_file_actions_addclose(&fileActions, stderrRead))
-        try check(posix_spawn_file_actions_addclose(&fileActions, stderrWrite))
 
         var arguments = [UnsafeMutablePointer<CChar>?]()
         for argument in shell {

@@ -53,6 +53,32 @@ final class CommandExecutionTests: XCTestCase {
         XCTAssertEqual(URL(fileURLWithPath: outputLines[3]).lastPathComponent, workingDirectory.lastPathComponent)
     }
 
+    /// Trust boundary (#163): a command receives `/dev/null` as stdin and only
+    /// its own stdout/stderr pipes - never the host's stdin (a terminal under
+    /// `pinchos run`), app-owned descriptors, or another concurrent
+    /// command's pipes that are not yet marked close-on-exec.
+    func testCommandInheritsOnlyDevNullStdinAndItsOwnOutputPipes() async throws {
+        let leakedDescriptor = open("/dev/null", O_RDONLY)
+        XCTAssertGreaterThanOrEqual(leakedDescriptor, 0)
+        defer { close(leakedDescriptor) }
+        XCTAssertEqual(fcntl(leakedDescriptor, F_GETFD) & FD_CLOEXEC, 0, "the probe descriptor must be inheritable")
+
+        let runner = CommandRunner(
+            command: """
+            [ -e /dev/fd/\(leakedDescriptor) ] && echo leaked || echo isolated
+            [ "$(/usr/bin/stat -L -f %Z /dev/stdin)" = "$(/usr/bin/stat -L -f %Z /dev/null)" ] && echo devnull || echo inherited-stdin
+            """,
+            timeout: 2,
+            maxOutputBytes: 256
+        )
+        let outcome = await runner.runIfIdle()
+        guard case .completed(let execution) = outcome else {
+            return XCTFail("expected a completed execution, got \(outcome)")
+        }
+        XCTAssertEqual(execution.terminalReason, .exited(code: 0), execution.stderr)
+        XCTAssertEqual(execution.stdout, "isolated\ndevnull\n")
+    }
+
     func testPolicyPATHAndWorkingDirectoryMatchUnderGUIAndTerminalInheritedEnvironments() async throws {
         let home = FileManager.default.temporaryDirectory
             .appendingPathComponent("pinchos-policy-home-\(UUID().uuidString)")
@@ -722,9 +748,7 @@ final class CommandExecutionTests: XCTestCase {
                 for fileDescriptor in stdoutPipe + stderrPipe { close(fileDescriptor) }
             }
             let session = try SupervisorProcessSession.launch(
-                stdoutRead: stdoutPipe[0],
                 stdoutWrite: stdoutPipe[1],
-                stderrRead: stderrPipe[0],
                 stderrWrite: stderrPipe[1],
                 environment: [:]
             )

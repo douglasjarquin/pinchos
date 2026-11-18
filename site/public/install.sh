@@ -63,7 +63,23 @@ curl -fsSL -o "$tmp_dir/$artifact.sha256" "$base_url/$artifact.sha256" \
   || fail "checksum file missing at $base_url/$artifact.sha256; refusing to install an unverified artifact."
 
 info "Verifying SHA-256 checksum..."
-( cd "$tmp_dir" && shasum -a 256 -c "$artifact.sha256" )
+# Parse the sidecar strictly instead of `shasum -c`: -c verifies whatever
+# file the downloaded sidecar names (e.g. "<digest of /bin/ls>  /bin/ls"),
+# so a tampered sidecar could pass this step without checking the zip.
+sidecar="$(cat "$tmp_dir/$artifact.sha256")"
+expected_digest="${sidecar%%  *}"
+case "$sidecar" in
+  *"
+"*) fail "checksum file must contain exactly one line; refusing to install." ;;
+esac
+printf '%s' "$expected_digest" | grep -Eqx '[0-9a-f]{64}' \
+  && [ "$sidecar" = "$expected_digest  $artifact" ] \
+  || fail "checksum file is not '<sha256>  $artifact'; refusing to install an unverified artifact."
+actual_digest="$(shasum -a 256 "$tmp_dir/$artifact")"
+actual_digest="${actual_digest%% *}"
+[ "$actual_digest" = "$expected_digest" ] \
+  || fail "SHA-256 mismatch for $artifact (expected $expected_digest, got $actual_digest); refusing to install."
+info "$artifact: OK"
 
 info "Extracting..."
 mkdir -p "$tmp_dir/extract"

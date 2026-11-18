@@ -76,7 +76,14 @@ private final class AccessibilityFakeItem: ManagedItemLifecycle {
         return menuRowSnapshotValues[index]
     }
 
-    func invokeMenuRow(at index: Int) {
+    private let actionToken = NSObject()
+
+    func menuRowActionToken(at index: Int) -> AnyObject? {
+        menuRows.indices.contains(index) && menuRows[index].action != nil ? actionToken : nil
+    }
+
+    func invokeMenuRow(at index: Int, expecting token: AnyObject) {
+        guard token === actionToken else { return }
         invokedRows.append(index)
     }
 

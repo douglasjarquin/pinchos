@@ -70,3 +70,4 @@ Equivalent primary and menu commands share one source and cache within a control
 
 Commands and actions are unsandboxed code executed with the user's permissions.
 Review executables, arguments, paths, network destinations, credentials, and write targets before placing them in TOML.
+Do not put secrets in `run` or `action` text; read them at run time from the Keychain or a private file, as described in [runtime.md](runtime.md#secrets-and-command-output).

@@ -50,7 +50,11 @@ protocol ManagedItemLifecycle: AnyObject {
     func menuRowFreshness(at index: Int) -> ValueFreshness
     func menuRowRuntimeSnapshot(at index: Int) -> ItemRuntimeSnapshot?
     func menuRowSnapshot(at index: Int) async -> CommandRunnerSnapshot?
-    func invokeMenuRow(at index: Int)
+    /// Identity of the action row `index` offers now. A menu captures it when
+    /// built and passes it back, so a menu left open across a reload cannot
+    /// run whatever command now occupies that index.
+    func menuRowActionToken(at index: Int) -> AnyObject?
+    func invokeMenuRow(at index: Int, expecting token: AnyObject)
     func refreshNow()
 }
 
@@ -160,10 +164,12 @@ private final class RefreshActionTarget: NSObject {
 private final class MenuRowTarget: NSObject {
     let item: any ManagedItemLifecycle
     let index: Int
+    let token: AnyObject
 
-    init(item: any ManagedItemLifecycle, index: Int) {
+    init(item: any ManagedItemLifecycle, index: Int, token: AnyObject) {
         self.item = item
         self.index = index
+        self.token = token
     }
 }
 
@@ -804,10 +810,10 @@ final class StatusItemController: StatusItemMenuDelegate {
             let value = item.menuRowValue(at: index)
             let freshness = item.menuRowFreshness(at: index)
             let title = menuRowTitle(row, value: value, freshness: freshness)
-            if row.action != nil {
+            if row.action != nil, let token = item.menuRowActionToken(at: index) {
                 let menuItem = NSMenuItem(title: title, action: #selector(menuRowAction(_:)), keyEquivalent: "")
                 menuItem.target = self
-                menuItem.representedObject = MenuRowTarget(item: item, index: index)
+                menuItem.representedObject = MenuRowTarget(item: item, index: index, token: token)
                 menuItem.setAccessibilityLabel(menuRowSpoken(row, value: value, freshness: freshness))
                 menu.addItem(menuItem)
             } else {
@@ -1078,7 +1084,7 @@ final class StatusItemController: StatusItemMenuDelegate {
 
     @objc private func menuRowAction(_ sender: NSMenuItem) {
         guard let target = sender.representedObject as? MenuRowTarget else { return }
-        target.item.invokeMenuRow(at: target.index)
+        target.item.invokeMenuRow(at: target.index, expecting: target.token)
     }
 
     @objc private func reloadConfigAction() {

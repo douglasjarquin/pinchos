@@ -420,7 +420,7 @@ final class RecoveryLifecycleTests: XCTestCase {
         }
 
         item.refreshNow()
-        item.invokeMenuRow(at: 0)
+        item.invokeMenuRow(at: 0, expecting: try XCTUnwrap(item.menuRowActionToken(at: 0)))
 
         let mainPID = try await waitForPID(at: mainPIDURL)
         let actionPID = try await waitForPID(at: actionPIDURL)

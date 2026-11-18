@@ -93,7 +93,7 @@ Opening a menu is synchronous and never waits on a command. Never-attempted rows
 
 The last successful value stays visible while a refresh is queued or running and after a failed command. Age uses the shared command-success timestamp against each consumer's `interval` or `cache`. Age-stale and scheduler-delayed share the ⌛︎ marker; VoiceOver says "stale, scheduler delayed" when the scheduler has not attempted since the value aged out, "stale" when it aged out without that delay, and "stale, refreshing" when an aged value is already refreshing. A failed command uses a warning marker. Scalar age starts at command success, not an invented provider timestamp. Option-click the item for diagnostics: last attempt, last success, queued or active refresh, and `Delay: scheduler` for both the primary value and dynamic menu rows. `pinchos doctor` is a separate CLI inspection and does not read that live cache. Details are in [docs/pinchos/runtime.md](docs/pinchos/runtime.md).
 
-Commands and actions are unsandboxed code executed with the user's permissions. Review executables, arguments, paths, network destinations, credentials, and write targets before placing them in TOML.
+Commands and actions are unsandboxed code executed with the user's permissions. Review executables, arguments, paths, network destinations, credentials, and write targets before placing them in TOML. Keep secrets out of command text; see [secrets and command output](docs/pinchos/runtime.md#secrets-and-command-output).
 
 Bounds, reload, recovery, and the rejected development syntax are in [docs/pinchos/runtime.md](docs/pinchos/runtime.md).
 

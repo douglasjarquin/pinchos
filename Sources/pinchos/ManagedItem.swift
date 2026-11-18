@@ -1040,11 +1040,19 @@ final class ManagedItem: ManagedItemLifecycle {
         return await menuRowRunner.snapshot()
     }
 
-    func invokeMenuRow(at index: Int) {
+    /// The runner is the row's identity: an update that changes any menu row
+    /// replaces every row runner, so a token from an older menu never matches.
+    func menuRowActionToken(at index: Int) -> AnyObject? {
+        guard isLive, menuRows.indices.contains(index), menuRows[index].action != nil else { return nil }
+        return menuRowRunners[index]
+    }
+
+    func invokeMenuRow(at index: Int, expecting token: AnyObject) {
         guard isLive,
             menuRows.indices.contains(index),
             menuRows[index].action != nil,
-            let menuRowRunner = menuRowRunners[index]
+            let menuRowRunner = menuRowRunners[index],
+            menuRowRunner === token
         else {
             return
         }

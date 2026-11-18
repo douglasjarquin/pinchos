@@ -21,9 +21,7 @@ extension SupervisorProcessSession {
     """
 
     static func launch(
-        stdoutRead: Int32,
         stdoutWrite: Int32,
-        stderrRead: Int32,
         stderrWrite: Int32,
         environment: [String: String]
     ) throws -> SupervisorProcessSession {
@@ -39,21 +37,19 @@ extension SupervisorProcessSession {
             var attributes: posix_spawnattr_t?
             try check(posix_spawnattr_init(&attributes), context: "unable to initialize supervisor attributes")
             defer { posix_spawnattr_destroy(&attributes) }
-            try check(posix_spawnattr_setflags(&attributes, Int16(POSIX_SPAWN_SETPGROUP)), context: "unable to configure supervisor process group")
+            // Same descriptor isolation as the command itself: only the
+            // descriptors set up below survive into the supervisor.
+            try check(posix_spawnattr_setflags(&attributes, Int16(POSIX_SPAWN_SETPGROUP | POSIX_SPAWN_CLOEXEC_DEFAULT)), context: "unable to configure supervisor process group")
             try check(posix_spawnattr_setpgroup(&attributes, 0), context: "unable to configure supervisor process group leader")
 
             var fileActions: posix_spawn_file_actions_t?
             try check(posix_spawn_file_actions_init(&fileActions), context: "unable to initialize supervisor file actions")
             defer { posix_spawn_file_actions_destroy(&fileActions) }
+            try check(posix_spawn_file_actions_addopen(&fileActions, STDIN_FILENO, "/dev/null", O_RDONLY, 0), context: "unable to configure supervisor stdin")
             try addDup2(stdoutWrite, STDOUT_FILENO, to: &fileActions)
             try addDup2(stderrWrite, STDERR_FILENO, to: &fileActions)
             try addDup2(control.read, controlFileDescriptor, to: &fileActions)
             try addDup2(status.write, statusFileDescriptor, to: &fileActions)
-            for fileDescriptor in [stdoutRead, stdoutWrite, stderrRead, stderrWrite, control.read, control.write, status.read, status.write] {
-                if fileDescriptor != STDOUT_FILENO && fileDescriptor != STDERR_FILENO && fileDescriptor != controlFileDescriptor && fileDescriptor != statusFileDescriptor {
-                    try check(posix_spawn_file_actions_addclose(&fileActions, fileDescriptor), context: "unable to close supervisor descriptor")
-                }
-            }
 
             var arguments = try makeArguments()
             defer { freeArguments(arguments) }

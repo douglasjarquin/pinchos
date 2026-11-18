@@ -123,6 +123,41 @@ final class ManagedItemLifecycleTests: XCTestCase {
         XCTAssertFalse(exists(marker("old")))
     }
 
+    /// Trust boundary (#163): a menu left open across a reload that reorders
+    /// rows must not run the command that now sits at the clicked index.
+    @MainActor
+    func testStaleMenuRowTokenDoesNotRunTheRowThatNowOccupiesItsIndex() async throws {
+        let deploy = marker("deploy")
+        let wipe = marker("wipe")
+        let item = makeItem(config: config(
+            run: "printf value",
+            menu: [
+                MenuRowConfig(label: "Deploy", action: "touch '\(deploy.path)'"),
+                MenuRowConfig(label: "Wipe", action: "touch '\(wipe.path)'")
+            ]
+        ))
+        let staleDeployToken = try XCTUnwrap(item.menuRowActionToken(at: 0))
+
+        await item.prepareUpdate(config: config(
+            run: "printf value",
+            menu: [
+                MenuRowConfig(label: "Wipe", action: "touch '\(wipe.path)'"),
+                MenuRowConfig(label: "Deploy", action: "touch '\(deploy.path)'")
+            ]
+        ))
+        item.commitPreparedUpdate()
+
+        item.invokeMenuRow(at: 0, expecting: staleDeployToken)
+        await settle()
+        XCTAssertFalse(exists(wipe), "a stale Deploy menu row ran the Wipe action that replaced it")
+        XCTAssertFalse(exists(deploy), "a stale menu row ran an action after its configuration was replaced")
+
+        item.invokeMenuRow(at: 1, expecting: try XCTUnwrap(item.menuRowActionToken(at: 1)))
+        let ranDeploy = await waitUntil { self.exists(deploy) }
+        XCTAssertTrue(ranDeploy, "a current menu row did not run its action")
+        XCTAssertFalse(exists(wipe))
+    }
+
     @MainActor
     func testHeldActionReleasedWhileUpdateIsPreparedDoesNotRunReplacedRunner() async throws {
         try await assertHeldActionDoesNotRunReplacedRunner(releaseAfterCommit: false)
@@ -144,7 +179,7 @@ final class ManagedItemLifecycleTests: XCTestCase {
         let gate = Latch()
         item.actionInvocationTestGate = { await gate.wait() }
 
-        item.invokeMenuRow(at: 0)
+        item.invokeMenuRow(at: 0, expecting: try XCTUnwrap(item.menuRowActionToken(at: 0)))
         let held = await waitUntil { await gate.arrivals == 1 }
         XCTAssertTrue(held, "the action never reached the test gate")
 
@@ -166,7 +201,7 @@ final class ManagedItemLifecycleTests: XCTestCase {
         XCTAssertFalse(exists(newAction), "the held action ran a runner it was never accepted for")
 
         item.actionInvocationTestGate = nil
-        item.invokeMenuRow(at: 0)
+        item.invokeMenuRow(at: 0, expecting: try XCTUnwrap(item.menuRowActionToken(at: 0)))
         let ranNew = await waitUntil { self.exists(newAction) }
         XCTAssertTrue(ranNew, "an action invoked after commit did not run the new runner")
         XCTAssertFalse(exists(oldAction))
@@ -370,7 +405,8 @@ final class ManagedItemLifecycleTests: XCTestCase {
 
         item.activate()
         item.refreshNow()
-        item.invokeMenuRow(at: 0)
+        XCTAssertNil(item.menuRowActionToken(at: 0), "a retired item offered a menu action", file: file, line: line)
+        item.invokeMenuRow(at: 0, expecting: NSObject())
         await item.prepareUpdate(config: config(run: touching("retired-update", output: "x")))
         item.commitPreparedUpdate()
         item.refreshNow()
