@@ -45,8 +45,10 @@ A row may combine `run` and `action`.
 Omit `cache` to make the row manual-only.
 `separator = true` is exclusive and cannot be combined with other fields.
 
-Menu construction is synchronous and never executes a command.
-Dynamic rows display their cached value and refresh asynchronously when stale or unavailable.
+Opening a menu is synchronous and never waits on a command.
+Never-attempted (unavailable) rows may start a background refresh immediately.
+Stale or failed cached rows may request a background retry after a fixed 30-second cadence.
+Fresh values do not refresh on open.
 Refresh Now requests every distinct value source, including manual rows, and never runs actions.
 Actions run only after activation.
 
