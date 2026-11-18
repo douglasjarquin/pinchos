@@ -21,15 +21,17 @@ extension SupervisorProcessSession {
     """
 
     static func launch(
-        stdoutRead: Int32,
         stdoutWrite: Int32,
-        stderrRead: Int32,
         stderrWrite: Int32,
-        environment: [String: String]
+        environment: [String: String],
+        makePipe: () throws -> (read: Int32, write: Int32) = makePipe
     ) throws -> SupervisorProcessSession {
-        let control = try makePipe()
-        let status = try makePipe()
+        var owned = OwnedDescriptors()
         do {
+            let control = try makePipe()
+            owned.adopt(control.read, control.write)
+            let status = try makePipe()
+            owned.adopt(status.read, status.write)
             try setCloseOnExec(control.read)
             try setCloseOnExec(control.write)
             try setCloseOnExec(status.read)
@@ -39,21 +41,19 @@ extension SupervisorProcessSession {
             var attributes: posix_spawnattr_t?
             try check(posix_spawnattr_init(&attributes), context: "unable to initialize supervisor attributes")
             defer { posix_spawnattr_destroy(&attributes) }
-            try check(posix_spawnattr_setflags(&attributes, Int16(POSIX_SPAWN_SETPGROUP)), context: "unable to configure supervisor process group")
+            // Same descriptor isolation as the command itself: only the
+            // descriptors set up below survive into the supervisor.
+            try check(posix_spawnattr_setflags(&attributes, Int16(POSIX_SPAWN_SETPGROUP | POSIX_SPAWN_CLOEXEC_DEFAULT)), context: "unable to configure supervisor process group")
             try check(posix_spawnattr_setpgroup(&attributes, 0), context: "unable to configure supervisor process group leader")
 
             var fileActions: posix_spawn_file_actions_t?
             try check(posix_spawn_file_actions_init(&fileActions), context: "unable to initialize supervisor file actions")
             defer { posix_spawn_file_actions_destroy(&fileActions) }
+            try check(posix_spawn_file_actions_addopen(&fileActions, STDIN_FILENO, "/dev/null", O_RDONLY, 0), context: "unable to configure supervisor stdin")
             try addDup2(stdoutWrite, STDOUT_FILENO, to: &fileActions)
             try addDup2(stderrWrite, STDERR_FILENO, to: &fileActions)
             try addDup2(control.read, controlFileDescriptor, to: &fileActions)
             try addDup2(status.write, statusFileDescriptor, to: &fileActions)
-            for fileDescriptor in [stdoutRead, stdoutWrite, stderrRead, stderrWrite, control.read, control.write, status.read, status.write] {
-                if fileDescriptor != STDOUT_FILENO && fileDescriptor != STDERR_FILENO && fileDescriptor != controlFileDescriptor && fileDescriptor != statusFileDescriptor {
-                    try check(posix_spawn_file_actions_addclose(&fileActions, fileDescriptor), context: "unable to close supervisor descriptor")
-                }
-            }
 
             var arguments = try makeArguments()
             defer { freeArguments(arguments) }
@@ -76,24 +76,56 @@ extension SupervisorProcessSession {
                 }
             }
             try check(spawnStatus, context: "unable to launch process-session supervisor")
-            close(control.read)
-            close(status.write)
+            owned.close(control.read)
+            owned.close(status.write)
             guard setNonBlocking(status.read) else {
+                let errorCode = errno
                 _ = kill(-processID, SIGKILL)
                 _ = waitpid(processID, nil, 0)
-                throw LaunchError.posix(errno, context: "unable to configure supervisor status pipe")
+                throw LaunchError.posix(errorCode, context: "unable to configure supervisor status pipe")
             }
-            return SupervisorProcessSession(processGroupID: processID, controlWrite: control.write, statusRead: status.read)
+            return SupervisorProcessSession(
+                processGroupID: processID,
+                controlWrite: owned.release(control.write),
+                statusRead: owned.release(status.read)
+            )
         } catch {
-            close(control.read)
-            close(control.write)
-            close(status.read)
-            close(status.write)
+            owned.closeAll()
             throw error
         }
     }
 
-    private static func makePipe() throws -> (read: Int32, write: Int32) {
+    /// Single owner for the supervisor pipes from allocation until hand-off:
+    /// each descriptor is closed at most once, on whichever path ends first,
+    /// so unwinding never leaks one or closes a number another session may
+    /// already have reused.
+    private struct OwnedDescriptors {
+        private var open: Set<Int32> = []
+
+        mutating func adopt(_ descriptors: Int32...) {
+            open.formUnion(descriptors)
+        }
+
+        mutating func close(_ descriptor: Int32) {
+            if open.remove(descriptor) != nil {
+                Darwin.close(descriptor)
+            }
+        }
+
+        mutating func release(_ descriptor: Int32) -> Int32 {
+            open.remove(descriptor)
+            return descriptor
+        }
+
+        mutating func closeAll() {
+            for descriptor in open {
+                Darwin.close(descriptor)
+            }
+            open.removeAll()
+        }
+    }
+
+    static func makePipe() throws -> (read: Int32, write: Int32) {
         var descriptors = [Int32](repeating: -1, count: 2)
         guard Darwin.pipe(&descriptors) == 0 else {
             throw LaunchError.posix(errno, context: "unable to create process-session pipe")

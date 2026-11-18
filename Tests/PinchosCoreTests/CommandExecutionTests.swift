@@ -53,6 +53,32 @@ final class CommandExecutionTests: XCTestCase {
         XCTAssertEqual(URL(fileURLWithPath: outputLines[3]).lastPathComponent, workingDirectory.lastPathComponent)
     }
 
+    /// Trust boundary (#163): a command receives `/dev/null` as stdin and only
+    /// its own stdout/stderr pipes - never the host's stdin (a terminal under
+    /// `pinchos run`), app-owned descriptors, or another concurrent
+    /// command's pipes that are not yet marked close-on-exec.
+    func testCommandInheritsOnlyDevNullStdinAndItsOwnOutputPipes() async throws {
+        let leakedDescriptor = open("/dev/null", O_RDONLY)
+        XCTAssertGreaterThanOrEqual(leakedDescriptor, 0)
+        defer { close(leakedDescriptor) }
+        XCTAssertEqual(fcntl(leakedDescriptor, F_GETFD) & FD_CLOEXEC, 0, "the probe descriptor must be inheritable")
+
+        let runner = CommandRunner(
+            command: """
+            [ -e /dev/fd/\(leakedDescriptor) ] && echo leaked || echo isolated
+            [ "$(/usr/bin/stat -L -f %Z /dev/stdin)" = "$(/usr/bin/stat -L -f %Z /dev/null)" ] && echo devnull || echo inherited-stdin
+            """,
+            timeout: 2,
+            maxOutputBytes: 256
+        )
+        let outcome = await runner.runIfIdle()
+        guard case .completed(let execution) = outcome else {
+            return XCTFail("expected a completed execution, got \(outcome)")
+        }
+        XCTAssertEqual(execution.terminalReason, .exited(code: 0), execution.stderr)
+        XCTAssertEqual(execution.stdout, "isolated\ndevnull\n")
+    }
+
     func testPolicyPATHAndWorkingDirectoryMatchUnderGUIAndTerminalInheritedEnvironments() async throws {
         let home = FileManager.default.temporaryDirectory
             .appendingPathComponent("pinchos-policy-home-\(UUID().uuidString)")
@@ -712,6 +738,34 @@ final class CommandExecutionTests: XCTestCase {
     /// write lands on a dead reader in most iterations. Without SIGPIPE
     /// suppression on that pipe, any one of those writes kills this test
     /// process with signal 13 instead of returning.
+    /// A failure after the first supervisor pipe is allocated must close
+    /// that pipe instead of leaking it (#163 review).
+    func testSupervisorLaunchClosesFirstPipeWhenSecondAllocationFails() throws {
+        struct InjectedFailure: Error {}
+        var allocated: [Int32] = []
+        var calls = 0
+        XCTAssertThrowsError(try SupervisorProcessSession.launch(
+            stdoutWrite: STDOUT_FILENO,
+            stderrWrite: STDERR_FILENO,
+            environment: [:],
+            makePipe: {
+                calls += 1
+                guard calls == 1 else { throw InjectedFailure() }
+                let pipe = try SupervisorProcessSession.makePipe()
+                allocated = [pipe.read, pipe.write]
+                return pipe
+            }
+        )) { error in
+            XCTAssertTrue(error is InjectedFailure, "unexpected error \(error)")
+        }
+        XCTAssertEqual(allocated.count, 2)
+        for descriptor in allocated {
+            errno = 0
+            XCTAssertEqual(fcntl(descriptor, F_GETFD), -1, "descriptor \(descriptor) leaked")
+            XCTAssertEqual(errno, EBADF)
+        }
+    }
+
     func testSupervisorDyingBeforeSendDoesNotKillHostProcess() async throws {
         for _ in 0..<40 {
             var stdoutPipe = [Int32](repeating: -1, count: 2)
@@ -722,9 +776,7 @@ final class CommandExecutionTests: XCTestCase {
                 for fileDescriptor in stdoutPipe + stderrPipe { close(fileDescriptor) }
             }
             let session = try SupervisorProcessSession.launch(
-                stdoutRead: stdoutPipe[0],
                 stdoutWrite: stdoutPipe[1],
-                stderrRead: stderrPipe[0],
                 stderrWrite: stderrPipe[1],
                 environment: [:]
             )

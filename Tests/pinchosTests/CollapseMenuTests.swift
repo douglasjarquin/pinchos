@@ -93,8 +93,11 @@ private final class CollapseFakeItem: ManagedItemLifecycle {
     }
 
     func menuRowSnapshot(at index: Int) async -> CommandRunnerSnapshot? { nil }
-    func invokeMenuRow(at index: Int) {}
-    func refreshNow() {}
+    func menuRowActionToken(at index: Int) -> AnyObject? { nil }
+    func invokeMenuRow(at index: Int, expecting token: AnyObject) {}
+    private let refreshToken = NSObject()
+    var refreshNowToken: AnyObject? { refreshToken }
+    func refreshNow(expecting token: AnyObject) {}
 }
 
 @MainActor

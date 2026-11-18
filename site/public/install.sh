@@ -23,7 +23,7 @@ app_name="Pinchos.app"
 info() { printf '%s\n' "$*"; }
 fail() { printf 'install: error: %s\n' "$*" >&2; exit 1; }
 
-for tool in uname sw_vers curl shasum ditto codesign spctl grep pgrep; do
+for tool in uname sw_vers curl shasum head cmp ditto codesign spctl grep pgrep; do
   command -v "$tool" >/dev/null 2>&1 || fail "required tool not found on PATH: $tool"
 done
 
@@ -63,7 +63,21 @@ curl -fsSL -o "$tmp_dir/$artifact.sha256" "$base_url/$artifact.sha256" \
   || fail "checksum file missing at $base_url/$artifact.sha256; refusing to install an unverified artifact."
 
 info "Verifying SHA-256 checksum..."
-( cd "$tmp_dir" && shasum -a 256 -c "$artifact.sha256" )
+# Compare the sidecar byte-for-byte with the one line `shasum -a 256 <zip>`
+# prints, instead of `shasum -c`: -c verifies whatever file the downloaded
+# sidecar names (e.g. "<digest of /bin/ls>  /bin/ls"), and reading it via
+# command substitution would drop NULs and trailing newlines before checking.
+expected_digest="$(head -c 64 "$tmp_dir/$artifact.sha256")"
+printf '%s' "$expected_digest" | grep -Eqx '[0-9a-f]{64}' \
+  || fail "checksum file does not start with a SHA-256 digest; refusing to install an unverified artifact."
+printf '%s  %s\n' "$expected_digest" "$artifact" > "$tmp_dir/expected.sha256"
+cmp -s "$tmp_dir/expected.sha256" "$tmp_dir/$artifact.sha256" \
+  || fail "checksum file is not exactly one '<sha256>  $artifact' line; refusing to install an unverified artifact."
+actual_digest="$(shasum -a 256 "$tmp_dir/$artifact")"
+actual_digest="${actual_digest%% *}"
+[ "$actual_digest" = "$expected_digest" ] \
+  || fail "SHA-256 mismatch for $artifact (expected $expected_digest, got $actual_digest); refusing to install."
+info "$artifact: OK"
 
 info "Extracting..."
 mkdir -p "$tmp_dir/extract"

@@ -11,8 +11,8 @@
 #   1. Cut the release tag vX.Y.Z; the release pipeline signs, notarizes, and
 #      publishes Pinchos-X.Y.Z-macos-arm64.zip plus its .sha256 sidecar. The
 #      sidecar contract is literal `shasum -a 256 <zip>` output
-#      ("<64-hex>  <zip name>") - site/public/install.sh verifies it with
-#      `shasum -a 256 -c` and nothing else parses it.
+#      ("<64-hex>  <zip name>") - site/public/install.sh requires exactly
+#      that one line for the downloaded zip name and compares the digest.
 #   2. Download the published Pinchos-X.Y.Z-macos-arm64.zip.sha256 (or
 #      recompute with `shasum -a 256` on the zip) and copy the 64-character
 #      hex digest below.

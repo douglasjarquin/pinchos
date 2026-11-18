@@ -205,7 +205,7 @@ final class ConfigWatcher {
     // MARK: - Dispatch source construction
 
     private func openSource(_ path: String) -> Int32? {
-        let fd = open(path, O_EVTONLY)
+        let fd = open(path, O_EVTONLY | O_CLOEXEC)
         return fd >= 0 ? fd : nil
     }
 

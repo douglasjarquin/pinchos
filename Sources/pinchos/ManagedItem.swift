@@ -61,6 +61,9 @@ final class ManagedItem: ManagedItemLifecycle {
     private let now: () -> Date
     private var lifecycle: Lifecycle = .live
     private var configurationGeneration = 0
+    /// Replaced whenever a commit swaps the primary source or the menu rows,
+    /// so a Refresh Now from a menu built before that commit is rejected.
+    private var refreshSources = RefreshSourcesToken()
     private var pendingRefreshInvocations = 0
     private var refreshInvocationsDrained: CheckedContinuation<Void, Never>?
     private var pendingActionInvocations = 0
@@ -381,6 +384,9 @@ final class ManagedItem: ManagedItemLifecycle {
         if let primarySource = pendingUpdate.primarySource {
             self.primarySource = primarySource
             primarySourceLease = pendingUpdate.primarySourceLease!
+        }
+        if pendingUpdate.primarySource != nil || pendingUpdate.menuRowsChanged {
+            refreshSources = RefreshSourcesToken()
         }
         var rowsToRefreshAfterLive: [Int] = []
         if pendingUpdate.menuRowsChanged {
@@ -742,7 +748,12 @@ final class ManagedItem: ManagedItemLifecycle {
         requestRefresh()
     }
 
-    func refreshNow() {
+    var refreshNowToken: AnyObject? {
+        isLive ? refreshSources : nil
+    }
+
+    func refreshNow(expecting token: AnyObject) {
+        guard isLive, token === refreshSources else { return }
         requestRefresh()
         for index in menuRowSources.keys.sorted() {
             requestMenuRowRefresh(at: index)
@@ -1048,11 +1059,19 @@ final class ManagedItem: ManagedItemLifecycle {
         return await menuRowRunner.snapshot()
     }
 
-    func invokeMenuRow(at index: Int) {
+    /// The runner is the row's identity: an update that changes any menu row
+    /// replaces every row runner, so a token from an older menu never matches.
+    func menuRowActionToken(at index: Int) -> AnyObject? {
+        guard isLive, menuRows.indices.contains(index), menuRows[index].action != nil else { return nil }
+        return menuRowRunners[index]
+    }
+
+    func invokeMenuRow(at index: Int, expecting token: AnyObject) {
         guard isLive,
             menuRows.indices.contains(index),
             menuRows[index].action != nil,
-            let menuRowRunner = menuRowRunners[index]
+            let menuRowRunner = menuRowRunners[index],
+            menuRowRunner === token
         else {
             return
         }
@@ -1173,3 +1192,6 @@ final class ManagedItem: ManagedItemLifecycle {
         statusItem?.isVisible = visible && !statusItemSuppressed
     }
 }
+
+/// Identity-only token; see `ManagedItem.refreshSources`.
+private final class RefreshSourcesToken {}

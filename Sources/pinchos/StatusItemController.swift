@@ -50,8 +50,16 @@ protocol ManagedItemLifecycle: AnyObject {
     func menuRowFreshness(at index: Int) -> ValueFreshness
     func menuRowRuntimeSnapshot(at index: Int) -> ItemRuntimeSnapshot?
     func menuRowSnapshot(at index: Int) async -> CommandRunnerSnapshot?
-    func invokeMenuRow(at index: Int)
-    func refreshNow()
+    /// Identity of the action row `index` offers now. A menu captures it when
+    /// built and passes it back, so a menu left open across a reload cannot
+    /// run whatever command now occupies that index.
+    func menuRowActionToken(at index: Int) -> AnyObject?
+    func invokeMenuRow(at index: Int, expecting token: AnyObject)
+    /// Identity of the value sources Refresh Now would request now. A menu
+    /// captures it when built, so its Refresh Now cannot run sources a
+    /// reload swapped in while the menu was open.
+    var refreshNowToken: AnyObject? { get }
+    func refreshNow(expecting token: AnyObject)
 }
 
 extension ManagedItemLifecycle {
@@ -150,9 +158,11 @@ private enum RecoveryActionError: LocalizedError {
 @MainActor
 private final class RefreshActionTarget: NSObject {
     let item: any ManagedItemLifecycle
+    let token: AnyObject
 
-    init(item: any ManagedItemLifecycle) {
+    init(item: any ManagedItemLifecycle, token: AnyObject) {
         self.item = item
+        self.token = token
     }
 }
 
@@ -160,10 +170,12 @@ private final class RefreshActionTarget: NSObject {
 private final class MenuRowTarget: NSObject {
     let item: any ManagedItemLifecycle
     let index: Int
+    let token: AnyObject
 
-    init(item: any ManagedItemLifecycle, index: Int) {
+    init(item: any ManagedItemLifecycle, index: Int, token: AnyObject) {
         self.item = item
         self.index = index
+        self.token = token
     }
 }
 
@@ -611,9 +623,10 @@ final class StatusItemController: StatusItemMenuDelegate {
     private func addCompactCommandContent(item: any ManagedItemLifecycle, to menu: NSMenu) {
         addMenuRows(for: item, to: menu)
         addSeparatorIfNeeded(to: menu)
+        guard let token = item.refreshNowToken else { return }
         let refresh = NSMenuItem(title: "Refresh Now", action: #selector(refreshAction(_:)), keyEquivalent: "")
         refresh.target = self
-        refresh.representedObject = RefreshActionTarget(item: item)
+        refresh.representedObject = RefreshActionTarget(item: item, token: token)
         menu.addItem(refresh)
     }
 
@@ -804,10 +817,10 @@ final class StatusItemController: StatusItemMenuDelegate {
             let value = item.menuRowValue(at: index)
             let freshness = item.menuRowFreshness(at: index)
             let title = menuRowTitle(row, value: value, freshness: freshness)
-            if row.action != nil {
+            if row.action != nil, let token = item.menuRowActionToken(at: index) {
                 let menuItem = NSMenuItem(title: title, action: #selector(menuRowAction(_:)), keyEquivalent: "")
                 menuItem.target = self
-                menuItem.representedObject = MenuRowTarget(item: item, index: index)
+                menuItem.representedObject = MenuRowTarget(item: item, index: index, token: token)
                 menuItem.setAccessibilityLabel(menuRowSpoken(row, value: value, freshness: freshness))
                 menu.addItem(menuItem)
             } else {
@@ -1073,12 +1086,12 @@ final class StatusItemController: StatusItemMenuDelegate {
 
     @objc private func refreshAction(_ sender: NSMenuItem) {
         guard let target = sender.representedObject as? RefreshActionTarget else { return }
-        target.item.refreshNow()
+        target.item.refreshNow(expecting: target.token)
     }
 
     @objc private func menuRowAction(_ sender: NSMenuItem) {
         guard let target = sender.representedObject as? MenuRowTarget else { return }
-        target.item.invokeMenuRow(at: target.index)
+        target.item.invokeMenuRow(at: target.index, expecting: target.token)
     }
 
     @objc private func reloadConfigAction() {
