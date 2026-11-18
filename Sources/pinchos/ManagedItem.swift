@@ -86,6 +86,10 @@ final class ManagedItem: ManagedItemLifecycle {
     /// presentation tail deterministically. Production code leaves it `nil`.
     var primaryRefreshTailTestGate: (() async -> Void)?
 
+    /// Count of paints `settleRefreshFlight` has rendered, so tests can prove
+    /// each exit path from a flight ends with exactly one settle paint.
+    private(set) var settledFlightPaintCountForTesting = 0
+
     /// Test-only seam awaited alongside each runner's real cancellation during
     /// `prepareUpdate`/`prepareRemoval`, keyed by role ("primary" or
     /// "action:<index>"). Real runner cancellation is normally too fast to
@@ -761,7 +765,7 @@ final class ManagedItem: ManagedItemLifecycle {
         pendingRefreshFlightID = flightID
         let task = Task { @MainActor [self] in
             await refresh(flightID: flightID)
-            endRefreshCoalescing(flightID)
+            await settleRefreshFlight(flightID)
             finishRefreshInvocation()
         }
         pendingRefreshPermitTask = task
@@ -785,6 +789,8 @@ final class ManagedItem: ManagedItemLifecycle {
         }
     }
 
+    /// Runs one admitted primary flight up to, but not including, its final
+    /// paint; `settleRefreshFlight` owns that paint for every exit path.
     private func refresh(flightID: UInt64) async {
         guard isLive else { return }
         let generation = configurationGeneration
@@ -792,7 +798,7 @@ final class ManagedItem: ManagedItemLifecycle {
         // flight, before the permit wait or the command. Waiting for
         // `primarySource.refresh()` would leave the bar on the pre-wake
         // title until success or ⚠︎.
-        await updatePresentation(forceRefreshing: true, flightID: flightID)
+        await updatePresentation(flightID: flightID)
         guard !isRetired, generation == configurationGeneration else { return }
         _ = await primarySource.refresh()
         // The command has settled: later requests must start a new one
@@ -805,7 +811,21 @@ final class ManagedItem: ManagedItemLifecycle {
         }
         guard !isRetired, generation == configurationGeneration else { return }
         applyMenuRowCachedValue(cached, from: primarySource)
-        await updatePresentation(flightID: flightID)
+    }
+
+    /// The single exit from an admitted flight's refreshing state, whatever
+    /// ended it: completion, an early return because the item left `live`,
+    /// a generation change from reload, or cancellation from reload or
+    /// removal. It closes the coalescing window and, unless a newer flight
+    /// has been admitted (that flight owns the next paint and settles the
+    /// same way), paints exactly once from committed state. See the
+    /// refreshing invariant in docs/pinchos/runtime.md.
+    private func settleRefreshFlight(_ flightID: UInt64) async {
+        endRefreshCoalescing(flightID)
+        guard !isRetired, flightID == nextRefreshFlightID else { return }
+        if await updatePresentation(flightID: flightID) {
+            settledFlightPaintCountForTesting += 1
+        }
     }
 
     private func requestPresentationUpdate() {
@@ -816,25 +836,18 @@ final class ManagedItem: ManagedItemLifecycle {
 
     /// Paints are ordered by the primary refresh lifecycle, not by when
     /// their snapshots were gathered: a paint belonging to `flightID` is
-    /// dropped once a newer flight has been admitted (that flight paints
-    /// next), and any paint while a flight is still queued or running shows
-    /// the refreshing state, so an older tail cannot hide the newer flight's
-    /// stale-while-refreshing marker.
-    private func updatePresentation(forceRefreshing: Bool = false, flightID: UInt64? = nil) async {
+    /// dropped once a newer flight has been admitted, because that flight
+    /// paints next and settles through `settleRefreshFlight`.
+    /// Returns whether it painted.
+    @discardableResult
+    private func updatePresentation(flightID: UInt64? = nil) async -> Bool {
         let runnerSnapshot = await primarySource.runnerSnapshot()
         let cached = await primarySource.snapshot()
-        let hasInFlightRefresh = await primarySource.hasInFlightRefresh()
-        guard !isRetired else { return }
-        if let flightID, flightID != nextRefreshFlightID { return }
+        guard !isRetired else { return false }
+        if let flightID, flightID != nextRefreshFlightID { return false }
         adoptCachedValue(cached)
-        renderPresentation(
-            makeRuntimeSnapshot(
-                runnerSnapshot,
-                cached: cached,
-                hasInFlightRefresh: hasInFlightRefresh,
-                forceRefreshing: forceRefreshing || pendingRefreshFlightID != nil
-            )
-        )
+        renderPresentation(makeRuntimeSnapshot(runnerSnapshot, cached: cached))
+        return true
     }
 
     /// Keep the visible text and the success timestamp from the same shared
@@ -876,15 +889,16 @@ final class ManagedItem: ManagedItemLifecycle {
         setVisibility(true)
     }
 
+    /// The one place the item's refreshing state is decided. It is true only
+    /// while a primary flight this item admitted is queued or running
+    /// (`pendingRefreshFlightID`), never because another consumer of a
+    /// shared source is refreshing it: this item would get no completion
+    /// paint for that flight and could stay on ⌛︎ forever.
     private func makeRuntimeSnapshot(
         _ runnerSnapshot: CommandRunnerSnapshot,
-        cached: CachedValue? = nil,
-        hasInFlightRefresh: Bool = false,
-        forceRefreshing: Bool = false
+        cached: CachedValue? = nil
     ) -> ItemRuntimeSnapshot {
-        let isRefreshing = forceRefreshing
-            || runnerSnapshot.isRunning
-            || (cached?.state == .refreshing && hasInFlightRefresh)
+        let isRefreshing = pendingRefreshFlightID != nil
         return ItemRuntimeSnapshot(
             isRunning: runnerSnapshot.isRunning,
             fullOutput: cached?.value ?? lastSuccessfulOutput,
@@ -901,14 +915,8 @@ final class ManagedItem: ManagedItemLifecycle {
     func runtimeSnapshot() async -> ItemRuntimeSnapshot {
         let runnerSnapshot = await primarySource.runnerSnapshot()
         let cached = await primarySource.snapshot()
-        let hasInFlightRefresh = await primarySource.hasInFlightRefresh()
         adoptCachedValue(cached)
-        let snapshot = makeRuntimeSnapshot(
-            runnerSnapshot,
-            cached: cached,
-            hasInFlightRefresh: hasInFlightRefresh,
-            forceRefreshing: pendingRefreshFlightID != nil
-        )
+        let snapshot = makeRuntimeSnapshot(runnerSnapshot, cached: cached)
         renderPresentation(snapshot)
         return snapshot
     }
