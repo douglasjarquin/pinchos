@@ -350,6 +350,69 @@ final class ManagedItemRefreshTests: XCTestCase {
         XCTAssertEqual(item.renderedAccessibilityLabel, "second, fresh")
     }
 
+    /// Round-2 review of #206: a newer request that exits before painting
+    /// (here, Refresh Now immediately followed by a menu-only reload, so the
+    /// flight finds the item no longer live) must not leave the older
+    /// flight's settled result unpainted behind the refreshing state.
+    @MainActor
+    func testSettledPrimaryStillPaintsWhenNextRefreshExitsDuringMenuReload() async throws {
+        let log = path("tail-reload.log")
+        let command = counting(log, output: "settled")
+        let initial = ItemConfig(
+            name: "item",
+            run: command,
+            interval: .manual,
+            menu: [MenuRowConfig(label: "Old action", action: "true")]
+        )
+        let updated = ItemConfig(
+            name: "item",
+            run: command,
+            interval: .manual,
+            menu: [MenuRowConfig(label: "New action", action: "true")]
+        )
+        let item = makeItem(config: initial)
+        let olderTail = RefreshTailLatch(holdsFirstOnly: true)
+        let reloadGate = RefreshTailLatch(holdsFirstOnly: true)
+        item.primaryRefreshTailTestGate = { await olderTail.wait() }
+        item.cancellationSettlementDelayForTesting = { role in
+            if role == "menu-row:0" {
+                await reloadGate.wait()
+            }
+        }
+
+        let older = Task { await item.refreshPrimaryForTesting() }
+        let held = await waitUntil { await olderTail.arrivals == 1 }
+        guard held else {
+            await olderTail.open()
+            await reloadGate.open()
+            await older.value
+            return XCTFail("the older flight never reached its tail")
+        }
+        XCTAssertEqual(lineCount(log), 1)
+        XCTAssertEqual(item.renderedAccessibilityLabel, "refreshing")
+
+        let reload = Task { @MainActor in
+            item.refreshNow()
+            await item.prepareUpdate(config: updated)
+            item.commitPreparedUpdate()
+        }
+        let reloading = await waitUntil { await reloadGate.arrivals == 1 }
+        XCTAssertTrue(reloading, "the menu reload never reached its cancellation phase")
+        await olderTail.open()
+        await older.value
+        await item.awaitPrimaryRefreshForTesting()
+        await reloadGate.open()
+        await reload.value
+
+        XCTAssertEqual(item.config.menu.first?.label, "New action")
+        XCTAssertEqual(lineCount(log), 1, "the exiting request ran a command")
+        XCTAssertEqual(
+            item.renderedAccessibilityLabel,
+            "settled, fresh",
+            "the settled result stayed unpainted behind the refreshing state"
+        )
+    }
+
     @MainActor
     func testDuplicatePrimaryAndMenuConsumersJoinOneRefresh() async throws {
         let log = path("shared.log")

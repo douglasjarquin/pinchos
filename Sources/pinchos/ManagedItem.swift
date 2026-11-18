@@ -760,8 +760,16 @@ final class ManagedItem: ManagedItemLifecycle {
         pendingRefreshInvocations += 1
         pendingRefreshFlightID = flightID
         let task = Task { @MainActor [self] in
-            await refresh(flightID: flightID)
+            let paintedResult = await refresh(flightID: flightID)
             endRefreshCoalescing(flightID)
+            // Admitting this flight superseded older flights' paints. If it
+            // exits without painting its own result (lifecycle left `live`,
+            // the generation moved, or its wait was cancelled) while still the
+            // newest flight, paint the current settled state so the last
+            // completed result is not left unpainted behind ⌛︎.
+            if !paintedResult, flightID == nextRefreshFlightID, !isRetired {
+                await updatePresentation(flightID: flightID)
+            }
             finishRefreshInvocation()
         }
         pendingRefreshPermitTask = task
@@ -785,27 +793,29 @@ final class ManagedItem: ManagedItemLifecycle {
         }
     }
 
-    private func refresh(flightID: UInt64) async {
-        guard isLive else { return }
+    /// Returns whether the flight reached its final paint.
+    private func refresh(flightID: UInt64) async -> Bool {
+        guard isLive else { return false }
         let generation = configurationGeneration
         // Paint stale-while-refreshing as soon as this item admits the
         // flight, before the permit wait or the command. Waiting for
         // `primarySource.refresh()` would leave the bar on the pre-wake
         // title until success or ⚠︎.
         await updatePresentation(forceRefreshing: true, flightID: flightID)
-        guard !isRetired, generation == configurationGeneration else { return }
+        guard !isRetired, generation == configurationGeneration else { return false }
         _ = await primarySource.refresh()
         // The command has settled: later requests must start a new one
         // rather than join this flight's presentation tail.
         endRefreshCoalescing(flightID)
-        guard !isRetired, generation == configurationGeneration else { return }
+        guard !isRetired, generation == configurationGeneration else { return false }
         let cached = await primarySource.snapshot()
         if let gate = primaryRefreshTailTestGate {
             await gate()
         }
-        guard !isRetired, generation == configurationGeneration else { return }
+        guard !isRetired, generation == configurationGeneration else { return false }
         applyMenuRowCachedValue(cached, from: primarySource)
         await updatePresentation(flightID: flightID)
+        return true
     }
 
     private func requestPresentationUpdate() {
@@ -817,7 +827,8 @@ final class ManagedItem: ManagedItemLifecycle {
     /// Paints are ordered by the primary refresh lifecycle, not by when
     /// their snapshots were gathered: a paint belonging to `flightID` is
     /// dropped once a newer flight has been admitted (that flight paints
-    /// next), and any paint while a flight is still queued or running shows
+    /// next, or repaints the settled state if it exits early), and any paint
+    /// while a flight is still queued or running shows
     /// the refreshing state, so an older tail cannot hide the newer flight's
     /// stale-while-refreshing marker.
     private func updatePresentation(forceRefreshing: Bool = false, flightID: UInt64? = nil) async {
