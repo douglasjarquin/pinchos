@@ -738,6 +738,34 @@ final class CommandExecutionTests: XCTestCase {
     /// write lands on a dead reader in most iterations. Without SIGPIPE
     /// suppression on that pipe, any one of those writes kills this test
     /// process with signal 13 instead of returning.
+    /// A failure after the first supervisor pipe is allocated must close
+    /// that pipe instead of leaking it (#163 review).
+    func testSupervisorLaunchClosesFirstPipeWhenSecondAllocationFails() throws {
+        struct InjectedFailure: Error {}
+        var allocated: [Int32] = []
+        var calls = 0
+        XCTAssertThrowsError(try SupervisorProcessSession.launch(
+            stdoutWrite: STDOUT_FILENO,
+            stderrWrite: STDERR_FILENO,
+            environment: [:],
+            makePipe: {
+                calls += 1
+                guard calls == 1 else { throw InjectedFailure() }
+                let pipe = try SupervisorProcessSession.makePipe()
+                allocated = [pipe.read, pipe.write]
+                return pipe
+            }
+        )) { error in
+            XCTAssertTrue(error is InjectedFailure, "unexpected error \(error)")
+        }
+        XCTAssertEqual(allocated.count, 2)
+        for descriptor in allocated {
+            errno = 0
+            XCTAssertEqual(fcntl(descriptor, F_GETFD), -1, "descriptor \(descriptor) leaked")
+            XCTAssertEqual(errno, EBADF)
+        }
+    }
+
     func testSupervisorDyingBeforeSendDoesNotKillHostProcess() async throws {
         for _ in 0..<40 {
             var stdoutPipe = [Int32](repeating: -1, count: 2)

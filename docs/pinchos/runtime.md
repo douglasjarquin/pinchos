@@ -80,7 +80,7 @@ That window closes as soon as the command settles, before the item repaints, so 
 Paints follow the flight lifecycle: while a flight is queued or running the item shows its refreshing state, and an older flight's paint is dropped once a newer flight is admitted.
 Shared submenu rows apply a source's values in settle order (`CachedValue.settledRevision`), so a delayed copy of an older result never replaces a newer one.
 Reload, removal, and shutdown cancel obsolete work and cannot execute stale actions.
-A menu left open across a reload that changes an item's rows ignores clicks on the outdated action rows instead of running whatever command now occupies that position; reopen the menu to act.
+A menu left open across a reload that changes an item's rows or commands ignores clicks on its outdated action rows and Refresh Now instead of running the replacement commands; reopen the menu to act.
 Last-good values, FIFO scheduler admission, process limits, and cancellation stay as they are.
 
 ## Freshness and failure presentation

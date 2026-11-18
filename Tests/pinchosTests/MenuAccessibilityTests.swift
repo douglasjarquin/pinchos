@@ -87,7 +87,10 @@ private final class AccessibilityFakeItem: ManagedItemLifecycle {
         invokedRows.append(index)
     }
 
-    func refreshNow() {
+    var refreshNowToken: AnyObject? { actionToken }
+
+    func refreshNow(expecting token: AnyObject) {
+        guard token === actionToken else { return }
         refreshCount += 1
     }
 }

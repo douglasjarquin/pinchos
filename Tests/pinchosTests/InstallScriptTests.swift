@@ -44,7 +44,13 @@ final class InstallScriptTests: XCTestCase {
             "\(digest)  \(artifact)\n\(digest)  \(artifact)\n",
             "\(digest) *\(artifact)\n",
             "\(digest)  dist/\(artifact)\n",
-            "\(digest.uppercased())  \(artifact)\n"
+            "\(digest.uppercased())  \(artifact)\n",
+            // Byte-level variants that command substitution would normalize away.
+            "\(digest)  \(artifact)",
+            "\(digest)  \(artifact)\n\n",
+            "\(digest)  \(artifact)\r\n",
+            "\(digest)  \(artifact)\u{0}\n",
+            "\(digest.prefix(32))\u{0}\(digest.dropFirst(32))  \(artifact)\n"
         ] {
             try writeSidecar(sidecar)
             let result = try install()

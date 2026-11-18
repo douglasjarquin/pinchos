@@ -55,7 +55,11 @@ protocol ManagedItemLifecycle: AnyObject {
     /// run whatever command now occupies that index.
     func menuRowActionToken(at index: Int) -> AnyObject?
     func invokeMenuRow(at index: Int, expecting token: AnyObject)
-    func refreshNow()
+    /// Identity of the value sources Refresh Now would request now. A menu
+    /// captures it when built, so its Refresh Now cannot run sources a
+    /// reload swapped in while the menu was open.
+    var refreshNowToken: AnyObject? { get }
+    func refreshNow(expecting token: AnyObject)
 }
 
 extension ManagedItemLifecycle {
@@ -154,9 +158,11 @@ private enum RecoveryActionError: LocalizedError {
 @MainActor
 private final class RefreshActionTarget: NSObject {
     let item: any ManagedItemLifecycle
+    let token: AnyObject
 
-    init(item: any ManagedItemLifecycle) {
+    init(item: any ManagedItemLifecycle, token: AnyObject) {
         self.item = item
+        self.token = token
     }
 }
 
@@ -617,9 +623,10 @@ final class StatusItemController: StatusItemMenuDelegate {
     private func addCompactCommandContent(item: any ManagedItemLifecycle, to menu: NSMenu) {
         addMenuRows(for: item, to: menu)
         addSeparatorIfNeeded(to: menu)
+        guard let token = item.refreshNowToken else { return }
         let refresh = NSMenuItem(title: "Refresh Now", action: #selector(refreshAction(_:)), keyEquivalent: "")
         refresh.target = self
-        refresh.representedObject = RefreshActionTarget(item: item)
+        refresh.representedObject = RefreshActionTarget(item: item, token: token)
         menu.addItem(refresh)
     }
 
@@ -1079,7 +1086,7 @@ final class StatusItemController: StatusItemMenuDelegate {
 
     @objc private func refreshAction(_ sender: NSMenuItem) {
         guard let target = sender.representedObject as? RefreshActionTarget else { return }
-        target.item.refreshNow()
+        target.item.refreshNow(expecting: target.token)
     }
 
     @objc private func menuRowAction(_ sender: NSMenuItem) {

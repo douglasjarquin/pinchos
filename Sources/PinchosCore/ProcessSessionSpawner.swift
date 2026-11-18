@@ -23,11 +23,15 @@ extension SupervisorProcessSession {
     static func launch(
         stdoutWrite: Int32,
         stderrWrite: Int32,
-        environment: [String: String]
+        environment: [String: String],
+        makePipe: () throws -> (read: Int32, write: Int32) = makePipe
     ) throws -> SupervisorProcessSession {
-        let control = try makePipe()
-        let status = try makePipe()
+        var owned = OwnedDescriptors()
         do {
+            let control = try makePipe()
+            owned.adopt(control.read, control.write)
+            let status = try makePipe()
+            owned.adopt(status.read, status.write)
             try setCloseOnExec(control.read)
             try setCloseOnExec(control.write)
             try setCloseOnExec(status.read)
@@ -72,24 +76,56 @@ extension SupervisorProcessSession {
                 }
             }
             try check(spawnStatus, context: "unable to launch process-session supervisor")
-            close(control.read)
-            close(status.write)
+            owned.close(control.read)
+            owned.close(status.write)
             guard setNonBlocking(status.read) else {
+                let errorCode = errno
                 _ = kill(-processID, SIGKILL)
                 _ = waitpid(processID, nil, 0)
-                throw LaunchError.posix(errno, context: "unable to configure supervisor status pipe")
+                throw LaunchError.posix(errorCode, context: "unable to configure supervisor status pipe")
             }
-            return SupervisorProcessSession(processGroupID: processID, controlWrite: control.write, statusRead: status.read)
+            return SupervisorProcessSession(
+                processGroupID: processID,
+                controlWrite: owned.release(control.write),
+                statusRead: owned.release(status.read)
+            )
         } catch {
-            close(control.read)
-            close(control.write)
-            close(status.read)
-            close(status.write)
+            owned.closeAll()
             throw error
         }
     }
 
-    private static func makePipe() throws -> (read: Int32, write: Int32) {
+    /// Single owner for the supervisor pipes from allocation until hand-off:
+    /// each descriptor is closed at most once, on whichever path ends first,
+    /// so unwinding never leaks one or closes a number another session may
+    /// already have reused.
+    private struct OwnedDescriptors {
+        private var open: Set<Int32> = []
+
+        mutating func adopt(_ descriptors: Int32...) {
+            open.formUnion(descriptors)
+        }
+
+        mutating func close(_ descriptor: Int32) {
+            if open.remove(descriptor) != nil {
+                Darwin.close(descriptor)
+            }
+        }
+
+        mutating func release(_ descriptor: Int32) -> Int32 {
+            open.remove(descriptor)
+            return descriptor
+        }
+
+        mutating func closeAll() {
+            for descriptor in open {
+                Darwin.close(descriptor)
+            }
+            open.removeAll()
+        }
+    }
+
+    static func makePipe() throws -> (read: Int32, write: Int32) {
         var descriptors = [Int32](repeating: -1, count: 2)
         guard Darwin.pipe(&descriptors) == 0 else {
             throw LaunchError.posix(errno, context: "unable to create process-session pipe")

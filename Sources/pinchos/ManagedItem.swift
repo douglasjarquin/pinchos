@@ -61,6 +61,9 @@ final class ManagedItem: ManagedItemLifecycle {
     private let now: () -> Date
     private var lifecycle: Lifecycle = .live
     private var configurationGeneration = 0
+    /// Replaced whenever a commit swaps the primary source or the menu rows,
+    /// so a Refresh Now from a menu built before that commit is rejected.
+    private var refreshSources = RefreshSourcesToken()
     private var pendingRefreshInvocations = 0
     private var refreshInvocationsDrained: CheckedContinuation<Void, Never>?
     private var pendingActionInvocations = 0
@@ -377,6 +380,9 @@ final class ManagedItem: ManagedItemLifecycle {
         if let primarySource = pendingUpdate.primarySource {
             self.primarySource = primarySource
             primarySourceLease = pendingUpdate.primarySourceLease!
+        }
+        if pendingUpdate.primarySource != nil || pendingUpdate.menuRowsChanged {
+            refreshSources = RefreshSourcesToken()
         }
         var rowsToRefreshAfterLive: [Int] = []
         if pendingUpdate.menuRowsChanged {
@@ -738,7 +744,12 @@ final class ManagedItem: ManagedItemLifecycle {
         requestRefresh()
     }
 
-    func refreshNow() {
+    var refreshNowToken: AnyObject? {
+        isLive ? refreshSources : nil
+    }
+
+    func refreshNow(expecting token: AnyObject) {
+        guard isLive, token === refreshSources else { return }
         requestRefresh()
         for index in menuRowSources.keys.sorted() {
             requestMenuRowRefresh(at: index)
@@ -1173,3 +1184,6 @@ final class ManagedItem: ManagedItemLifecycle {
         statusItem?.isVisible = visible && !statusItemSuppressed
     }
 }
+
+/// Identity-only token; see `ManagedItem.refreshSources`.
+private final class RefreshSourcesToken {}

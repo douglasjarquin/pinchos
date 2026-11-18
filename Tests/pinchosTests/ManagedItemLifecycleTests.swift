@@ -404,7 +404,8 @@ final class ManagedItemLifecycleTests: XCTestCase {
         let configBefore = item.commandConfig
 
         item.activate()
-        item.refreshNow()
+        XCTAssertNil(item.refreshNowToken, "a retired item offered Refresh Now", file: file, line: line)
+        item.refreshNow(expecting: NSObject())
         XCTAssertNil(item.menuRowActionToken(at: 0), "a retired item offered a menu action", file: file, line: line)
         item.invokeMenuRow(at: 0, expecting: NSObject())
         await item.prepareUpdate(config: config(run: touching("retired-update", output: "x")))

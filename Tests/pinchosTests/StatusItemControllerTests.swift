@@ -113,7 +113,10 @@ private final class FakeManagedItem: ManagedItemLifecycle {
         eventLog.append("action:\(index)")
     }
 
-    func refreshNow() {
+    var refreshNowToken: AnyObject? { actionToken }
+
+    func refreshNow(expecting token: AnyObject) {
+        guard token === actionToken else { return }
         eventLog.append("refresh-now:\(config.name)")
     }
 }
