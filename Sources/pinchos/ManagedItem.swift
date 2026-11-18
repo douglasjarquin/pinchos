@@ -40,16 +40,25 @@ final class ManagedItem: ManagedItemLifecycle {
     /// `DispatchSourceTimer` this class used to own.
     private let scheduler: CommandScheduler
     private var refreshTimerToken: CommandScheduler.ItemToken?
-    /// Tracks a refresh/action request while it is only queued for a
-    /// global permit (not yet running). A second request arriving in that
-    /// window coalesces into this one (see `recordCoalesced`) instead of
-    /// enqueuing a second waiter, bounding the interactive/scheduled queue
-    /// depth this item can contribute to at most one per work kind. Once a
-    /// permit is granted the corresponding entry is cleared immediately
-    /// (before the runner actually starts), so a request arriving while the
-    /// command itself is running still reaches the runner's own no-overlap
-    /// check and increments `skippedRefreshes` exactly as before.
+    /// The primary flight a new refresh request coalesces into: set when a
+    /// request is admitted and cleared as soon as `primarySource.refresh()`
+    /// returns, so it covers only the queued or running command. A request
+    /// in that window is recorded as coalesced/skipped instead of
+    /// enqueuing a second waiter. The flight's post-run snapshot and
+    /// presentation tail is outside the window, so a Refresh Now or tick
+    /// that lands there starts a new command (issue #203).
     private var pendingRefreshPermitTask: Task<Void, Never>?
+    /// Identifies the flight `pendingRefreshPermitTask` belongs to, so a
+    /// finishing flight never clears a newer one.
+    private var pendingRefreshFlightID: UInt64?
+    private var nextRefreshFlightID: UInt64 = 0
+    /// The newest primary flight including its presentation tail; tests
+    /// await it through `awaitPrimaryRefreshForTesting`.
+    private var latestRefreshFlightTask: Task<Void, Never>?
+    /// Bumped by every `updatePresentation` call. A call that finds a newer
+    /// one started while it awaited source snapshots skips rendering, so a
+    /// finished flight's tail cannot paint over a newer flight's state.
+    private var presentationSequence: UInt64 = 0
     private var presentationUpdateTask: Task<Void, Never>?
     private var pendingActionPermitTasks: [Int: Task<Void, Never>] = [:]
     private weak var menuDelegate: StatusItemMenuDelegate?
@@ -74,6 +83,12 @@ final class ManagedItem: ManagedItemLifecycle {
     /// on timing. Production code always passes `nil`, so this is a no-op outside
     /// tests.
     var actionInvocationTestGate: (() async -> Void)?
+
+    /// Test-only seam awaited right after a primary flight's
+    /// `primarySource.refresh()` returns and before its post-run snapshot and
+    /// presentation. Tests hold it to land a Refresh Now or tick inside that
+    /// presentation tail deterministically. Production code leaves it `nil`.
+    var primaryRefreshTailTestGate: (() async -> Void)?
 
     /// Test-only seam awaited alongside each runner's real cancellation during
     /// `prepareUpdate`/`prepareRemoval`, keyed by role ("primary" or
@@ -736,12 +751,25 @@ final class ManagedItem: ManagedItemLifecycle {
             Task { await primarySource.recordSkippedRefresh() }
             return
         }
+        nextRefreshFlightID &+= 1
+        let flightID = nextRefreshFlightID
         pendingRefreshInvocations += 1
-        pendingRefreshPermitTask = Task { @MainActor [self] in
-            await refresh()
-            pendingRefreshPermitTask = nil
+        pendingRefreshFlightID = flightID
+        let task = Task { @MainActor [self] in
+            await refresh(flightID: flightID)
+            endRefreshCoalescing(flightID)
             finishRefreshInvocation()
         }
+        pendingRefreshPermitTask = task
+        latestRefreshFlightTask = task
+    }
+
+    /// Ends the coalescing window for `flightID` if it is still the current
+    /// one. Safe to call more than once.
+    private func endRefreshCoalescing(_ flightID: UInt64) {
+        guard pendingRefreshFlightID == flightID else { return }
+        pendingRefreshFlightID = nil
+        pendingRefreshPermitTask = nil
     }
 
     /// Records that a request coalesced into an already-queued permit wait
@@ -753,7 +781,7 @@ final class ManagedItem: ManagedItemLifecycle {
         }
     }
 
-    private func refresh() async {
+    private func refresh(flightID: UInt64) async {
         guard isLive else { return }
         let generation = configurationGeneration
         // Paint stale-while-refreshing as soon as this item admits the
@@ -763,6 +791,12 @@ final class ManagedItem: ManagedItemLifecycle {
         await updatePresentation(forceRefreshing: true)
         guard !isRetired, generation == configurationGeneration else { return }
         _ = await primarySource.refresh()
+        // The command has settled: later requests must start a new one
+        // rather than join this flight's presentation tail.
+        endRefreshCoalescing(flightID)
+        if let gate = primaryRefreshTailTestGate {
+            await gate()
+        }
         guard !isRetired, generation == configurationGeneration else { return }
         let cached = await primarySource.snapshot()
         applyMenuRowCachedValue(cached, from: primarySource)
@@ -776,10 +810,12 @@ final class ManagedItem: ManagedItemLifecycle {
     }
 
     private func updatePresentation(forceRefreshing: Bool = false) async {
+        presentationSequence &+= 1
+        let sequence = presentationSequence
         let runnerSnapshot = await primarySource.runnerSnapshot()
         let cached = await primarySource.snapshot()
         let hasInFlightRefresh = await primarySource.hasInFlightRefresh()
-        guard !isRetired else { return }
+        guard !isRetired, sequence == presentationSequence else { return }
         adoptCachedValue(cached)
         renderPresentation(
             makeRuntimeSnapshot(
@@ -945,8 +981,9 @@ final class ManagedItem: ManagedItemLifecycle {
         await awaitPrimaryRefreshForTesting()
     }
 
+    /// Awaits the newest primary flight through its presentation tail.
     func awaitPrimaryRefreshForTesting() async {
-        await pendingRefreshPermitTask?.value
+        await latestRefreshFlightTask?.value
     }
 
     func awaitPresentationUpdateForTesting() async {

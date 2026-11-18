@@ -38,6 +38,27 @@ private actor InstantSourceRunner: CommandSourceRunner {
     }
 }
 
+/// Holds every caller until opened and counts arrivals.
+private actor RefreshTailLatch {
+    private var isOpen = false
+    private var waiters: [CheckedContinuation<Void, Never>] = []
+    private(set) var arrivals = 0
+
+    func wait() async {
+        arrivals += 1
+        guard !isOpen else { return }
+        await withCheckedContinuation { waiters.append($0) }
+    }
+
+    func open() {
+        isOpen = true
+        for waiter in waiters {
+            waiter.resume()
+        }
+        waiters.removeAll()
+    }
+}
+
 private final class TestItemClock: @unchecked Sendable {
     var date: Date
 
@@ -153,6 +174,37 @@ final class ManagedItemRefreshTests: XCTestCase {
         XCTAssertFalse(exists(actionSentinel), "Refresh Now executed an action row")
         let primary = await waitUntil { await item.runtimeSnapshot().fullOutput == "primary" }
         XCTAssertTrue(primary)
+    }
+
+    /// Issue #203: a Refresh Now (or a scheduled tick, which takes the same
+    /// `requestRefresh` path) that lands after the primary command has
+    /// finished, while the flight is still painting its result, must start a
+    /// new command instead of coalescing into the finished one.
+    @MainActor
+    func testRefreshNowDuringPrimaryPresentationTailRunsAgain() async throws {
+        let log = path("tail.log")
+        let item = makeItem(config: ItemConfig(
+            name: "item",
+            run: counting(log, output: "value"),
+            interval: .manual
+        ))
+        let gate = RefreshTailLatch()
+        item.primaryRefreshTailTestGate = { await gate.wait() }
+
+        item.refreshNow()
+        let held = await waitUntil { await gate.arrivals == 1 }
+        XCTAssertTrue(held, "the first flight never reached its presentation tail")
+        XCTAssertEqual(lineCount(log), 1)
+
+        item.refreshNow()
+        await gate.open()
+        let ranAgain = await waitUntil { self.lineCount(log) == 2 }
+        XCTAssertTrue(ranAgain, "Refresh Now during the presentation tail was dropped")
+        await item.awaitPrimaryRefreshForTesting()
+        XCTAssertEqual(lineCount(log), 2)
+        let snapshot = await item.runtimeSnapshot()
+        XCTAssertEqual(snapshot.fullOutput, "value")
+        XCTAssertEqual(snapshot.skippedRefreshes, 0, "the tail request was recorded as skipped")
     }
 
     @MainActor

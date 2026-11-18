@@ -57,6 +57,7 @@ Manual submenu values use the same cadence after an initial failure; success sta
 Each source has at most one in-flight refresh.
 Additional `refresh()` callers join that execution instead of stacking waiters.
 ManagedItem keeps at most one apply-task per menu row (`menuRowRefreshTasks`) and at most one primary refresh task (`pendingRefreshPermitTask`); extra Refresh Now clicks coalesce there.
+That primary window covers only the queued or running command: it closes as soon as the command settles, before the item repaints, so a Refresh Now or scheduled tick that lands while the finished result is still being painted starts a new run instead of being dropped.
 Reload, removal, and shutdown cancel obsolete work and cannot execute stale actions.
 Last-good values, FIFO scheduler admission, process limits, and cancellation stay as they are.
 
