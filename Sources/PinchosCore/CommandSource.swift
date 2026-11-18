@@ -71,6 +71,12 @@ public struct CachedValue: Equatable, Sendable {
     public let lastSuccessfulAt: Date?
     public let lastExecution: CommandExecution?
     public let diagnostic: String?
+    /// Monotonic per-source count of settled refreshes that produced this
+    /// value (0 before any settles). Consumers that copy a source's value
+    /// out of the actor compare it to keep a delayed copy of an older
+    /// settle from overwriting a newer one; wall-clock timestamps cannot
+    /// order settles reliably.
+    public let settledRevision: UInt64
 
     public init(
         value: String? = nil,
@@ -78,7 +84,8 @@ public struct CachedValue: Equatable, Sendable {
         lastAttemptedAt: Date? = nil,
         lastSuccessfulAt: Date? = nil,
         lastExecution: CommandExecution? = nil,
-        diagnostic: String? = nil
+        diagnostic: String? = nil,
+        settledRevision: UInt64 = 0
     ) {
         self.value = value
         self.state = state
@@ -86,6 +93,7 @@ public struct CachedValue: Equatable, Sendable {
         self.lastSuccessfulAt = lastSuccessfulAt
         self.lastExecution = lastExecution
         self.diagnostic = diagnostic
+        self.settledRevision = settledRevision
     }
 
     public var isRefreshing: Bool { state == .refreshing }
@@ -197,7 +205,8 @@ public actor CommandSource {
             lastAttemptedAt: cachedValue.lastAttemptedAt,
             lastSuccessfulAt: cachedValue.lastSuccessfulAt,
             lastExecution: cachedValue.lastExecution,
-            diagnostic: cachedValue.diagnostic
+            diagnostic: cachedValue.diagnostic,
+            settledRevision: cachedValue.settledRevision
         )
         return cachedValue
     }
@@ -264,7 +273,8 @@ public actor CommandSource {
             lastAttemptedAt: attemptedAt,
             lastSuccessfulAt: previous.lastSuccessfulAt,
             lastExecution: previous.lastExecution,
-            diagnostic: previous.diagnostic
+            diagnostic: previous.diagnostic,
+            settledRevision: previous.settledRevision
         )
         refreshingOwner = refreshGeneration
         do {
@@ -293,7 +303,8 @@ public actor CommandSource {
             lastAttemptedAt: settledAt,
             lastSuccessfulAt: successful ? settledAt : lastSettled.lastSuccessfulAt,
             lastExecution: execution,
-            diagnostic: successful ? nil : Self.diagnostic(for: execution)
+            diagnostic: successful ? nil : Self.diagnostic(for: execution),
+            settledRevision: lastSettled.settledRevision &+ 1
         )
         cachedValue = lastSettled
         refreshingOwner = nil

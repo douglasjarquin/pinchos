@@ -38,15 +38,21 @@ private actor InstantSourceRunner: CommandSourceRunner {
     }
 }
 
-/// Holds every caller until opened and counts arrivals.
+/// Holds callers until opened and counts arrivals. With `holdsFirstOnly`,
+/// only the first arrival waits; later ones pass straight through.
 private actor RefreshTailLatch {
+    private let holdsFirstOnly: Bool
     private var isOpen = false
     private var waiters: [CheckedContinuation<Void, Never>] = []
     private(set) var arrivals = 0
 
+    init(holdsFirstOnly: Bool = false) {
+        self.holdsFirstOnly = holdsFirstOnly
+    }
+
     func wait() async {
         arrivals += 1
-        guard !isOpen else { return }
+        guard !isOpen, !holdsFirstOnly || arrivals == 1 else { return }
         await withCheckedContinuation { waiters.append($0) }
     }
 
@@ -56,6 +62,54 @@ private actor RefreshTailLatch {
             waiter.resume()
         }
         waiters.removeAll()
+    }
+}
+
+/// Returns "first" then "second". Holds the second `runIfIdle` and the
+/// second runner `snapshot()` (the newer flight's initial refreshing paint)
+/// on latches so tests can order them against an older flight's tail.
+private actor OrderedOutputRunner: CommandSourceRunner {
+    let secondSnapshot: RefreshTailLatch
+    let secondRun: RefreshTailLatch
+    private var snapshots = 0
+    private var runs = 0
+    private var lastExecution: CommandExecution?
+
+    init(secondSnapshot: RefreshTailLatch, secondRun: RefreshTailLatch) {
+        self.secondSnapshot = secondSnapshot
+        self.secondRun = secondRun
+    }
+
+    func runIfIdle() async -> CommandRunOutcome {
+        runs += 1
+        if runs == 2 {
+            await secondRun.wait()
+        }
+        let value = runs == 1 ? "first" : "second"
+        let execution = CommandExecution(
+            terminalReason: .exited(code: 0),
+            stdout: value,
+            stderr: "",
+            stdoutBytesRead: value.utf8.count,
+            stderrBytesRead: 0,
+            stdoutTruncated: false,
+            stderrTruncated: false,
+            duration: 0
+        )
+        lastExecution = execution
+        return .completed(execution)
+    }
+
+    func awaitSettledExecution() async -> CommandExecution? { lastExecution }
+
+    func cancelActive() async {}
+
+    func snapshot() async -> CommandRunnerSnapshot {
+        snapshots += 1
+        if snapshots == 2 {
+            await secondSnapshot.wait()
+        }
+        return CommandRunnerSnapshot(isRunning: false, lastExecution: lastExecution, skippedRefreshes: 0)
     }
 }
 
@@ -205,6 +259,95 @@ final class ManagedItemRefreshTests: XCTestCase {
         let snapshot = await item.runtimeSnapshot()
         XCTAssertEqual(snapshot.fullOutput, "value")
         XCTAssertEqual(snapshot.skippedRefreshes, 0, "the tail request was recorded as skipped")
+    }
+
+    /// Review of #206: an older flight whose tail resumes after a newer
+    /// flight published must not restore its older value into a submenu row
+    /// that shares the primary source.
+    @MainActor
+    func testOlderPrimaryTailCannotRestorePreviousSharedRowValue() async throws {
+        let log = path("tail-row-order.log")
+        let command = "printf 'x\\n' >> '\(log.path)'; wc -l < '\(log.path)' | tr -d '[:space:]'"
+        let item = makeItem(config: ItemConfig(
+            name: "item",
+            run: command,
+            interval: .manual,
+            menu: [MenuRowConfig(label: "Same source", run: command, cache: 60)]
+        ))
+        let olderTail = RefreshTailLatch(holdsFirstOnly: true)
+        item.primaryRefreshTailTestGate = { await olderTail.wait() }
+
+        let older = Task { await item.refreshPrimaryForTesting() }
+        let held = await waitUntil { await olderTail.arrivals == 1 }
+        guard held else {
+            await olderTail.open()
+            await older.value
+            return XCTFail("the older flight never reached its tail holding value 1")
+        }
+        await item.refreshPrimaryForTesting()
+        XCTAssertEqual(lineCount(log), 2)
+        XCTAssertEqual(item.menuRowCachedValueForTesting(at: 0)?.value, "2")
+        XCTAssertEqual(item.renderedAccessibilityLabel, "2, fresh")
+
+        await olderTail.open()
+        await older.value
+        XCTAssertEqual(
+            item.menuRowCachedValueForTesting(at: 0)?.value,
+            "2",
+            "the older tail restored its value into the shared submenu row"
+        )
+        XCTAssertEqual(item.renderedAccessibilityLabel, "2, fresh", "the older tail repainted its value")
+        XCTAssertEqual(lineCount(log), 2)
+    }
+
+    /// Review of #206: an older flight's tail that paints while a newer
+    /// flight is admitted must not hide the newer flight's refreshing state.
+    @MainActor
+    func testOlderTailCannotSuppressNewerFlightRefreshingPaint() async throws {
+        let scheduler = CommandScheduler()
+        let registry = CommandSourceRegistry()
+        let olderTail = RefreshTailLatch(holdsFirstOnly: true)
+        let secondSnapshot = RefreshTailLatch()
+        let secondRun = RefreshTailLatch()
+        let command = "ordered-output"
+        let lease = registry.acquire(
+            configuration: CommandSourceConfiguration(
+                command: command,
+                timeout: ItemConfig.defaultTimeout,
+                refreshPolicy: .manual
+            ),
+            scheduler: scheduler,
+            runner: OrderedOutputRunner(secondSnapshot: secondSnapshot, secondRun: secondRun)
+        )
+        addTeardownBlock { registry.release(lease) }
+        let item = makeItem(
+            config: ItemConfig(name: "item", run: command, interval: .manual),
+            scheduler: scheduler,
+            sourceRegistry: registry
+        )
+        item.primaryRefreshTailTestGate = { await olderTail.wait() }
+
+        let older = Task { await item.refreshPrimaryForTesting() }
+        let olderHeld = await waitUntil { await olderTail.arrivals == 1 }
+        XCTAssertTrue(olderHeld, "the older flight never reached its tail")
+        item.refreshNow()
+        let newerPainting = await waitUntil { await secondSnapshot.arrivals == 1 }
+        XCTAssertTrue(newerPainting, "the newer flight never started its refreshing paint")
+
+        await olderTail.open()
+        await older.value
+        await secondSnapshot.open()
+        let newerRunning = await waitUntil { await secondRun.arrivals == 1 }
+        XCTAssertTrue(newerRunning, "the newer flight never reached its command")
+        XCTAssertEqual(
+            item.renderedAccessibilityLabel,
+            "first, refreshing",
+            "the older tail hid the newer flight's refreshing state"
+        )
+
+        await secondRun.open()
+        await item.awaitPrimaryRefreshForTesting()
+        XCTAssertEqual(item.renderedAccessibilityLabel, "second, fresh")
     }
 
     @MainActor

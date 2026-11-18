@@ -55,10 +55,6 @@ final class ManagedItem: ManagedItemLifecycle {
     /// The newest primary flight including its presentation tail; tests
     /// await it through `awaitPrimaryRefreshForTesting`.
     private var latestRefreshFlightTask: Task<Void, Never>?
-    /// Bumped by every `updatePresentation` call. A call that finds a newer
-    /// one started while it awaited source snapshots skips rendering, so a
-    /// finished flight's tail cannot paint over a newer flight's state.
-    private var presentationSequence: UInt64 = 0
     private var presentationUpdateTask: Task<Void, Never>?
     private var pendingActionPermitTasks: [Int: Task<Void, Never>] = [:]
     private weak var menuDelegate: StatusItemMenuDelegate?
@@ -84,9 +80,9 @@ final class ManagedItem: ManagedItemLifecycle {
     /// tests.
     var actionInvocationTestGate: (() async -> Void)?
 
-    /// Test-only seam awaited right after a primary flight's
-    /// `primarySource.refresh()` returns and before its post-run snapshot and
-    /// presentation. Tests hold it to land a Refresh Now or tick inside that
+    /// Test-only seam awaited after a primary flight's command settled and
+    /// its post-run snapshot was read, before that snapshot is mirrored into
+    /// submenu rows and painted. Tests hold it to land a Refresh Now or tick inside that
     /// presentation tail deterministically. Production code leaves it `nil`.
     var primaryRefreshTailTestGate: (() async -> Void)?
 
@@ -661,6 +657,10 @@ final class ManagedItem: ManagedItemLifecycle {
         }
     }
 
+    /// A row's cache only ever holds values from its current source (reload
+    /// drops it when the source changes), so `settledRevision` orders every
+    /// write: a delayed copy of an older settle, such as a finished primary
+    /// flight's tail resuming after a newer flight published, is ignored.
     private func applyMenuRowCachedValue(_ cached: CachedValue, from source: CommandSource) {
         guard cached.state != .refreshing else { return }
         let value = cached.value.map { lastTrimmedLine(of: $0) }
@@ -670,9 +670,13 @@ final class ManagedItem: ManagedItemLifecycle {
             lastAttemptedAt: cached.lastAttemptedAt,
             lastSuccessfulAt: cached.lastSuccessfulAt,
             lastExecution: cached.lastExecution,
-            diagnostic: cached.diagnostic
+            diagnostic: cached.diagnostic,
+            settledRevision: cached.settledRevision
         )
         for (index, rowSource) in menuRowSources where rowSource === source {
+            if let existing = menuRowCaches[index], existing.settledRevision > stored.settledRevision {
+                continue
+            }
             menuRowCaches[index] = stored
         }
     }
@@ -788,19 +792,20 @@ final class ManagedItem: ManagedItemLifecycle {
         // flight, before the permit wait or the command. Waiting for
         // `primarySource.refresh()` would leave the bar on the pre-wake
         // title until success or ⚠︎.
-        await updatePresentation(forceRefreshing: true)
+        await updatePresentation(forceRefreshing: true, flightID: flightID)
         guard !isRetired, generation == configurationGeneration else { return }
         _ = await primarySource.refresh()
         // The command has settled: later requests must start a new one
         // rather than join this flight's presentation tail.
         endRefreshCoalescing(flightID)
+        guard !isRetired, generation == configurationGeneration else { return }
+        let cached = await primarySource.snapshot()
         if let gate = primaryRefreshTailTestGate {
             await gate()
         }
         guard !isRetired, generation == configurationGeneration else { return }
-        let cached = await primarySource.snapshot()
         applyMenuRowCachedValue(cached, from: primarySource)
-        await updatePresentation()
+        await updatePresentation(flightID: flightID)
     }
 
     private func requestPresentationUpdate() {
@@ -809,20 +814,25 @@ final class ManagedItem: ManagedItemLifecycle {
         }
     }
 
-    private func updatePresentation(forceRefreshing: Bool = false) async {
-        presentationSequence &+= 1
-        let sequence = presentationSequence
+    /// Paints are ordered by the primary refresh lifecycle, not by when
+    /// their snapshots were gathered: a paint belonging to `flightID` is
+    /// dropped once a newer flight has been admitted (that flight paints
+    /// next), and any paint while a flight is still queued or running shows
+    /// the refreshing state, so an older tail cannot hide the newer flight's
+    /// stale-while-refreshing marker.
+    private func updatePresentation(forceRefreshing: Bool = false, flightID: UInt64? = nil) async {
         let runnerSnapshot = await primarySource.runnerSnapshot()
         let cached = await primarySource.snapshot()
         let hasInFlightRefresh = await primarySource.hasInFlightRefresh()
-        guard !isRetired, sequence == presentationSequence else { return }
+        guard !isRetired else { return }
+        if let flightID, flightID != nextRefreshFlightID { return }
         adoptCachedValue(cached)
         renderPresentation(
             makeRuntimeSnapshot(
                 runnerSnapshot,
                 cached: cached,
                 hasInFlightRefresh: hasInFlightRefresh,
-                forceRefreshing: forceRefreshing
+                forceRefreshing: forceRefreshing || pendingRefreshFlightID != nil
             )
         )
     }
@@ -896,7 +906,8 @@ final class ManagedItem: ManagedItemLifecycle {
         let snapshot = makeRuntimeSnapshot(
             runnerSnapshot,
             cached: cached,
-            hasInFlightRefresh: hasInFlightRefresh
+            hasInFlightRefresh: hasInFlightRefresh,
+            forceRefreshing: pendingRefreshFlightID != nil
         )
         renderPresentation(snapshot)
         return snapshot
@@ -1012,7 +1023,8 @@ final class ManagedItem: ManagedItemLifecycle {
                 lastAttemptedAt: cached.lastAttemptedAt,
                 lastSuccessfulAt: cached.lastSuccessfulAt,
                 lastExecution: cached.lastExecution,
-                diagnostic: cached.diagnostic
+                diagnostic: cached.diagnostic,
+                settledRevision: cached.settledRevision
             )
         }
         return cached
