@@ -58,10 +58,21 @@ Each source has at most one in-flight refresh.
 Additional `refresh()` callers join that execution instead of stacking waiters.
 ManagedItem keeps at most one apply-task per menu row (`menuRowRefreshTasks`) and at most one queued or running primary flight per item (`pendingRefreshPermitTask`); extra Refresh Now clicks and ticks coalesce into it.
 That window closes as soon as the command settles, before the item repaints, so a request that lands while a finished result is still being painted starts a new flight instead of being dropped; the finished flight's paint may briefly overlap the next queued or running flight.
-Paints follow the flight lifecycle: while a flight is queued or running the item shows its refreshing state, and an older flight's paint is dropped once a newer flight is admitted; a newer flight that exits without painting its own result (for example, a reload landed first) repaints the current settled state instead.
-Shared submenu rows apply a source's values in settle order (`CachedValue.settledRevision`), so a delayed copy of an older result never replaces a newer one.
 Reload, removal, and shutdown cancel obsolete work and cannot execute stale actions.
 Last-good values, FIFO scheduler admission, process limits, and cancellation stay as they are.
+Shared submenu rows apply a source's values in settle order (`CachedValue.settledRevision`), so a delayed copy of an older result never replaces a newer one.
+
+### Refreshing invariant
+
+A Pincho is in its queued/refreshing presentation state (see [Freshness and failure presentation](#freshness-and-failure-presentation)) only while a primary flight it admitted is queued or running.
+That flight is the only way the item joins its shared source's refresh, so it is also the only shared flight the item is sure to hear back from.
+Another consumer refreshing the same shared source never makes this item show refreshing, because this item would get no completion paint for that flight.
+`ManagedItem.makeRuntimeSnapshot` is the one place that decides the state, from `pendingRefreshFlightID`.
+
+Every path that ends an admitted flight runs through `ManagedItem.settleRefreshFlight`, which ends with exactly one paint from committed state.
+That covers completion, an early exit because the item left `live`, a generation change from reload, cancellation, and removal.
+The only exception is a newer flight being admitted first: that flight owns the next paint and settles the same way.
+An older flight's paint is dropped once a newer flight is admitted, so a finished flight's tail cannot paint over a newer flight or hide its refreshing state.
 
 ## Freshness and failure presentation
 

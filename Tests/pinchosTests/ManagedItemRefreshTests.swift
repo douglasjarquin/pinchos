@@ -162,6 +162,21 @@ final class ManagedItemRefreshTests: XCTestCase {
         """
     }
 
+    /// Prints "first" on the first run. Later runs touch `started`, wait for
+    /// `release` to exist, then print "second".
+    private func secondRunBlocks(log: URL, started: URL, release: URL) -> String {
+        """
+        printf 'x\\n' >> '\(log.path)'
+        if [ "$(wc -l < '\(log.path)')" -eq 1 ]; then
+            printf first
+        else
+            touch '\(started.path)'
+            while [ ! -e '\(release.path)' ]; do sleep 0.02; done
+            printf second
+        fi
+        """
+    }
+
     private func counting(_ log: URL, output: String) -> String {
         "printf 'x\\n' >> '\(log.path)'; printf '\(output)'"
     }
@@ -411,6 +426,174 @@ final class ManagedItemRefreshTests: XCTestCase {
             "settled, fresh",
             "the settled result stayed unpainted behind the refreshing state"
         )
+    }
+
+    /// Round-3 review of #206/#211: an item whose own request exits early
+    /// while another item refreshes their shared source must not borrow
+    /// that peer's refreshing state, because it gets no completion paint
+    /// for the peer's flight.
+    @MainActor
+    func testAbandonedRefreshDoesNotStickOnPeerRefreshing() async throws {
+        let scheduler = CommandScheduler()
+        let registry = CommandSourceRegistry()
+        let attempts = path("peer-attempts.log")
+        let started = path("peer-started")
+        let release = path("peer-release")
+        let command = secondRunBlocks(log: attempts, started: started, release: release)
+        let item = makeItem(
+            config: ItemConfig(
+                name: "item",
+                run: command,
+                interval: .manual,
+                menu: [MenuRowConfig(label: "Old action", action: "true")]
+            ),
+            scheduler: scheduler,
+            sourceRegistry: registry
+        )
+        let peer = makeItem(
+            config: ItemConfig(name: "peer", run: command, interval: .manual),
+            scheduler: scheduler,
+            sourceRegistry: registry
+        )
+        await item.refreshPrimaryForTesting()
+        XCTAssertEqual(item.renderedAccessibilityLabel, "first, fresh")
+
+        let peerRefresh = Task { await peer.refreshPrimaryForTesting() }
+        let peerIsRunning = await waitUntil { self.exists(started) }
+        guard peerIsRunning else {
+            FileManager.default.createFile(atPath: release.path, contents: Data())
+            await peerRefresh.value
+            return XCTFail("the peer did not start the shared source's second command")
+        }
+        XCTAssertEqual(peer.renderedAccessibilityLabel, "first, refreshing")
+        XCTAssertEqual(item.renderedAccessibilityLabel, "first, fresh")
+
+        let reloadGate = RefreshTailLatch(holdsFirstOnly: true)
+        item.cancellationSettlementDelayForTesting = { role in
+            if role == "menu-row:0" {
+                await reloadGate.wait()
+            }
+        }
+        let reload = Task { @MainActor in
+            item.refreshNow()
+            await item.prepareUpdate(config: ItemConfig(
+                name: "item",
+                run: command,
+                interval: .manual,
+                menu: [MenuRowConfig(label: "New action", action: "true")]
+            ))
+            item.commitPreparedUpdate()
+        }
+        let isReloading = await waitUntil { await reloadGate.arrivals == 1 }
+        XCTAssertTrue(isReloading, "the menu reload never reached its cancellation phase")
+        await item.awaitPrimaryRefreshForTesting()
+        XCTAssertEqual(
+            item.renderedAccessibilityLabel,
+            "first, fresh",
+            "the exiting request borrowed the peer's refreshing state"
+        )
+        await reloadGate.open()
+        await reload.value
+
+        FileManager.default.createFile(atPath: release.path, contents: Data())
+        await peerRefresh.value
+        XCTAssertEqual(peer.renderedAccessibilityLabel, "second, fresh")
+        XCTAssertEqual(lineCount(attempts), 2)
+        XCTAssertEqual(item.config.menu.first?.label, "New action")
+        XCTAssertEqual(
+            item.renderedAccessibilityLabel,
+            "first, fresh",
+            "no command is running, but the manual item is stuck on refreshing"
+        )
+    }
+
+    /// The refreshing invariant (docs/pinchos/runtime.md): every way an
+    /// admitted primary flight ends leaves the refreshing state with exactly
+    /// one settle paint from committed state.
+    @MainActor
+    func testEveryFlightExitPathEndsWithOneSettledPaint() async throws {
+        enum Exit: String, CaseIterable {
+            case completion
+            case exitBeforeStartOnMenuReload
+            case formatReloadWhileRunning
+            case intervalReloadCancelsRunning
+            case commandReloadCancelsRunning
+            case removalCancelsRunning
+        }
+        let expectedLabels: [Exit: String] = [
+            .completion: "second, fresh",
+            .exitBeforeStartOnMenuReload: "first, fresh",
+            .formatReloadWhileRunning: "[second], fresh",
+            .intervalReloadCancelsRunning: "first, fresh",
+            .commandReloadCancelsRunning: "first, fresh",
+            .removalCancelsRunning: "first, fresh"
+        ]
+        for exit in Exit.allCases {
+            let log = path("exit-\(exit.rawValue).log")
+            let started = path("exit-\(exit.rawValue).started")
+            let release = path("exit-\(exit.rawValue).release")
+            let command = secondRunBlocks(log: log, started: started, release: release)
+            let config = ItemConfig(
+                name: "item",
+                run: command,
+                interval: .manual,
+                menu: [MenuRowConfig(label: "Old action", action: "true")]
+            )
+            let item = makeItem(config: config)
+            await item.refreshPrimaryForTesting()
+            XCTAssertEqual(item.renderedAccessibilityLabel, "first, fresh", exit.rawValue)
+            XCTAssertEqual(item.settledFlightPaintCountForTesting, 1, exit.rawValue)
+
+            if exit == .exitBeforeStartOnMenuReload {
+                // Admitted, then the item leaves `live` before the flight runs.
+                item.refreshNow()
+                await item.prepareUpdate(config: ItemConfig(
+                    name: "item",
+                    run: command,
+                    interval: .manual,
+                    menu: [MenuRowConfig(label: "New action", action: "true")]
+                ))
+                item.commitPreparedUpdate()
+            } else {
+                item.refreshNow()
+                let running = await waitUntil { self.exists(started) }
+                XCTAssertTrue(running, "\(exit.rawValue): the second command never started")
+                XCTAssertEqual(item.renderedAccessibilityLabel, "first, refreshing", exit.rawValue)
+                switch exit {
+                case .formatReloadWhileRunning:
+                    await item.prepareUpdate(config: ItemConfig(
+                        name: "item", run: command, interval: .manual, format: "[{output}]", menu: config.menu
+                    ))
+                    item.commitPreparedUpdate()
+                case .intervalReloadCancelsRunning:
+                    await item.prepareUpdate(config: ItemConfig(
+                        name: "item", run: command, interval: .scheduled(3600), menu: config.menu
+                    ))
+                    item.commitPreparedUpdate()
+                case .commandReloadCancelsRunning:
+                    await item.prepareUpdate(config: ItemConfig(
+                        name: "item", run: command + " # replaced", interval: .manual, menu: config.menu
+                    ))
+                    item.commitPreparedUpdate()
+                case .removalCancelsRunning:
+                    await item.prepareRemoval()
+                case .completion, .exitBeforeStartOnMenuReload:
+                    break
+                }
+            }
+            FileManager.default.createFile(atPath: release.path, contents: Data())
+            await item.awaitPrimaryRefreshForTesting()
+
+            XCTAssertEqual(
+                item.settledFlightPaintCountForTesting,
+                2,
+                "\(exit.rawValue): the flight did not end with exactly one settle paint"
+            )
+            XCTAssertEqual(item.renderedAccessibilityLabel, expectedLabels[exit], exit.rawValue)
+            if exit == .removalCancelsRunning {
+                item.commitRemoval()
+            }
+        }
     }
 
     @MainActor

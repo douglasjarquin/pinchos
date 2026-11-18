@@ -321,8 +321,10 @@ final class RecoveryLifecycleTests: XCTestCase {
         XCTAssertNil(whileLingering.fullOutput)
         XCTAssertNil(whileLingering.lastUpdatedAt)
 
+        // Settlement is the item's flight ending, not only the runner: the
+        // refreshing state follows the flight (docs/pinchos/runtime.md).
         let settled = try await waitForRuntimeSnapshot(item) { snapshot in
-            !snapshot.isRunning && snapshot.fullOutput != nil
+            !snapshot.isRunning && snapshot.status != .running && snapshot.fullOutput != nil
         }
         XCTAssertEqual(settled.fullOutput, "late\n")
         XCTAssertNotNil(settled.lastUpdatedAt)
