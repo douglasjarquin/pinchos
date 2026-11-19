@@ -90,8 +90,10 @@ Another consumer refreshing the same shared source never makes this item show re
 `ManagedItem.makeRuntimeSnapshot` is the one place that decides the state, from `pendingRefreshFlightID`.
 
 Every path that ends an admitted flight runs through `ManagedItem.settleRefreshFlight`, which ends with exactly one paint from committed state.
-That covers completion, an early exit because the item left `live`, a generation change from reload, cancellation, and removal.
-The only exception is a newer flight being admitted first: that flight owns the next paint and settles the same way.
+That covers completion, an early exit because the item left `live`, a generation change from reload, cancellation, and removal preparation.
+There are two exceptions.
+A newer flight admitted first owns the next paint and settles the same way.
+An item whose removal has already committed (retired) skips the paint, because its menu-bar item is gone.
 An older flight's paint is dropped once a newer flight is admitted, so a finished flight's tail cannot paint over a newer flight or hide its refreshing state.
 
 ## Freshness and failure presentation
