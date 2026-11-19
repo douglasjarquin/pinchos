@@ -824,14 +824,16 @@ final class ManagedItem: ManagedItemLifecycle {
         applyMenuRowCachedValue(cached, from: primarySource)
     }
 
-    /// The single exit from an admitted flight's refreshing state, whatever
-    /// ended it: completion, an early return because the item left `live`,
-    /// a generation change from reload, or cancellation from reload or
-    /// removal. It closes the coalescing window and paints exactly once from
-    /// committed state, with two exceptions: a newer admitted flight owns the
-    /// next paint and settles the same way, and a retired item (removal
-    /// committed, status item gone) skips the paint. See the refreshing
-    /// invariant in docs/pinchos/runtime.md.
+    /// The common finalization step every admitted flight runs after
+    /// `refresh` returns, whatever ended it: completion, an early return
+    /// because the item left `live`, a generation change from reload, or
+    /// cancellation from reload or removal preparation. On a normal return
+    /// `refresh` has already closed the coalescing window once the command
+    /// settled; this clears the slot only if the flight still owns it. It
+    /// then paints exactly once from committed state, with two exceptions: a
+    /// newer admitted flight owns the next paint and settles the same way,
+    /// and a retired item (removal committed, status item gone) skips the
+    /// paint. See the refreshing invariant in docs/pinchos/runtime.md.
     private func settleRefreshFlight(_ flightID: UInt64) async {
         endRefreshCoalescing(flightID)
         guard !isRetired, flightID == nextRefreshFlightID else { return }
